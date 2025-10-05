@@ -8,9 +8,6 @@ function HostSignUpModal({ category, onClose }) {
         <button onClick={onClose}>Close</button>
       </div>
       {/* Add sign-up form here */}
-      <div className="input-fields">
-        
-      </div>
     </div>
   );
 }
