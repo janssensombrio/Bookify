@@ -1,0 +1,128 @@
+import { Auth } from './config/auth';
+import { useState, useEffect } from 'react';
+import { database, auth } from './config/firebase';
+import { doc, 
+         getDocs, 
+         addDoc,
+         updateDoc, 
+         deleteDoc, 
+         collection } from 'firebase/firestore';
+
+function App() {
+  const [homesList, setHomesList] = useState([]);
+
+  // Add new homes states
+  const [newHomeName, setNewHomeName] = useState('');
+  const [newHomeLocation, setNewHomeLocation] = useState('');
+  const [newHomeRate, setNewHomeRate] = useState(0);
+  const [newHomeDescription, setNewHomeDescription] = useState('');
+  const [newHomeAvailability, setnewHomeAvailability] = useState(false);
+
+  // Edit home's detail states
+  const [editedHomeName, setEditedHomeName] = useState('');
+  
+  const homesCollectionRef = collection(database, 'homes');
+
+  const getHomesList = async () => {
+    try {
+      const data = await getDocs(homesCollectionRef);
+
+      const filteredData = data.docs.map((doc) => ({
+        ...doc.data(), id: doc.id,
+      }));
+
+      setHomesList(filteredData);
+
+      console.log(filteredData);
+    }
+    catch(err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    getHomesList();
+  }, []);
+
+  const addNewHome = async () => {
+    try {
+      await addDoc(homesCollectionRef, {
+        Name: newHomeName,
+        Location: newHomeLocation,
+        Rate: newHomeRate,
+        Description: newHomeDescription,
+        Availability: newHomeAvailability,
+        userId: auth?.currentUser?.uid,
+      });
+
+      getHomesList();
+    }
+    catch(err) {
+      console.error(err);
+    }
+  };
+
+  const editHome = async (id) => {
+    const homeDoc = doc(database, 'homes', id);
+    await updateDoc(homeDoc, { Name: editedHomeName });
+
+    getHomesList();
+  };
+
+  const deleteHome = async (id) => {
+    const homeDoc = doc(database, 'homes', id);
+    await deleteDoc(homeDoc);
+
+    getHomesList();
+  };
+
+  return (
+    <div className='components'>
+      <Auth/>
+
+      {/* add homes (CREATE) */}
+      <div className='create-fields'>
+        <input type='text' placeholder='Home name' onChange={(e) => setNewHomeName(e.target.value)}/>
+        <input type='text' placeholder='Location' onChange={(e) => setNewHomeLocation(e.target.value)}/>
+        <input type='number' placeholder='Rate' onChange={(e) => setNewHomeRate(Number(e.target.value))}/>
+        <textarea rows='4' cols='50' placeholder='Description' onChange={(e) => setNewHomeDescription(e.target.value)}></textarea>
+        <input type='checkbox' name='isAvailable' checked={newHomeAvailability} onChange={(e) => setnewHomeAvailability(e.target.checked)}/>
+        <label for='isAvailable'>Available</label>
+        <br/>
+        <button onClick={addNewHome}>Add Home</button>
+      </div>
+
+      {/* display homes (READ) */}
+      <div className='homes-wrapper'>
+        {homesList.map((home) => (
+          <div className='home-item' style={{color: home.Availability ? 'black' : 'darkgray'}} key={home.id}>
+            <h2>
+              {home.Name}
+            </h2>
+            <h3>
+              {home.Location}
+            </h3>
+            <h3>
+              {home.Rate}
+            </h3>
+            <h3>
+              {home.Description}
+            </h3>
+            <h3>
+              {home.Availability ? 'Available' : 'Booked'}
+            </h3>
+
+            <button onClick={() => deleteHome(home.id)}>Delete</button>
+
+            <div>
+              <input type='text' placeholder='Edit home name' onChange={(e) => setEditedHomeName(e.target.value)}/>
+              <button onClick={() => editHome(home.id)}>Edit</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export default App;
