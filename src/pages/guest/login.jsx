@@ -15,11 +15,17 @@ export const Login = () => {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Check if user exists in Firestore
+      // Check if email is verified
+      if (!user.emailVerified) {
+        alert("Please verify your email before logging in!");
+        await auth.signOut();
+        return;
+      }
+
+      // Check Firestore for user
       const q = query(usersCollectionRef, where("userId", "==", user.uid));
       const snapshot = await getDocs(q);
 
-      // Add to Firestore if not yet there
       if (snapshot.empty) {
         await addDoc(usersCollectionRef, {
           email: user.email,
@@ -30,9 +36,11 @@ export const Login = () => {
       }
 
       console.log("Logged in:", user.email);
+      alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
       navigate("/home");
     } catch (err) {
       console.error("Login error:", err.message);
+      alert(err.message);
     }
   };
 
@@ -55,9 +63,11 @@ export const Login = () => {
       }
 
       console.log("Google login success:", user.email);
+      alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
       navigate("/home");
     } catch (err) {
       console.error("Google login error:", err.message);
+      alert(err.message);
     }
   };
 
