@@ -15,27 +15,14 @@ export const Login = () => {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Check if email is verified
       if (!user.emailVerified) {
         alert("Please verify your email before logging in!");
         await auth.signOut();
         return;
       }
 
-      // Check Firestore for user
-      const q = query(usersCollectionRef, where("userId", "==", user.uid));
-      const snapshot = await getDocs(q);
+      await ensureUserInFirestore(user);
 
-      if (snapshot.empty) {
-        await addDoc(usersCollectionRef, {
-          email: user.email,
-          userId: user.uid,
-          type: "guest",
-        });
-        console.log("User added to Firestore:", user.email);
-      }
-
-      console.log("Logged in:", user.email);
       alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
       navigate("/home");
     } catch (err) {
@@ -49,20 +36,8 @@ export const Login = () => {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
 
-      // Check Firestore for Google user
-      const q = query(usersCollectionRef, where("userId", "==", user.uid));
-      const snapshot = await getDocs(q);
+      await ensureUserInFirestore(user);
 
-      if (snapshot.empty) {
-        await addDoc(usersCollectionRef, {
-          email: user.email,
-          userId: user.uid,
-          type: "guest",
-        });
-        console.log("Google user added to Firestore:", user.email);
-      }
-
-      console.log("Google login success:", user.email);
       alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
       navigate("/home");
     } catch (err) {
@@ -70,6 +45,31 @@ export const Login = () => {
       alert(err.message);
     }
   };
+
+  // Function to ensure user exists in Firestore
+  const ensureUserInFirestore = async (user) => {
+    const q = query(usersCollectionRef, where("uid", "==", user.uid));
+    const snapshot = await getDocs(q);
+
+    if (snapshot.empty) {
+      // Split displayName into first and last name
+      const nameParts = user.displayName ? user.displayName.split(" ") : ["", ""];
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(" "); // handle middle names
+
+      await addDoc(usersCollectionRef, {
+        email: user.email,
+        firstName,
+        lastName,
+        type: "guest",
+        uid: user.uid,       // matches the rule
+        verified: user.emailVerified || false, // mark Google users as verified if email verified
+      });
+
+      console.log("User added to Firestore:", user.email);
+    }
+  };
+
 
   return (
     <div className="login-page-wrapper">
