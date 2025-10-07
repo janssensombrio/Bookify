@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { doc, collection, addDoc, updateDoc, query, where, getDocs } from "firebase/firestore";
 import { auth, database } from "../../config/firebase";
@@ -7,6 +7,11 @@ import "./styles/host-set-up.css";
 export const HostSetUpExperiences = () => {
   const location = useLocation();
   const initialCategory = location.state?.category || "";
+
+  const [regions, setRegions] = useState([]);
+  const [provinces, setProvinces] = useState([]);
+  const [municipalities, setMunicipalities] = useState([]);
+  const [barangays, setBarangays] = useState([]);
 
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
@@ -17,7 +22,11 @@ export const HostSetUpExperiences = () => {
     category: initialCategory,
     listingType: "",
     title: "",
-    location: "",
+    region: "",
+    province: "",
+    municipality: "",
+    barangay: "",
+    street: "",
     duration: "", // in hours or minutes
     maxParticipants: 1,
     ageRestriction: { min: 0, max: 100 },
@@ -37,7 +46,7 @@ export const HostSetUpExperiences = () => {
   const prevStep = () => setStep(step - 1);
 
   const handleChange = (key, value) => {
-    setFormData({ ...formData, [key]: value });
+    setFormData(prev => ({ ...prev, [key]: value }));
   };
 
   const handleAmenityToggle = (amenity) => {
@@ -58,59 +67,88 @@ export const HostSetUpExperiences = () => {
     }));
   };
 
-  const handlePhotoUpload = (files) => {
-    setFormData({ ...formData, photos: Array.from(files) });
-  };
+  // const handlePhotoUpload = (files) => {
+  //   setFormData({ ...formData, photos: Array.from(files) });
+  // };
+
+  const [draftId, setDraftId] = useState(null);
 
   const saveDraft = async () => {
     try {
       const user = auth.currentUser;
       if (!user) return alert("You must be logged in to save a draft.");
 
-      const draftsRef = collection(database, "listings");
-      const q = query(draftsRef, where("uid", "==", user.uid));
-      const snapshot = await getDocs(q);
+      // ✅ Get readable names for location fields
+      const selectedRegion = regions.find(r => r.code === formData.region)?.name || "";
+      const selectedProvince = provinces.find(p => p.code === formData.province)?.name || "";
+      const selectedMunicipality = municipalities.find(m => m.code === formData.municipality)?.name || "";
+      const selectedBarangay = barangays.find(b => b.code === formData.barangay)?.name || "";
 
-      if (snapshot.empty) {
-        // const docRef = 
-        await addDoc(draftsRef, {
-          ...formData,
-          uid: user.uid,
-          status: "draft",
-          createdAt: new Date(),
-        });
-        alert("Draft saved!");
+      const dataToSave = {
+        ...formData,
+        uid: user.uid,
+        region: selectedRegion,
+        province: selectedProvince,
+        municipality: selectedMunicipality,
+        barangay: selectedBarangay,
+        status: "draft",
+        savedAt: new Date(),
+      };
+
+      let docRef;
+
+      if (draftId) {
+        // ✅ Update existing draft
+        docRef = doc(database, "listings", draftId);
+        await updateDoc(docRef, dataToSave);
       } else {
-        const draftId = snapshot.docs[0].id;
-        const draftRef = doc(database, "listings", draftId);
-        await updateDoc(draftRef, { ...formData, updatedAt: new Date() });
-        alert("Draft updated!");
+        // ✅ Create a new draft
+        docRef = await addDoc(collection(database, "listings"), dataToSave);
+        setDraftId(docRef.id);
       }
-    } catch (err) {
-      console.error(err);
+
+      alert("Draft saved successfully!");
+    } catch (error) {
+      console.error("Error saving draft:", error);
       alert("Failed to save draft.");
     }
   };
-
+  
   const handleSubmit = async () => {
     try {
       const user = auth.currentUser;
-      if (!user) return alert("You must be logged in first.");
+      if (!user) return alert("You must be logged in to publish.");
 
-      const experiencesRef = collection(database, "listings");
-        // const docRef = 
-        await addDoc(experiencesRef, {
+      // ✅ Get readable names
+      const selectedRegion = regions.find(r => r.code === formData.region)?.name || "";
+      const selectedProvince = provinces.find(p => p.code === formData.province)?.name || "";
+      const selectedMunicipality = municipalities.find(m => m.code === formData.municipality)?.name || "";
+      const selectedBarangay = barangays.find(b => b.code === formData.barangay)?.name || "";
+
+      const dataToSave = {
         ...formData,
         uid: user.uid,
+        region: selectedRegion,
+        province: selectedProvince,
+        municipality: selectedMunicipality,
+        barangay: selectedBarangay,
         status: "published",
-        createdAt: new Date(),
-      });
+        publishedAt: new Date(),
+      };
 
-      alert("Experience published successfully!");
-      navigate("/home");
-    } catch (err) {
-      console.error(err);
-      alert("Failed to publish experience.");
+      if (draftId) {
+        // ✅ Update existing draft
+        const draftRef = doc(database, "listings", draftId);
+        await updateDoc(draftRef, dataToSave);
+      } else {
+        // ✅ Create a new document
+        await addDoc(collection(database, "listings"), dataToSave);
+      }
+
+      alert("Your listing has been published!");
+    } catch (error) {
+      console.error("Error publishing listing:", error);
+      alert("Failed to publish listing.");
     }
   };
 
@@ -149,6 +187,28 @@ export const HostSetUpExperiences = () => {
         setStep(2); // go to the next step
     };
 
+    const handleBack = async () => {
+      const user = auth.currentUser;
+      if (!user) return navigate("/home"); // fallback
+  
+      const hostsRef = collection(database, "hosts");
+      const q = query(hostsRef, where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+  
+      if (!snapshot.empty) {
+        navigate("/hostpage"); // user is already a host
+      } else {
+        navigate("/home"); // regular user
+      }
+    };
+
+    useEffect(() => {
+      fetch("https://psgc.gitlab.io/api/regions/")
+        .then((res) => res.json())
+        .then((data) => setRegions(data))
+        .catch((err) => console.error("Failed to load regions:", err));
+    }, []);
+
   return (
     <div className="host-setup-page">
       {step === 1 && (
@@ -166,7 +226,7 @@ export const HostSetUpExperiences = () => {
             ))}
           </div>
           <div className="buttons">
-            <button onClick={() => navigate("/home")}>Back to Home</button>
+            <button onClick={handleBack}>Back to Home</button>
             <button onClick={handleGetStarted} disabled={!listingType}>
               Get Started
             </button>
@@ -185,11 +245,106 @@ export const HostSetUpExperiences = () => {
             onChange={(e) => handleChange("title", e.target.value)}
           />
           
+          {/* REGION */}
+          <select
+            value={formData.region}
+            onChange={async (e) => {
+              const code = e.target.value;
+              handleChange("region", code);
+              handleChange("province", "");
+              handleChange("municipality", "");
+              handleChange("barangay", "");
+              setProvinces([]);
+              setMunicipalities([]);
+              setBarangays([]);
+
+              if (code) {
+                const res = await fetch(`https://psgc.gitlab.io/api/regions/${code}/provinces/`);
+                const data = await res.json();
+                setProvinces(data);
+              }
+            }}
+          >
+            <option value="">Select Region</option>
+            {regions.map((region) => (
+              <option key={region.code} value={region.code}>
+                {region.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Province */}
+          <select
+            value={formData.province}
+            onChange={async (e) => {
+              const code = e.target.value;
+              handleChange("province", code);
+              handleChange("municipality", "");
+              handleChange("barangay", "");
+              setMunicipalities([]);
+              setBarangays([]);
+
+              if (code) {
+                const res = await fetch(`https://psgc.gitlab.io/api/provinces/${code}/municipalities/`);
+                const data = await res.json();
+                setMunicipalities(data);
+              }
+            }}
+            disabled={!formData.region}
+          >
+            <option value="">Select Province</option>
+            {provinces.map((prov) => (
+              <option key={prov.code} value={prov.code}>
+                {prov.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Municipality */}
+          <select
+            value={formData.municipality}
+            onChange={async (e) => {
+              const code = e.target.value;
+              handleChange("municipality", code);
+              handleChange("barangay", "");
+              setBarangays([]);
+
+              if (code) {
+                const res = await fetch(`https://psgc.gitlab.io/api/municipalities/${code}/barangays/`);
+                const data = await res.json();
+                setBarangays(data);
+              }
+            }}
+            disabled={!formData.province}
+          >
+            <option value="">Select Municipality</option>
+            {municipalities.map((mun) => (
+              <option key={mun.code} value={mun.code}>
+                {mun.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Barangay */}
+          <select
+            value={formData.barangay}
+            onChange={(e) => handleChange("barangay", e.target.value)}
+            disabled={!formData.municipality}
+          >
+            <option value="">Select Barangay</option>
+            {barangays.map((brgy) => (
+              <option key={brgy.code} value={brgy.code}>
+                {brgy.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Street */}
           <input
             type="text"
-            placeholder="Location"
-            value={formData.location}
-            onChange={(e) => handleChange("location", e.target.value)}
+            placeholder="Street / House No."
+            value={formData.street}
+            onChange={(e) => handleChange("street", e.target.value)}
           />
 
           <input
@@ -325,18 +480,69 @@ export const HostSetUpExperiences = () => {
       {/* Step 7: Photos */}
       {step === 7 && (
         <div className="step">
-          <h2>Photos & Media</h2>
-          <input
-            type="file"
-            multiple
-            onChange={(e) => handlePhotoUpload(e.target.files)}
-          />
-          <div className="photo-preview">
-            {formData.photos.length > 0 && formData.photos.map((p, i) => <p key={i}>{p.name}</p>)}
+          <h2>Show guests what your experience looks like</h2>
+
+          {/* Input for image links */}
+          <div>
+            <label>Add image links (one per line):</label>
+            {formData.photos.map((link, index) => (
+              <div key={index} className="photo-link-input">
+                <input
+                  type="text"
+                  value={link}
+                  placeholder="Paste image URL here"
+                  onChange={(e) => {
+                    const newLinks = [...formData.photos];
+                    newLinks[index] = e.target.value;
+                    setFormData({ ...formData, photos: newLinks });
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newLinks = formData.photos.filter((_, i) => i !== index);
+                    setFormData({ ...formData, photos: newLinks });
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() =>
+                setFormData({ ...formData, photos: [...formData.photos, ""] })
+              }
+            >
+              + Add another link
+            </button>
           </div>
+
+          {/* Preview */}
+          <div className="photo-preview">
+            {formData.photos.map(
+              (link, index) =>
+                link && (
+                  <img
+                    key={index}
+                    src={link}
+                    alt={`Photo ${index + 1}`}
+                    style={{
+                      width: "150px",
+                      height: "100px",
+                      objectFit: "cover",
+                      borderRadius: "8px",
+                      margin: "5px",
+                    }}
+                  />
+                )
+            )}
+          </div>
+
           <div className="buttons">
             <button onClick={prevStep}>Back</button>
-            <button onClick={saveDraft}>Save Draft</button>
+            <button onClick={saveDraft}>Save to Drafts</button>
             <button onClick={nextStep}>Next</button>
           </div>
         </div>

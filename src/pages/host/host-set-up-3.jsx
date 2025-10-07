@@ -29,7 +29,6 @@ export const HostSetUpServices = () => {
     clientRequirements: "",
     ageRestriction: { min: 0, max: 100 },
     photos: [],
-    video: "",
     languages: [],
     locationType: "in-person", // or "online"
     address: "",
@@ -73,17 +72,29 @@ export const HostSetUpServices = () => {
 
   const handleSubmit = async () => {
     try {
-      if (!draftId) {
-        alert("No draft found to publish. Save as draft first.");
-        return;
+      const user = auth.currentUser;
+      if (!user) return alert("You must be logged in to publish.");
+
+      const dataToSave = {
+        ...formData,
+        uid: user.uid,
+        status: "published",
+        publishedAt: new Date(),
+      };
+
+      if (draftId) {
+        // update existing draft
+        const draftRef = doc(database, "listings", draftId);
+        await updateDoc(draftRef, dataToSave);
+      } else {
+        // create a new listing directly
+        await addDoc(collection(database, "listings"), dataToSave);
       }
 
-      const draftRef = doc(database, "listings", draftId);
-      await updateDoc(draftRef, { status: "published", publishedAt: new Date() });
-      alert("Your service has been published!");
+      alert("Your listing has been published!");
     } catch (error) {
       console.error("Error publishing listing:", error);
-      alert("Failed to publish service.");
+      alert("Failed to publish listing.");
     }
   };
 
@@ -115,6 +126,21 @@ export const HostSetUpServices = () => {
       }
     };
 
+    const handleBack = async () => {
+      const user = auth.currentUser;
+      if (!user) return navigate("/home"); // fallback
+  
+      const hostsRef = collection(database, "hosts");
+      const q = query(hostsRef, where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+  
+      if (!snapshot.empty) {
+        navigate("/hostpage"); // user is already a host
+      } else {
+        navigate("/home"); // regular user
+      }
+    };
+
   // 🔹 Screen 1: Choose Service Type
   if (step === 1)
     return (
@@ -130,8 +156,7 @@ export const HostSetUpServices = () => {
           </button>
         ))}
         <div className="buttons">
-          <button onClick={() => navigate("/home")}>Back to Home</button>
-          <button onClick={saveDraft}>Save Draft</button>
+          <button onClick={handleBack}>Back to Home</button>
           <button
             className="next-btn"
             onClick={async () => {
@@ -286,17 +311,61 @@ export const HostSetUpServices = () => {
     return (
       <div className="step">
         <h2>Upload Media</h2>
-        <input
-          type="file"
-          multiple
-          onChange={(e) => handleChange("photos", Array.from(e.target.files))}
-        />
-        <input
-          type="text"
-          placeholder="Video link (optional)"
-          value={formData.video}
-          onChange={(e) => handleChange("video", e.target.value)}
-        />
+
+        {formData.photos.map((link, index) => (
+          <div key={index} className="photo-link-input">
+            <input
+              type="text"
+              value={link}
+              placeholder="Paste image URL here"
+              onChange={(e) => {
+                const newLinks = [...formData.photos];
+                newLinks[index] = e.target.value;
+                setFormData({ ...formData, photos: newLinks });
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const newLinks = formData.photos.filter((_, i) => i !== index);
+                setFormData({ ...formData, photos: newLinks });
+              }}
+            >
+              Remove
+            </button>
+
+            {/* Live Preview */}
+            <div className="image-prev">
+              {link && (
+                <img
+                  src={link}
+                  alt={`Preview ${index + 1}`}
+                  style={{
+                    width: "14%",
+                    height: "180px",
+                    objectFit: "cover",
+                    marginTop: "8px",
+                    borderRadius: "8px",
+                    border: "1px solid #ddd",
+                  }}
+                  onError={(e) => (e.target.style.display = "none")}
+                />
+              )}
+            </div>
+          </div>
+        ))}
+
+        {/* ➕ Add New Photo Button */}
+        <button
+          type="button"
+          onClick={() =>
+            setFormData({ ...formData, photos: [...formData.photos, ""] })
+          }
+          style={{ marginTop: "10px" }}
+        >
+          + Add Photo URL
+        </button>
+
         <div className="buttons">
           <button onClick={prevStep}>Back</button>
           <button onClick={saveDraft}>Save Draft</button>
