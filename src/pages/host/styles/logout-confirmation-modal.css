@@ -1,0 +1,43 @@
+/* logout-modal.css */
+.logout-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0,0,0,0.4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.logout-modal-content {
+  background-color: #fff;
+  padding: 25px 30px;
+  border-radius: 10px;
+  max-width: 350px;
+  text-align: center;
+}
+
+.logout-modal-buttons {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 20px;
+}
+
+.logout-modal-buttons button {
+  padding: 8px 16px;
+  border-radius: 5px;
+  border: none;
+  cursor: pointer;
+}
+
+.logout-btn {
+  background-color: #3182ce;
+  color: white;
+}
+
+.logout-btn:hover {
+  background-color: #2b6cb0;
+}

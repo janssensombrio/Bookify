@@ -66,10 +66,10 @@ export const HostSetUp = () => {
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: selectedRegion,
-        province: selectedProvince,
-        municipality: selectedMunicipality,
-        barangay: selectedBarangay,
+        region: { code: formData.region, name: selectedRegion },
+        province: { code: formData.province, name: selectedProvince },
+        municipality: { code: formData.municipality, name: selectedMunicipality },
+        barangay: { code: formData.barangay, name: selectedBarangay },
         status: "draft",
         savedAt: new Date(),
       };
@@ -120,13 +120,14 @@ export const HostSetUp = () => {
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: selectedRegion,
-        province: selectedProvince,
-        municipality: selectedMunicipality,
-        barangay: selectedBarangay,
+        region: { code: formData.region, name: selectedRegion },
+        province: { code: formData.province, name: selectedProvince },
+        municipality: { code: formData.municipality, name: selectedMunicipality },
+        barangay: { code: formData.barangay, name: selectedBarangay },
         status: "published",
         publishedAt: new Date(),
       };
+
 
       if (draftId) {
         // ✅ Update existing draft
@@ -224,16 +225,8 @@ export const HostSetUp = () => {
           </div>
 
           <button onClick={handleBack}>Back to Home</button>
-          <button
-            className="next-btn"
-            onClick={async () => {
-              await saveHost(); // save host before moving
-              nextStep();
-            }}
-            disabled={!formData.listingType}
-          >
-            Get Started
-          </button>
+          <button onClick={nextStep}
+          disabled={!formData.listingType}>Next</button>
         </div>
       )}
 
@@ -341,13 +334,22 @@ export const HostSetUp = () => {
             type="text"
             placeholder="Street / House No."
             value={formData.street}
+            disabled={!formData.barangay}
             onChange={(e) => handleChange("street", e.target.value)}
           />
 
           <div className="buttons">
             <button onClick={prevStep}>Back</button>
-            <button onClick={saveDraft}>Save to Drafts</button>
-            <button onClick={nextStep}>Next</button>
+            <button
+              className="next-btn"
+              onClick={async () => {
+                await saveHost(); // save host before moving
+                nextStep();
+              }}
+              disabled={!formData.street}
+            >
+              Get Started
+            </button>
           </div>
         </div>
       )}
@@ -589,10 +591,12 @@ export const HostSetUp = () => {
         </div>
       )}
 
-      {/* 📅 Screen 9 */}
+      {/* 📅 Screen 9 - Enhanced with Calendar */}
       {step === 9 && (
         <div className="step">
           <h2>When can guests book your place?</h2>
+          
+          {/* Date inputs */}
           <label>Start date:</label>
           <input
             type="date"
@@ -615,6 +619,7 @@ export const HostSetUp = () => {
               })
             }
           />
+
           <div className="buttons">
             <button onClick={prevStep}>Back</button>
             <button onClick={saveDraft}>Save to Drafts</button>

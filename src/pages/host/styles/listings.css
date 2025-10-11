@@ -5,6 +5,7 @@
 
 .listings-container {
   display: flex;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 20px;
   padding: 20px;
@@ -21,8 +22,8 @@
 .listing-card {
   border: 1px solid #ccc;
   border-radius: 8px;
-  padding: 28px 40px;
-  width: 388px;
+  padding: 28px 34px;
+  width: 358px;
   box-shadow: 2px 2px 6px rgba(0,0,0,0.1);
   transition: transform 0.2s, box-shadow 0.2s;
 }
@@ -54,4 +55,9 @@
   background-color: #fff;
   border-radius: 10px;
   margin: 10px;
+}
+
+.active-btn {
+  background-color: #007bff;
+  color: white;
 }

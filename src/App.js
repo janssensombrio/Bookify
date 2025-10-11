@@ -6,6 +6,7 @@ import { HostSetUp } from './pages/host/host-set-up.jsx'; // <-- import
 import { HostSetUpExperiences } from './pages/host/host-set-up-2.jsx';
 import { HostSetUpServices } from './pages/host/host-set-up-3.jsx';
 import HostPage from './pages/host/host-page.jsx';
+import { MessagesPage } from './components/messaging-page.jsx';
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
         <Route path="/host-set-up-2" element={<HostSetUpExperiences />} />
         <Route path="/host-set-up-3" element={<HostSetUpServices />} />
         <Route path="/hostpage" element={<HostPage />} />
+        <Route path="/messages" element={<MessagesPage />} />
       </Routes>
     </Router>
   );

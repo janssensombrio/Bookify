@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import Listings from "./components/listings.jsx";
+import { MessagesPage } from "../../components/messaging-page.jsx";
 
 function HostPage() {
   const navigate = useNavigate();
@@ -11,7 +12,12 @@ function HostPage() {
       case "today":
         return <h2>Today’s Tasks</h2>;
       case "messages":
-        return <h2>Messages</h2>;
+        return (
+          <>
+            <h2>Messages</h2>
+            <MessagesPage/>
+          </>
+        );
       case "calendar":
         return <h2>Calendar</h2>;
       case "listings":

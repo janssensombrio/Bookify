@@ -30,7 +30,7 @@ export const HostSetUpServices = () => {
     ageRestriction: { min: 0, max: 100 },
     photos: [],
     languages: [],
-    locationType: "in-person", // or "online"
+    locationType: "", // or "online"
     address: "",
     agreeToTerms: false,
   });

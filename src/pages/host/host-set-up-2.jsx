@@ -87,10 +87,10 @@ export const HostSetUpExperiences = () => {
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: selectedRegion,
-        province: selectedProvince,
-        municipality: selectedMunicipality,
-        barangay: selectedBarangay,
+        region: { code: formData.region, name: selectedRegion },
+        province: { code: formData.province, name: selectedProvince },
+        municipality: { code: formData.municipality, name: selectedMunicipality },
+        barangay: { code: formData.barangay, name: selectedBarangay },
         status: "draft",
         savedAt: new Date(),
       };
@@ -128,10 +128,10 @@ export const HostSetUpExperiences = () => {
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: selectedRegion,
-        province: selectedProvince,
-        municipality: selectedMunicipality,
-        barangay: selectedBarangay,
+        region: { code: formData.region, name: selectedRegion },
+        province: { code: formData.province, name: selectedProvince },
+        municipality: { code: formData.municipality, name: selectedMunicipality },
+        barangay: { code: formData.barangay, name: selectedBarangay },
         status: "published",
         publishedAt: new Date(),
       };
@@ -344,6 +344,7 @@ export const HostSetUpExperiences = () => {
             type="text"
             placeholder="Street / House No."
             value={formData.street}
+            disabled={!formData.barangay}
             onChange={(e) => handleChange("street", e.target.value)}
           />
 
@@ -351,13 +352,22 @@ export const HostSetUpExperiences = () => {
             type="text"
             placeholder="Duration (e.g., 2 hours)"
             value={formData.duration}
+            disabled={!formData.street}
             onChange={(e) => handleChange("duration", e.target.value)}
           />
 
           <div className="buttons">
-            <button onClick={() => navigate('/home')}>Back to Home</button>
-            <button onClick={saveDraft}>Save Draft</button>
-            <button onClick={nextStep}>Next</button>
+            <button onClick={prevStep}>Back</button>
+
+            <button 
+            onClick={saveDraft}
+            disabled={!formData.street || !formData.duration}
+            >Save Draft</button>
+
+            <button 
+            onClick={nextStep}
+            disabled={!formData.street || !formData.duration}
+            >Next</button>
           </div>
         </div>
       )}

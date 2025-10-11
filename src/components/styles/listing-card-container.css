@@ -1,0 +1,51 @@
+.listing-container {
+  padding: 20px;
+}
+
+.listing-title {
+  margin-bottom: 15px;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.listing-grid {
+  display: flex;
+  flex-direction: row;
+  column-gap: 40px;
+  flex-wrap: wrap;
+}
+
+.listing-card {
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  transition: transform 0.2s;
+}
+
+.listing-card:hover {
+  transform: scale(1.02);
+}
+
+.listing-image {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+}
+
+.listing-details {
+  padding: 12px;
+}
+
+.price {
+  display: inline-block;
+  margin-top: 6px;
+  font-weight: 600;
+  color: #2e8b57;
+}
+
+.no-items {
+  color: #666;
+  font-style: italic;
+}
