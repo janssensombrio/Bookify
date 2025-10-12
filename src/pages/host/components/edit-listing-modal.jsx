@@ -11,6 +11,8 @@ function EditListingModal({ listing, onClose, refreshList }) {
   const [municipalities, setMunicipalities] = useState([]);
   const [barangays, setBarangays] = useState([]);
 
+  const [showAddSchedule, setShowAddSchedule] = useState(false);
+  const [newSchedule, setNewSchedule] = useState({ date: "", time: "" });
 
   const handleChange = (key, value) => {
     setFormData(prev => ({ ...prev, [key]: value }));
@@ -486,17 +488,137 @@ function EditListingModal({ listing, onClose, refreshList }) {
             />
           </div>
 
-          {/* Schedule */}
-          <div className="section">
-            <h3>Schedule</h3>
-            <input
-              type="text"
-              placeholder="Example: Saturdays 2-4PM"
-              value={formData.schedule?.join(", ") || ""}
-              onChange={(e) =>
-                handleChange("schedule", e.target.value.split(",").map(s => s.trim()))
-              }
-            />
+          {/* Schedule Section */}
+          <div
+            style={{
+              marginTop: "20px",
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "15px",
+            }}
+          >
+            <h4>Schedule</h4>
+
+            {/* Display existing schedules */}
+            {formData.schedule && formData.schedule.length > 0 ? (
+              <ul style={{ marginBottom: "10px" }}>
+                {formData.schedule.map((s, i) => (
+                  <li key={i} style={{ marginBottom: "8px" }}>
+                    📅{" "}
+                    <input
+                      type="date"
+                      value={s.date}
+                      onChange={(e) => {
+                        const updated = [...formData.schedule];
+                        updated[i].date = e.target.value;
+                        setFormData({ ...formData, schedule: updated });
+                      }}
+                      style={{ padding: "4px" }}
+                    />{" "}
+                    🕒{" "}
+                    <input
+                      type="time"
+                      value={s.time}
+                      onChange={(e) => {
+                        const updated = [...formData.schedule];
+                        updated[i].time = e.target.value;
+                        setFormData({ ...formData, schedule: updated });
+                      }}
+                      style={{ padding: "4px" }}
+                    />{" "}
+                    <button
+                      onClick={() => {
+                        const filtered = formData.schedule.filter((_, idx) => idx !== i);
+                        setFormData({ ...formData, schedule: filtered });
+                      }}
+                      style={{
+                        marginLeft: "8px",
+                        background: "#dc3545",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        padding: "4px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No schedules yet.</p>
+            )}
+
+            {/* Add schedule button */}
+            <button
+              onClick={() => setShowAddSchedule(true)}
+              style={{
+                padding: "8px 12px",
+                background: "#007bff",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                marginBottom: "10px",
+              }}
+            >
+              + Add Schedule
+            </button>
+
+            {/* Add new schedule form */}
+            {showAddSchedule && (
+              <div style={{ marginTop: "10px" }}>
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                  Date:
+                  <input
+                    type="date"
+                    value={newSchedule.date}
+                    onChange={(e) =>
+                      setNewSchedule({ ...newSchedule, date: e.target.value })
+                    }
+                    style={{ marginLeft: "10px", padding: "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                  Time:
+                  <input
+                    type="time"
+                    value={newSchedule.time}
+                    onChange={(e) =>
+                      setNewSchedule({ ...newSchedule, time: e.target.value })
+                    }
+                    style={{ marginLeft: "10px", padding: "5px" }}
+                  />
+                </label>
+
+                <button
+                  onClick={() => {
+                    if (!newSchedule.date || !newSchedule.time) {
+                      alert("Please fill in both date and time.");
+                      return;
+                    }
+                    setFormData({
+                      ...formData,
+                      schedule: [...(formData.schedule || []), newSchedule],
+                    });
+                    setNewSchedule({ date: "", time: "" });
+                    setShowAddSchedule(false);
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    background: "#28a745",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Save Schedule
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Price & Amenities */}
@@ -599,6 +721,124 @@ function EditListingModal({ listing, onClose, refreshList }) {
             <option value="monthly">Monthly</option>
           </select>
 
+          {/* Schedule Section */}
+          <h4>Schedule</h4>
+
+          {formData.schedule && formData.schedule.length > 0 ? (
+            <ul style={{ marginBottom: "10px" }}>
+              {formData.schedule.map((s, i) => (
+                <li key={i} style={{ marginBottom: "8px" }}>
+                  📅{" "}
+                  <input
+                    type="date"
+                    value={s.date}
+                    onChange={(e) => {
+                      const updated = [...formData.schedule];
+                      updated[i].date = e.target.value;
+                      setFormData({ ...formData, schedule: updated });
+                    }}
+                    style={{ padding: "4px" }}
+                  />{" "}
+                  🕒{" "}
+                  <input
+                    type="time"
+                    value={s.time}
+                    onChange={(e) => {
+                      const updated = [...formData.schedule];
+                      updated[i].time = e.target.value;
+                      setFormData({ ...formData, schedule: updated });
+                    }}
+                    style={{ padding: "4px" }}
+                  />{" "}
+                  <button
+                    onClick={() => {
+                      const filtered = formData.schedule.filter((_, idx) => idx !== i);
+                      setFormData({ ...formData, schedule: filtered });
+                    }}
+                    style={{
+                      marginLeft: "8px",
+                      background: "#dc3545",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      padding: "4px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No schedules yet.</p>
+          )}
+
+          {/* Add New Schedule */}
+          <button
+            onClick={() => setShowAddSchedule(true)}
+            style={{
+              padding: "8px 12px",
+              background: "#007bff",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+              marginBottom: "10px",
+            }}
+          >
+            + Add Schedule
+          </button>
+
+          {showAddSchedule && (
+            <div style={{ marginTop: "10px" }}>
+              <label style={{ display: "block", marginBottom: "6px" }}>
+                Date:
+                <input
+                  type="date"
+                  value={newSchedule.date}
+                  onChange={(e) => setNewSchedule({ ...newSchedule, date: e.target.value })}
+                  style={{ marginLeft: "10px", padding: "5px" }}
+                />
+              </label>
+
+              <label style={{ display: "block", marginBottom: "6px" }}>
+                Time:
+                <input
+                  type="time"
+                  value={newSchedule.time}
+                  onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
+                  style={{ marginLeft: "10px", padding: "5px" }}
+                />
+              </label>
+
+              <button
+                onClick={() => {
+                  if (!newSchedule.date || !newSchedule.time) {
+                    alert("Please fill in both date and time.");
+                    return;
+                  }
+                  setFormData({
+                    ...formData,
+                    schedule: [...(formData.schedule || []), newSchedule],
+                  });
+                  setNewSchedule({ date: "", time: "" });
+                  setShowAddSchedule(false);
+                }}
+                style={{
+                  padding: "6px 10px",
+                  background: "#28a745",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                }}
+              >
+                Save Schedule
+              </button>
+            </div>
+          )}
+
           <textarea
             placeholder="Description"
             value={formData.description || ""}
@@ -621,6 +861,14 @@ function EditListingModal({ listing, onClose, refreshList }) {
             placeholder="Client Requirements"
             value={formData.clientRequirements || ""}
             onChange={(e) => handleChange("clientRequirements", e.target.value)}
+          />
+          
+          <label>Max Participants:</label>
+          <input
+            type="number"
+            min="1"
+            value={formData.maxParticipants}
+            onChange={(e) => handleChange("maxParticipants", Number(e.target.value))}
           />
 
           <div className="age-restriction">

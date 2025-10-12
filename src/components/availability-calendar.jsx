@@ -4,7 +4,7 @@ import { enUS } from "date-fns/locale";
 import "react-date-range/dist/styles.css";
 import "react-date-range/dist/theme/default.css";
 
-function AvailabilityCalendar({ availability }) {
+function AvailabilityCalendar({ availability, onDateChange }) {
   const [range, setRange] = useState([
     {
       startDate: null,
@@ -26,16 +26,34 @@ function AvailabilityCalendar({ availability }) {
     }
   }, [availability]);
 
-  // disable dates outside availability
+  // inside AvailabilityCalendar
   const isDateDisabled = (date) => {
-    return date < startDate || date > endDate;
+    if (!availability || !Array.isArray(availability)) return false;
+    const availableDates = availability.map(d => new Date(d.date).toDateString());
+    return !availableDates.includes(date.toDateString());
+  };
+
+  // Handle date selection and pass it to parent
+  const handleSelect = (item) => {
+    setRange([item.selection]);
+    
+    // Pass selected dates back to parent component
+    if (onDateChange && item.selection.startDate && item.selection.endDate) {
+      // Only send if both dates are selected and different
+      if (item.selection.startDate.getTime() !== item.selection.endDate.getTime()) {
+        onDateChange({
+          checkIn: item.selection.startDate.toISOString().split('T')[0],
+          checkOut: item.selection.endDate.toISOString().split('T')[0]
+        });
+      }
+    }
   };
 
   return (
     <div style={{ display: "flex", justifyContent: "center", marginTop: "20px" }}>
       <DateRange
         editableDateInputs={false}
-        onChange={(item) => setRange([item.selection])}
+        onChange={handleSelect}
         ranges={range}
         minDate={startDate}
         maxDate={endDate}

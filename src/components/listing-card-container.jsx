@@ -18,7 +18,7 @@ const ListingCardContainer = ({ category, items }) => {
               onClick={() => setSelectedListingId(item.id)} // 👈 open modal
               >
                 <img
-                  src={item.photos?.[1] || item.photos?.[0]}
+                  src={item.photos?.[0] || item.photos?.[1]}
                   alt={item.title}
                   className="listing-image"
                 />

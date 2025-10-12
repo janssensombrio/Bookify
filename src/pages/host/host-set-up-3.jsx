@@ -12,6 +12,10 @@ export const HostSetUpServices = () => {
   const [step, setStep] = useState(1);
   const [draftId, setDraftId] = useState(null);
 
+  const [showAddSchedule, setShowAddSchedule] = useState(false);
+  const [newSchedule, setNewSchedule] = useState({ date: "", time: "" });
+
+
   const [formData, setFormData] = useState({
     category: initialCategory,
     serviceType: "",
@@ -20,6 +24,7 @@ export const HostSetUpServices = () => {
     includes: "",
     targetAudience: "",
     availability: [],
+    schedule: [],
     duration: "",
     recurrence: "",
     price: "",
@@ -27,6 +32,7 @@ export const HostSetUpServices = () => {
     cancellationPolicy: "",
     qualifications: "",
     clientRequirements: "",
+    maxParticipants: 1,
     ageRestriction: { min: 0, max: 100 },
     photos: [],
     languages: [],
@@ -207,32 +213,150 @@ export const HostSetUpServices = () => {
     );
 
   // 🔹 Screen 3: Schedule
-  if (step === 3)
-    return (
-      <div className="step">
-        <h2>Set your schedule</h2>
-        <input
-          type="text"
-          placeholder="Duration (e.g. 1 hour)"
-          value={formData.duration}
-          onChange={(e) => handleChange("duration", e.target.value)}
-        />
-        <select
-          value={formData.recurrence}
-          onChange={(e) => handleChange("recurrence", e.target.value)}
-        >
-          <option value="">Recurrence</option>
-          <option value="one-time">One-time</option>
-          <option value="weekly">Weekly</option>
-          <option value="monthly">Monthly</option>
-        </select>
-        <div className="buttons">
-          <button onClick={prevStep}>Back</button>
-          <button onClick={saveDraft}>Save Draft</button>
-          <button onClick={nextStep}>Next</button>
+if (step === 3)
+  return (
+    <div className="step">
+      <h2>Set your schedule</h2>
+
+      <input
+        type="text"
+        placeholder="Duration (e.g. 1 hour)"
+        value={formData.duration}
+        onChange={(e) => handleChange("duration", e.target.value)}
+      />
+      <select
+        value={formData.recurrence}
+        onChange={(e) => handleChange("recurrence", e.target.value)}
+      >
+        <option value="">Recurrence</option>
+        <option value="one-time">One-time</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+      </select>
+
+      <h4>Schedule</h4>
+
+      {formData.schedule && formData.schedule.length > 0 ? (
+        <ul style={{ marginBottom: "10px" }}>
+          {formData.schedule.map((s, i) => (
+            <li key={i} style={{ marginBottom: "8px" }}>
+              📅{" "}
+              <input
+                type="date"
+                value={s.date}
+                onChange={(e) => {
+                  const updated = [...formData.schedule];
+                  updated[i].date = e.target.value;
+                  setFormData({ ...formData, schedule: updated });
+                }}
+                style={{ padding: "4px" }}
+              />{" "}
+              🕒{" "}
+              <input
+                type="time"
+                value={s.time}
+                onChange={(e) => {
+                  const updated = [...formData.schedule];
+                  updated[i].time = e.target.value;
+                  setFormData({ ...formData, schedule: updated });
+                }}
+                style={{ padding: "4px" }}
+              />{" "}
+              <button
+                onClick={() => {
+                  const filtered = formData.schedule.filter((_, idx) => idx !== i);
+                  setFormData({ ...formData, schedule: filtered });
+                }}
+                style={{
+                  marginLeft: "8px",
+                  background: "#dc3545",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  padding: "4px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>No schedules yet.</p>
+      )}
+
+      <button
+        onClick={() => setShowAddSchedule(true)}
+        style={{
+          padding: "8px 12px",
+          background: "#007bff",
+          color: "white",
+          border: "none",
+          borderRadius: "6px",
+          cursor: "pointer",
+          marginBottom: "10px",
+        }}
+      >
+        + Add Schedule
+      </button>
+
+      {showAddSchedule && (
+        <div style={{ marginTop: "10px" }}>
+          <label style={{ display: "block", marginBottom: "6px" }}>
+            Date:
+            <input
+              type="date"
+              value={newSchedule.date}
+              onChange={(e) => setNewSchedule({ ...newSchedule, date: e.target.value })}
+              style={{ marginLeft: "10px", padding: "5px" }}
+            />
+          </label>
+
+          <label style={{ display: "block", marginBottom: "6px" }}>
+            Time:
+            <input
+              type="time"
+              value={newSchedule.time}
+              onChange={(e) => setNewSchedule({ ...newSchedule, time: e.target.value })}
+              style={{ marginLeft: "10px", padding: "5px" }}
+            />
+          </label>
+
+          <button
+            onClick={() => {
+              if (!newSchedule.date || !newSchedule.time) {
+                alert("Please fill in both date and time.");
+                return;
+              }
+              setFormData({
+                ...formData,
+                schedule: [...(formData.schedule || []), newSchedule],
+              });
+              setNewSchedule({ date: "", time: "" });
+              setShowAddSchedule(false);
+            }}
+            style={{
+              padding: "6px 10px",
+              background: "#28a745",
+              color: "white",
+              border: "none",
+              borderRadius: "6px",
+              cursor: "pointer",
+            }}
+          >
+            Save Schedule
+          </button>
         </div>
+      )}
+
+      <div className="buttons">
+        <button onClick={prevStep}>Back</button>
+        <button onClick={saveDraft}>Save Draft</button>
+        <button onClick={nextStep}>Next</button>
       </div>
-    );
+    </div>
+  );
 
   // 🔹 Screen 4: Pricing & Policy
   if (step === 4)
@@ -277,6 +401,15 @@ export const HostSetUpServices = () => {
           value={formData.qualifications}
           onChange={(e) => handleChange("qualifications", e.target.value)}
         ></textarea>
+
+        <label>Max Participants:</label>
+        <input
+          type="number"
+          min="1"
+          value={formData.maxParticipants}
+          onChange={(e) => handleChange("maxParticipants", Number(e.target.value))}
+        />
+
         <textarea
           placeholder="Client Requirements"
           value={formData.clientRequirements}

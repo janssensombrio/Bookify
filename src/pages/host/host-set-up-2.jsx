@@ -8,11 +8,19 @@ export const HostSetUpExperiences = () => {
   const location = useLocation();
   const initialCategory = location.state?.category || "";
 
+  // for the location
   const [regions, setRegions] = useState([]);
   const [provinces, setProvinces] = useState([]);
   const [municipalities, setMunicipalities] = useState([]);
   const [barangays, setBarangays] = useState([]);
 
+  // for the schedule
+  const [showAddSchedule, setShowAddSchedule] = useState(false);
+  const [newSchedule, setNewSchedule] = useState({ date: "", time: "" });
+
+  const [newAmenity, setNewAmenity] = useState("");
+
+  // for swithcing between pages
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
 
@@ -207,6 +215,21 @@ export const HostSetUpExperiences = () => {
         .then((res) => res.json())
         .then((data) => setRegions(data))
         .catch((err) => console.error("Failed to load regions:", err));
+    }, []);
+
+    useEffect(() => {
+      if (formData.schedule && Array.isArray(formData.schedule)) {
+        const normalized = formData.schedule.map(item =>
+          typeof item === "string"
+            ? { date: item, startTime: "", endTime: "" }
+            : item
+        );
+        setFormData(prev => ({ ...prev, schedule: normalized }));
+      }
+    }, []);
+
+    useEffect(() => {
+      if (!formData.schedule) setFormData(prev => ({ ...prev, schedule: [] }));
     }, []);
 
   return (
@@ -443,17 +466,151 @@ export const HostSetUpExperiences = () => {
       {step === 5 && (
         <div className="step">
           <h2>Schedule</h2>
-          <p>For simplicity, you can add multiple available dates later.</p>
-          <input
-            type="text"
-            placeholder="Example: Saturdays 2-4PM"
-            value={formData.schedule.join(", ")}
-            onChange={(e) => handleChange("schedule", e.target.value.split(","))}
-          />
+          <p>Add specific dates and times when your experience is available.</p>
+
+          {/* Schedule Section */}
+          <div
+            style={{
+              marginTop: "20px",
+              border: "1px solid #ddd",
+              borderRadius: "8px",
+              padding: "15px",
+            }}
+          >
+            <h4>Schedule</h4>
+
+            {/* Display existing schedules */}
+            {formData.schedule && formData.schedule.length > 0 ? (
+              <ul style={{ marginBottom: "10px" }}>
+                {formData.schedule.map((s, i) => (
+                  <li key={i} style={{ marginBottom: "8px" }}>
+                    📅{" "}
+                    <input
+                      type="date"
+                      value={s.date}
+                      onChange={(e) => {
+                        const updated = [...formData.schedule];
+                        updated[i].date = e.target.value;
+                        setFormData({ ...formData, schedule: updated });
+                      }}
+                      style={{ padding: "4px" }}
+                    />{" "}
+                    🕒{" "}
+                    <input
+                      type="time"
+                      value={s.time}
+                      onChange={(e) => {
+                        const updated = [...formData.schedule];
+                        updated[i].time = e.target.value;
+                        setFormData({ ...formData, schedule: updated });
+                      }}
+                      style={{ padding: "4px" }}
+                    />{" "}
+                    <button
+                      onClick={() => {
+                        const filtered = formData.schedule.filter((_, idx) => idx !== i);
+                        setFormData({ ...formData, schedule: filtered });
+                      }}
+                      style={{
+                        marginLeft: "8px",
+                        background: "#dc3545",
+                        color: "white",
+                        border: "none",
+                        borderRadius: "4px",
+                        padding: "4px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>No schedules yet.</p>
+            )}
+
+            {/* Add schedule button */}
+            <button
+              onClick={() => setShowAddSchedule(true)}
+              style={{
+                padding: "8px 12px",
+                background: "#007bff",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+                marginBottom: "10px",
+              }}
+            >
+              + Add Schedule
+            </button>
+
+            {/* Add new schedule form */}
+            {showAddSchedule && (
+              <div style={{ marginTop: "10px" }}>
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                  Date:
+                  <input
+                    type="date"
+                    value={newSchedule.date}
+                    onChange={(e) =>
+                      setNewSchedule({ ...newSchedule, date: e.target.value })
+                    }
+                    style={{ marginLeft: "10px", padding: "5px" }}
+                  />
+                </label>
+
+                <label style={{ display: "block", marginBottom: "6px" }}>
+                  Time:
+                  <input
+                    type="time"
+                    value={newSchedule.time}
+                    onChange={(e) =>
+                      setNewSchedule({ ...newSchedule, time: e.target.value })
+                    }
+                    style={{ marginLeft: "10px", padding: "5px" }}
+                  />
+                </label>
+
+                <button
+                  onClick={() => {
+                    if (!newSchedule.date || !newSchedule.time) {
+                      alert("Please fill in both date and time.");
+                      return;
+                    }
+                    setFormData({
+                      ...formData,
+                      schedule: [...(formData.schedule || []), newSchedule],
+                    });
+                    setNewSchedule({ date: "", time: "" });
+                    setShowAddSchedule(false);
+                  }}
+                  style={{
+                    padding: "6px 10px",
+                    background: "#28a745",
+                    color: "white",
+                    border: "none",
+                    borderRadius: "6px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Save Schedule
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Navigation buttons */}
           <div className="buttons">
             <button onClick={prevStep}>Back</button>
             <button onClick={saveDraft}>Save Draft</button>
-            <button onClick={nextStep}>Next</button>
+            <button
+              onClick={nextStep}
+              disabled={!formData.schedule || formData.schedule.length === 0}
+            >
+              Next
+            </button>
           </div>
         </div>
       )}
@@ -462,27 +619,95 @@ export const HostSetUpExperiences = () => {
       {step === 6 && (
         <div className="step">
           <h2>Price & Amenities</h2>
+
+          {/* Price input */}
           <input
             type="number"
             placeholder="Price per participant"
             value={formData.price}
             onChange={(e) => handleChange("price", Number(e.target.value))}
           />
-          <p>Select amenities included:</p>
-          {["Food", "Drinks", "Equipment", "Transportation"].map((a) => (
-            <label key={a}>
-              <input
-                type="checkbox"
-                checked={formData.amenities.includes(a)}
-                onChange={() => handleAmenityToggle(a)}
-              />
-              {a}
-            </label>
-          ))}
-          <div className="buttons">
+
+          {/* Amenities input section */}
+          <p style={{ marginTop: "15px" }}>Add amenities included:</p>
+
+          {/* Display existing amenities */}
+          {formData.amenities && formData.amenities.length > 0 ? (
+            <ul style={{ marginBottom: "10px" }}>
+              {formData.amenities.map((a, i) => (
+                <li key={i} style={{ marginBottom: "8px" }}>
+                  {a}{" "}
+                  <button
+                    onClick={() => {
+                      const updated = formData.amenities.filter((_, idx) => idx !== i);
+                      setFormData({ ...formData, amenities: updated });
+                    }}
+                    style={{
+                      marginLeft: "8px",
+                      background: "#dc3545",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "4px",
+                      padding: "3px 7px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No amenities added yet.</p>
+          )}
+
+          {/* Add new amenity */}
+          <div style={{ marginTop: "10px" }}>
+            <input
+              type="text"
+              placeholder="Enter an amenity (e.g. Free snacks)"
+              value={newAmenity}
+              onChange={(e) => setNewAmenity(e.target.value)}
+              style={{
+                padding: "8px",
+                border: "1px solid #ccc",
+                borderRadius: "6px",
+                width: "70%",
+                marginRight: "8px",
+              }}
+            />
+            <button
+              onClick={() => {
+                if (!newAmenity.trim()) return alert("Please enter an amenity.");
+                setFormData({
+                  ...formData,
+                  amenities: [...(formData.amenities || []), newAmenity.trim()],
+                });
+                setNewAmenity("");
+              }}
+              style={{
+                padding: "8px 12px",
+                background: "#007bff",
+                color: "white",
+                border: "none",
+                borderRadius: "6px",
+                cursor: "pointer",
+              }}
+            >
+              + Add
+            </button>
+          </div>
+
+          {/* Buttons */}
+          <div className="buttons" style={{ marginTop: "20px" }}>
             <button onClick={prevStep}>Back</button>
             <button onClick={saveDraft}>Save Draft</button>
-            <button onClick={nextStep}>Next</button>
+            <button
+              onClick={nextStep}
+              disabled={!formData.price || formData.price <= 0}
+            >
+              Next
+            </button>
           </div>
         </div>
       )}
