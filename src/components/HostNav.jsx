@@ -24,46 +24,29 @@ import BottomNavigation from "@mui/material/BottomNavigation";
 import BottomNavigationAction from "@mui/material/BottomNavigationAction";
 import AddHomeRoundedIcon from '@mui/icons-material/AddHomeRounded';
 
-import FavoriteIcon from "@mui/icons-material/Favorite";
-import HomeIcon from "@mui/icons-material/HomeRounded";
+import TodayIcon from "@mui/icons-material/Today";
 import MessageIcon from "@mui/icons-material/Message";
+import ListIcon from "@mui/icons-material/List";
+import CalendarIcon from "@mui/icons-material/CalendarToday";
 import LogoutIcon from "@mui/icons-material/Logout";
-import BookIcon from "@mui/icons-material/Book";
+import HomeIcon from "@mui/icons-material/HomeRounded";
+import FavoriteIcon from "@mui/icons-material/Favorite";
 import TravelExploreIcon from "@mui/icons-material/BeachAccessRounded";
-import BuildIcon from "@mui/icons-material/RoomServiceRounded";
+import BookIcon from "@mui/icons-material/Book";
 
-function Navigation({ onOpenHostModal, onCategorySelect }) {
-  const [isHost, setIsHost] = useState(localStorage.getItem("isHost") === "true");
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+function HostNavigation({ setActivePage }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   const navigate = useNavigate();
-  const categories = ["Homes", "Experiences", "Services"];
-  const tabIcons = [<HomeIcon />, <TravelExploreIcon />, <BuildIcon />];
+  const pages = ["today", "messages", "listings", "calendar"];
+  const pageLabels = ["Today", "Messages", "Listings", "Calendar"];
+  const tabIcons = [<TodayIcon />, <MessageIcon />, <ListIcon />, <CalendarIcon />];
 
-  useEffect(() => {
-    const checkIfHost = async () => {
-      const user = auth.currentUser;
-      if (!user) return;
-      const hostsRef = collection(database, "hosts");
-      const q = query(hostsRef, where("uid", "==", user.uid));
-      const snapshot = await getDocs(q);
-      const hostStatus = !snapshot.empty;
-      setIsHost(hostStatus);
-      localStorage.setItem("isHost", hostStatus ? "true" : "false");
-    };
-    checkIfHost();
-  }, []);
-
-  const handleHostClick = () => {
-    if (isHost) navigate("/hostpage");
-    else onOpenHostModal();
-  };
-
-  const handleCategoryClick = (index) => {
+  const handlePageClick = (index) => {
     setActiveTab(index);
-    if (onCategorySelect) onCategorySelect(categories[index]);
+    setActivePage(pages[index]);
   };
 
   const handleLogout = async () => {
@@ -81,32 +64,28 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
     <>
       {/* Top AppBar */}
       <AppBar position="fixed" color="primary">
-        
         <Toolbar sx={{ justifyContent: "space-between" }}>
           <IconButton edge="start" color="inherit" onClick={() => setDrawerOpen(true)}>
             <MenuIcon />
           </IconButton>
 
-          {/* Logo */}
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <BookIcon />
-            <Typography variant="h6" sx={{ fontWeight: "bold" }}>
-              Bookify
-            </Typography>
-          </Box>
+          {/* Title */}
+          <Typography variant="h6" sx={{ fontWeight: "bold" }}>
+            <AddHomeRoundedIcon fontSize="medium" sx={{pt: 1, ml: 2}}/> Host Dashboard
+          </Typography>
 
           {/* Desktop Tabs */}
           <Box sx={{ flexGrow: 1, display: { xs: "none", sm: "flex" }, justifyContent: "center" }}>
             <Tabs
               value={activeTab}
-              onChange={(e, newValue) => handleCategoryClick(newValue)}
+              onChange={(e, newValue) => handlePageClick(newValue)}
               textColor="inherit"
               indicatorColor="secondary"
             >
-              {categories.map((cat, index) => (
+              {pageLabels.map((label, index) => (
                 <Tab
-                  key={cat}
-                  label={cat}
+                  key={label}
+                  label={label}
                   icon={activeTab === index ? tabIcons[index] : null}
                   iconPosition="start"
                 />
@@ -114,11 +93,11 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
             </Tabs>
           </Box>
 
-          {/* Desktop Host Button */}
-          <Box sx={{ display: { xs: "none", sm: "flex" } }}>
-            <Button color="inherit" onClick={handleHostClick}>
-              <AddHomeRoundedIcon sx={{mb: 1, mr: 1}}/>
-              {isHost ? "Switch to hosting" : "Become a host"}
+          {/* Desktop Actions */}
+          <Box sx={{ display: { xs: "none", sm: "flex" }, gap: 1 }}>
+            <Button color="inherit" onClick={() => navigate("/home")}>
+              <TravelExploreIcon sx={{mr: 1}}/>
+              Switch to Travelling
             </Button>
           </Box>
         </Toolbar>
@@ -131,33 +110,33 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
         onClose={() => setDrawerOpen(false)}
         PaperProps={{ sx: { width: 300, borderTopRightRadius: 20, borderBottomRightRadius: 20 } }}
       >
-        {/* Bookify Header */}
+        {/* Host Dashboard Header */}
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, p: 2, bgcolor: "primary.main", color: "white", fontWeight: "bold", fontSize: 20 }}>
-          <BookIcon /> Bookify
+          <BookIcon /> Host Dashboard
         </Box>
-        <Toolbar/>
+        <Toolbar />
 
         {/* Profile */}
         <Box sx={{ p: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
           <Avatar src={auth.currentUser?.photoURL || "/default-profile.png"} sx={{ width: 84, height: 84 }} />
           <Typography variant="h6" sx={{ fontWeight: "bold" }}>
-            {auth.currentUser?.displayName || "Guest User"}
+            {auth.currentUser?.displayName || "Host User"}
           </Typography>
           <Typography variant="body4" color="text.secondary">
-            {auth.currentUser?.email || "guest@example.com"}
+            {auth.currentUser?.email || "host@example.com"}
           </Typography>
           <Button variant="outlined" size="small" sx={{ mt: 1 }} onClick={() => navigate("/profile")}>
             View Profile
           </Button>
-          <Toolbar/>
+          <Toolbar />
         </Box>
 
         {/* Drawer Menu */}
         <List>
           <ListItem disablePadding>
             <ListItemButton onClick={() => navigate("/home")}>
-              <ListItemIcon><HomeIcon /></ListItemIcon>
-              <ListItemText primary="Home" />
+              <ListItemIcon><TravelExploreIcon /></ListItemIcon>
+              <ListItemText primary="Switch to Travelling" />
             </ListItemButton>
           </ListItem>
 
@@ -169,25 +148,25 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
           </ListItem>
 
           <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate("/messages")}>
+            <ListItemButton onClick={() => setActivePage("messages")}>
               <ListItemIcon><MessageIcon /></ListItemIcon>
               <ListItemText primary="Messages" />
             </ListItemButton>
           </ListItem>
-
-          <ListItem disablePadding>
-                    <ListItemButton
-                      onClick={() => {
-                        setIsLogoutModalOpen(true);
-                        setDrawerOpen(false);
-                      }}
-                    >
-                      <ListItemIcon>
-                        <LogoutIcon />
-                      </ListItemIcon>
-                      <ListItemText primary="Logout" />
-                    </ListItemButton>
-                  </ListItem>
+          
+         <ListItem disablePadding>
+          <ListItemButton
+            onClick={() => {
+              setIsLogoutModalOpen(true);
+              setDrawerOpen(false);
+            }}
+          >
+            <ListItemIcon>
+              <LogoutIcon />
+            </ListItemIcon>
+            <ListItemText primary="Logout" />
+          </ListItemButton>
+        </ListItem>
         </List>
       </Drawer>
 
@@ -195,11 +174,11 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
       <Box sx={{ display: { xs: "block", sm: "none" }, position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
         <BottomNavigation
           value={activeTab}
-          onChange={(e, newValue) => handleCategoryClick(newValue)}
+          onChange={(e, newValue) => handlePageClick(newValue)}
           showLabels
         >
-          {categories.map((cat, index) => (
-            <BottomNavigationAction key={cat} label={cat} icon={tabIcons[index]} />
+          {pageLabels.map((label, index) => (
+            <BottomNavigationAction key={label} label={label} icon={tabIcons[index]} />
           ))}
         </BottomNavigation>
       </Box>
@@ -214,4 +193,4 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
   );
 }
 
-export default Navigation;
+export default HostNavigation;

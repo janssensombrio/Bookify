@@ -16,14 +16,17 @@ function ExperienceCalendar({ availability, onDateChange }) {
     if (!isDateSelectable(date)) return;
     setSelectedDate(date);
     setSelectedTime(null); // reset time when date changes
+    // notify parent that a date was selected (no time yet)
+    if (onDateChange) {
+      onDateChange({ checkIn: date.toISOString().split("T")[0], selectedTime: null });
+    }
   };
 
   const handleTimeSelect = (time) => {
     setSelectedTime(time);
-    onDateChange({
-      selectedDate: selectedDate.toISOString().split("T")[0],
-      selectedTime: time
-    });
+    if (onDateChange) {
+      onDateChange({ checkIn: selectedDate.toISOString().split("T")[0], selectedTime: time });
+    }
   };
 
   const timesForSelectedDate = selectedDate

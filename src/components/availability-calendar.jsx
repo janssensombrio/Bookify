@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { DateRange } from "react-date-range";
-import { enUS } from "date-fns/locale"; 
+import { enUS } from "date-fns/locale";
 import "react-date-range/dist/styles.css";
 import "react-date-range/dist/theme/default.css";
 
 function AvailabilityCalendar({ availability, onDateChange }) {
+  // Range used by react-date-range
   const [range, setRange] = useState([
     {
       startDate: null,
@@ -13,38 +14,34 @@ function AvailabilityCalendar({ availability, onDateChange }) {
     },
   ]);
 
-  const [startDate, setStartDate] = useState(new Date());
-  const [endDate, setEndDate] = useState(new Date());
-
   useEffect(() => {
     if (availability?.start && availability?.end) {
       const start = new Date(availability.start);
       const end = new Date(availability.end);
-      // Only set the min/max bounds, not the selected range
-      setStartDate(start);
-      setEndDate(end);
+
+      setRange([{ startDate: start, endDate: end, key: "selection" }]);
+    } else {
+      setRange([{ startDate: null, endDate: null, key: "selection" }]);
     }
   }, [availability]);
 
-  // inside AvailabilityCalendar
+  // Disable dates outside of availability range
   const isDateDisabled = (date) => {
-    if (!availability || !Array.isArray(availability)) return false;
-    const availableDates = availability.map(d => new Date(d.date).toDateString());
-    return !availableDates.includes(date.toDateString());
+    if (!availability?.start || !availability?.end) return false;
+    const start = new Date(availability.start);
+    const end = new Date(availability.end);
+    return date < start || date > end;
   };
 
-  // Handle date selection and pass it to parent
   const handleSelect = (item) => {
     setRange([item.selection]);
-    
-    // Pass selected dates back to parent component
-    if (onDateChange && item.selection.startDate && item.selection.endDate) {
-      // Only send if both dates are selected and different
-      if (item.selection.startDate.getTime() !== item.selection.endDate.getTime()) {
-        onDateChange({
-          checkIn: item.selection.startDate.toISOString().split('T')[0],
-          checkOut: item.selection.endDate.toISOString().split('T')[0]
-        });
+
+    if (onDateChange) {
+      const { startDate, endDate } = item.selection;
+      if (startDate && endDate) {
+        onDateChange({ start: startDate, end: endDate });
+      } else {
+        onDateChange({ start: null, end: null });
       }
     }
   };
@@ -55,13 +52,13 @@ function AvailabilityCalendar({ availability, onDateChange }) {
         editableDateInputs={false}
         onChange={handleSelect}
         ranges={range}
-        minDate={startDate}
-        maxDate={endDate}
+        minDate={availability?.start ? new Date(availability.start) : undefined}
+        maxDate={availability?.end ? new Date(availability.end) : undefined}
         locale={enUS}
         moveRangeOnFirstSelection={false}
         showSelectionPreview={true}
         disabledDay={isDateDisabled}
-        months={2}
+        months={1}
         direction="horizontal"
       />
     </div>

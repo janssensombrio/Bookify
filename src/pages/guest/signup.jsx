@@ -8,6 +8,7 @@ import {
 } from "firebase/auth";
 import { collection, addDoc, query, where, getDocs, updateDoc, doc } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import { Container, Box, TextField, Button, Typography, Divider } from "@mui/material";
 
 export const Signup = () => {
   const [firstName, setFirstName] = useState("");
@@ -15,12 +16,10 @@ export const Signup = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  
-  const usersCollectionRef = collection(database, "users");
 
+  const usersCollectionRef = collection(database, "users");
   const navigate = useNavigate();
 
-  // Sign up with email and password
   const handleSignup = async () => {
     if (password !== confirmPassword) {
       alert("Passwords do not match!");
@@ -31,16 +30,10 @@ export const Signup = () => {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
-      // Set display name
-      await updateProfile(user, {
-        displayName: `${firstName} ${lastName}`,
-      });
-
-      // Send verification email
+      await updateProfile(user, { displayName: `${firstName} ${lastName}` });
       await sendEmailVerification(user);
       alert("Verification email sent! Please check your inbox.");
 
-      // Add user data to Firestore
       await addDoc(usersCollectionRef, {
         firstName,
         lastName,
@@ -50,20 +43,17 @@ export const Signup = () => {
         verified: false,
       });
 
-      // Wait until the user verifies their email
+      // Check verification periodically
       const checkVerification = setInterval(async () => {
-        await user.reload(); // Refresh user data
+        await user.reload();
         if (user.emailVerified) {
           clearInterval(checkVerification);
 
-          // Update Firestore 'verified' field
           const q = query(usersCollectionRef, where("userId", "==", user.uid));
           const snapshot = await getDocs(q);
           if (!snapshot.empty) {
             const userDocId = snapshot.docs[0].id;
-            await updateDoc(doc(database, "users", userDocId), {
-              verified: true,
-            });
+            await updateDoc(doc(database, "users", userDocId), { verified: true });
           }
 
           alert("Email verified! Redirecting...");
@@ -72,82 +62,112 @@ export const Signup = () => {
       }, 3000);
     } catch (err) {
       console.error("Signup error:", err.message);
-      alert(err.message === 'Firebase: Error (auth/email-already-in-use).' ? 'Google account already exist!' : err.message);
+      alert(
+        err.message === "Firebase: Error (auth/email-already-in-use)."
+          ? "Google account already exists!"
+          : err.message
+      );
     }
   };
 
-  // Sign up with Google (already verified by Google)
   const handleGoogleSignup = async () => {
-  try {
-    const result = await signInWithPopup(auth, googleProvider);
-    const user = result.user;
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
 
-    // Split displayName into first and last name
-    const nameParts = user.displayName ? user.displayName.split(" ") : ["", ""];
-        const firstName = nameParts[0];
-        const lastName = nameParts.slice(1).join(" "); // handle middle names
+      const nameParts = user.displayName ? user.displayName.split(" ") : ["", ""];
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(" ");
 
-        await addDoc(usersCollectionRef, {
-          email: user.email,
-          firstName,
-          lastName,
-          type: "guest",
-          userId: user.uid,
-          verified: true,
-        });
+      await addDoc(usersCollectionRef, {
+        email: user.email,
+        firstName,
+        lastName,
+        type: "guest",
+        userId: user.uid,
+        verified: true,
+      });
 
-        navigate("/home");
-      } catch (err) {
-        console.error("Google signup error:", err.message);
-        alert(err.message);
-      }
-    };
-
+      navigate("/home");
+    } catch (err) {
+      console.error("Google signup error:", err.message);
+      alert(err.message);
+    }
+  };
 
   return (
-    <div className="signup-page-wrapper">
-      <h1>Create an Account</h1>
+    <Container maxWidth="xs">
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        gap={2}
+      >
+        <Typography variant="h4" fontWeight="bold">
+          Create an Account
+        </Typography>
 
-      <div className="signup-form">
-        <input
-          placeholder="First Name..."
-          type="text"
+        <TextField
+          fullWidth
+          label="First Name"
+          variant="outlined"
+          value={firstName}
           onChange={(e) => setFirstName(e.target.value)}
         />
-        <input
-          placeholder="Last Name..."
-          type="text"
+        <TextField
+          fullWidth
+          label="Last Name"
+          variant="outlined"
+          value={lastName}
           onChange={(e) => setLastName(e.target.value)}
         />
-        <input
-          placeholder="Email..."
+        <TextField
+          fullWidth
+          label="Email"
           type="email"
+          variant="outlined"
+          value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <input
-          placeholder="Password..."
+        <TextField
+          fullWidth
+          label="Password"
           type="password"
+          variant="outlined"
+          value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <input
-          placeholder="Confirm Password..."
+        <TextField
+          fullWidth
+          label="Confirm Password"
           type="password"
+          variant="outlined"
+          value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
         />
 
-        <button onClick={handleSignup}>Sign Up</button>
-        <button onClick={handleGoogleSignup}>Sign Up with Google</button>
+        <Button fullWidth variant="contained" color="primary" onClick={handleSignup}>
+          Sign Up
+        </Button>
 
-        <p>
+        <Divider sx={{ width: "100%", my: 1 }}>OR</Divider>
+
+        <Button fullWidth variant="outlined" color="secondary" onClick={handleGoogleSignup}>
+          Sign Up with Google
+        </Button>
+
+        <Typography variant="body2">
           Already have an account?{" "}
           <span
             onClick={() => navigate("/login")}
-            style={{ color: "blue", cursor: "pointer" }}
+            style={{ color: "#1976d2", cursor: "pointer" }}
           >
             Log In
           </span>
-        </p>
-      </div>
-    </div>
+        </Typography>
+      </Box>
+    </Container>
   );
 };

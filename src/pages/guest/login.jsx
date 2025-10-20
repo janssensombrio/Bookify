@@ -3,6 +3,14 @@ import { auth, database, googleProvider } from "../../config/firebase";
 import { signInWithEmailAndPassword, signInWithPopup } from "firebase/auth";
 import { collection, addDoc, getDocs, query, where } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
+import {
+  Container,
+  Box,
+  TextField,
+  Button,
+  Typography,
+  Divider
+} from "@mui/material";
 
 export const Login = () => {
   const [email, setEmail] = useState("");
@@ -46,60 +54,88 @@ export const Login = () => {
     }
   };
 
-  // Function to ensure user exists in Firestore
   const ensureUserInFirestore = async (user) => {
     const q = query(usersCollectionRef, where("uid", "==", user.uid));
     const snapshot = await getDocs(q);
 
     if (snapshot.empty) {
-      // Split displayName into first and last name
       const nameParts = user.displayName ? user.displayName.split(" ") : ["", ""];
       const firstName = nameParts[0];
-      const lastName = nameParts.slice(1).join(" "); // handle middle names
+      const lastName = nameParts.slice(1).join(" ");
 
       await addDoc(usersCollectionRef, {
         email: user.email,
         firstName,
         lastName,
         type: "guest",
-        uid: user.uid,       // matches the rule
-        verified: user.emailVerified || false, // mark Google users as verified if email verified
+        uid: user.uid,
+        verified: user.emailVerified || false,
       });
 
       console.log("User added to Firestore:", user.email);
     }
   };
 
-
   return (
-    <div className="login-page-wrapper">
-      <h1>Bookify</h1>
+    <Container maxWidth="xs">
+      <Box
+        display="flex"
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+        minHeight="100vh"
+        gap={2}
+      >
+        <Typography variant="h4" fontWeight="bold">Bookify</Typography>
 
-      <div className="login-form">
-        <input
-          placeholder="Email..."
+        <TextField
+          fullWidth
+          label="Email"
           type="email"
+          variant="outlined"
+          value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-        <input
-          placeholder="Password..."
+
+        <TextField
+          fullWidth
+          label="Password"
           type="password"
+          variant="outlined"
+          value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
 
-        <button onClick={handleLogin}>Login</button>
-        <button onClick={handleGoogleLogin}>Login with Google</button>
+        <Button
+          fullWidth
+          variant="contained"
+          color="primary"
+          onClick={handleLogin}
+        >
+          Login
+        </Button>
 
-        <p>
+        <Divider sx={{ width: "100%", my: 1 }}>OR</Divider>
+
+        <Button
+          fullWidth
+          variant="outlined"
+          color="secondary"
+          onClick={handleGoogleLogin}
+        >
+          Login with Google
+        </Button>
+
+        <Typography variant="body2">
           Don’t have an account?{" "}
           <span
             onClick={() => navigate("/signup")}
-            style={{ color: "blue", cursor: "pointer" }}
+            style={{ color: "#1976d2", cursor: "pointer" }}
           >
             Sign Up
           </span>
-        </p>
-      </div>
-    </div>
+        </Typography>
+      </Box>
+    </Container>
   );
 };

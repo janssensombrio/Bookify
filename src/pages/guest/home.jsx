@@ -3,15 +3,15 @@ import { useNavigate } from "react-router-dom";
 import Navigation from '../../components/nav.jsx';
 import Search from '../../components/search.jsx';
 import HostCategModal from '../../components/host-categ-modal.jsx';
-import {
-  collection,
-  getDocs,
-  where,
-  query
-} from "firebase/firestore";
-import { database } from "../../config/firebase";
 import ListingCardContainer from '../../components/listing-card-container.jsx';
-import './styles/home.css';
+import { collection, getDocs } from "firebase/firestore";
+import { database } from "../../config/firebase";
+
+import Toolbar from "@mui/material/Toolbar";
+import Slider from "react-slick";
+import "slick-carousel/slick/slick.css"; 
+import "slick-carousel/slick/slick-theme.css"; 
+import { Box } from "@mui/material";
 
 export const Home = () => {
   const [showHostModal, setShowHostModal] = useState(false);
@@ -22,30 +22,37 @@ export const Home = () => {
 
   const [selectedCategory, setSelectedCategory] = useState("Homes");
   const [listings, setListings] = useState([]);
+  const [carouselImages, setCarouselImages] = useState([]);
 
   // 🔍 Fetch listings filtered by category
   const fetchListings = async (category) => {
     try {
       const listingsRef = collection(database, "listings");
-      const q = query(listingsRef, where("category", "==", category));
-      const snapshot = await getDocs(q);
-
+      const snapshot = await getDocs(listingsRef);
       const listingsData = snapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       }));
-      setListings(listingsData);
+
+      // Filter by category
+      const filtered = listingsData.filter(item => item.category === category);
+      setListings(filtered);
+
+      // For carousel, get the first photo of each listing (or all)
+      const images = listingsData
+        .map(item => item.photos)
+        .flat()
+        .filter(Boolean); // remove undefined/null
+      setCarouselImages(images);
     } catch (error) {
       console.error("Error fetching listings:", error);
     }
   };
 
-  // 🏠 Load default category listings
   useEffect(() => {
     fetchListings(selectedCategory);
   }, [selectedCategory]);
 
-  // 🔁 When user clicks category
   const handleCategorySelect = (category) => {
     setSelectedCategory(category);
     fetchListings(category);
@@ -62,6 +69,18 @@ export const Home = () => {
     }
   };
 
+  // Carousel settings
+  const sliderSettings = {
+    dots: true,
+    infinite: true,
+    speed: 800,
+    slidesToShow: 1,
+    slidesToScroll: 1,
+    autoplay: true,
+    autoplaySpeed: 4000,
+    arrows: false,
+  };
+
   return (
     <>
       <header>
@@ -69,10 +88,42 @@ export const Home = () => {
           onOpenHostModal={handleOpenHostModal}
           onCategorySelect={handleCategorySelect}
         />
-        <Search />
       </header>
 
+      {/* Carousel behind search */}
+      <Toolbar/>
+      <Box sx={{ position: "relative", width: "100%", height: { xs: 330, sm: 400 }, overflow: "hidden" }}>
+        <Slider {...sliderSettings}>
+          {carouselImages.map((url, index) => (
+            <Box
+              key={index}
+              component="div"
+              sx={{
+                height: { xs: 340, sm: 400 },
+                backgroundImage: `url(${url})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }}
+            />
+          ))}
+        </Slider>
+
+        {/* Search component over carousel */}
+        <Box sx={{
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          width: { xs: "90%", sm: "60%" },
+          zIndex: 2,
+        }}>
+          <Search />
+        </Box>
+      </Box>
+
       <ListingCardContainer category={selectedCategory} items={listings} />
+      <Toolbar/>
+
       {showHostModal && (
         <HostCategModal
           onClose={handleCloseHostModal}

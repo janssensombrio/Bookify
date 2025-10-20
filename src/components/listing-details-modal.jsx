@@ -4,6 +4,7 @@ import { database, auth } from "../config/firebase";
 import "./styles/listing-details-modal.css";
 import AvailabilityCalendar from "./availability-calendar";
 import ExperienceCalendar from "./experience-calendar";
+import { PayPalButtons } from "@paypal/react-paypal-js";
 
 const ListingDetailsModal = ({ listingId, onClose }) => {
   const [listing, setListing] = useState(null);
@@ -15,10 +16,11 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
   // State for selected dates
   const [selectedDates, setSelectedDates] = useState({
     checkIn: "",
-    checkOut: ""
+    checkOut: "",
+    selectedTime: ""
   });
 
-  const [includeCleaning, setIncludeCleaning] = useState(false); // default true
+  const [includeCleaning, setIncludeCleaning] = useState(true); // default true
 
   useEffect(() => {
   const fetchListing = async () => {
@@ -48,89 +50,28 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
   };
 
   // Handle Reserve Now click
-  // Handle Reserve Now click
+  const [showPayPal, setShowPayPal] = useState(false);
+  const [totalAmount, setTotalAmount] = useState(0);
+
   const handleBookNow = async () => {
-    try {
-      const user = auth.currentUser;
-      
-      if (!user) {
-        alert("Please log in to make a reservation.");
-        return;
-      }
-
-      if (!selectedDates.checkIn || !selectedDates.checkOut) {
-        alert("Please select check-in and check-out dates from the calendar.");
-        return;
-      }
-
-      const checkIn = new Date(selectedDates.checkIn);
-      const checkOut = new Date(selectedDates.checkOut);
-      const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
-
-      if (nights <= 0) {
-        alert("Check-out date must be after check-in date.");
-        return;
-      }
-
-      const pricePerNight = parseFloat(listing.price) || 0;
-      const cleaningFee = parseFloat(listing.cleaningFee) || 0;
-      const subtotal = pricePerNight * nights;
-      const serviceFee = subtotal * 0.12;
-      const totalPrice = subtotal + cleaningFee + serviceFee;
-
-      // ✅ Build booking data without undefined fields
-      const bookingData = {
-        uid: user.uid,
-        checkIn: selectedDates.checkIn,
-        checkOut: selectedDates.checkOut,
-        nights: nights,
-        numberOfGuests: adults + children,
-        adults: adults,
-        children: children,
-        infants: infants,
-        guestEmail: user.email,
-        pricePerNight: pricePerNight,
-        subtotal: subtotal,
-        cleaningFee: cleaningFee,
-        serviceFee: serviceFee,
-        totalPrice: totalPrice,
-        listingTitle: listing.title || "Untitled",
-        listingCategory: listing.category || "Homes",
-        status: "pending",
-        paymentStatus: "pending",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // ✅ Only add optional fields if they exist
-      if (listing.uid) {
-        bookingData.hostId = listing.uid;
-      }
-
-      if (user.displayName) {
-        bookingData.guestName = user.displayName;
-      }
-
-      if (listing.region && listing.province && listing.municipality) {
-        bookingData.listingAddress = `${listing.region}, ${listing.province}, ${listing.municipality}`;
-      }
-
-      if (listing.photos && listing.photos.length > 0) {
-        bookingData.listingPhotos = listing.photos;
-      }
-
-      console.log("Booking data to save:", bookingData); // ✅ Debug log
-
-      const bookingsRef = collection(database, "bookings");
-      const docRef = await addDoc(bookingsRef, bookingData);
-
-      alert(`Reservation created successfully! Booking ID: ${docRef.id}`);
-      onClose();
-      
-    } catch (error) {
-      console.error("Error creating reservation:", error);
-      alert(`Failed to create reservation: ${error.message}`);
+    if (!selectedDates.checkIn || !selectedDates.checkOut) {
+      return alert("Please select check-in and check-out dates.");
     }
+
+    const checkIn = new Date(selectedDates.checkIn);
+    const checkOut = new Date(selectedDates.checkOut);
+    const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+
+    if (nights <= 0) return alert("Invalid date range.");
+
+    const pricePerNight = parseFloat(listing.price) || 0;
+    const cleaningFee =  includeCleaning ? parseFloat(listing.cleaningFee) || 0 : 0;
+    const subtotal = pricePerNight * nights;
+    const serviceFee = subtotal * 0.12;
+    const total = subtotal + cleaningFee + serviceFee;
+
+    setTotalAmount(total); // store amount for PayPal
+    setShowPayPal(true); // show PayPal button next
   };
 
   const handleBookExperience = async () => {
@@ -234,7 +175,10 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
             <p><strong>Bedrooms:</strong> {listing.bedrooms}</p>
             <p><strong>Beds:</strong> {listing.beds}</p>
             <p><strong>Bathrooms:</strong> {listing.bathrooms}</p>
-            <p><strong>Location:</strong> {listing.region.name}, {listing.province.name}, {listing.municipality.name}, {listing.street}</p>
+            <p>
+              <strong>Location:</strong>{' '}
+              {listing.region?.name || listing.region || 'N/A'}, {listing.province?.name || listing.province || 'N/A'}, {listing.municipality?.name || listing.municipality || 'N/A'}, {listing.street || 'N/A'}
+            </p>
             <p><strong>Cleaning Fee:</strong> ₱{listing.cleaningFee}</p>
             {listing.discountType && (
               <p>
@@ -406,12 +350,12 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
               <div style={{ marginBottom: "20px", padding: "15px", border: "1px solid #ddd", borderRadius: "8px" }}>
                 <h4>Price Summary</h4>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                  <span>₱{priceSummary.pricePerNight} × {priceSummary.nights} nights</span>
+                  <span>₱{priceSummary.pricePerNight} × {priceSummary.nights} night(s)</span>
                   <span>₱{priceSummary.subtotal.toFixed(2)}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                   <span>Cleaning fee</span>
-                  <span>₱{priceSummary.cleaningFee.toFixed(2)}</span>
+                  <span>₱{(includeCleaning ? priceSummary.cleaningFee : 0).toFixed(2)}</span>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                   <span>Service fee (12%)</span>
@@ -428,14 +372,126 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
             <div className="modal-actions">
               <button className="share-btn">Share</button>
               <button className="favorite-btn">Add to Favorites</button>
-              <button className="reserve-btn" onClick={handleBookNow}>Book Now</button>
+              {showPayPal ? (
+              <div style={{ marginTop: "20px" }}>
+                <PayPalButtons
+                  style={{ layout: "vertical" }}
+                  createOrder={(data, actions) => {
+                    return actions.order.create({
+                      purchase_units: [
+                        {
+                          amount: {
+                            value: totalAmount.toFixed(2), // use computed total
+                          },
+                        },
+                      ],
+                    });
+                  }}
+                  onApprove={async (data, actions) => {
+                    const details = await actions.order.capture();
+                    const user = auth.currentUser;
+
+                    // Save booking in Firestore after successful payment
+                    try {
+                        // use the user captured above
+                      
+                        if (!user) {
+                          alert("Please log in to make a reservation.");
+                          return;
+                        }
+
+                      if (!selectedDates.checkIn || !selectedDates.checkOut) {
+                        alert("Please select check-in and check-out dates from the calendar.");
+                        return;
+                      }
+
+                      const checkIn = new Date(selectedDates.checkIn);
+                      const checkOut = new Date(selectedDates.checkOut);
+                      const nights = Math.ceil((checkOut - checkIn) / (1000 * 60 * 60 * 24));
+
+                      if (nights <= 0) {
+                        alert("Check-out date must be after check-in date.");
+                        return;
+                      }
+
+                      const pricePerNight = parseFloat(listing.price) || 0;
+                      const cleaningFee = includeCleaning ? parseFloat(listing.cleaningFee) || 0 : 0;
+                      const subtotal = pricePerNight * nights;
+                      const serviceFee = subtotal * 0.12;
+                      const totalPrice = subtotal + cleaningFee + serviceFee;
+
+                      // ✅ Build booking data without undefined fields
+                      const bookingData = {
+                        uid: user.uid,
+                        checkIn: selectedDates.checkIn,
+                        checkOut: selectedDates.checkOut,
+                        nights: nights,
+                        numberOfGuests: adults + children,
+                        adults: adults,
+                        children: children,
+                        infants: infants,
+                        guestEmail: user.email,
+                        pricePerNight: pricePerNight,
+                        subtotal: subtotal,
+                        cleaningFee: cleaningFee,
+                        serviceFee: serviceFee,
+                        totalPrice: totalPrice,
+                        listingTitle: listing.title || "Untitled",
+                        listingCategory: listing.category || "Homes",
+                        status: "pending",
+                        paymentStatus: "paid",
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                      };
+
+                      // ✅ Only add optional fields if they exist
+                      if (listing.uid) {
+                        bookingData.hostId = listing.uid;
+                      }
+
+                      if (user.displayName) {
+                        bookingData.guestName = user.displayName;
+                      }
+
+                      if (listing.region && listing.province && listing.municipality) {
+                        bookingData.listingAddress = `${listing.region}, ${listing.province}, ${listing.municipality}`;
+                      }
+
+                      if (listing.photos && listing.photos.length > 0) {
+                        bookingData.listingPhotos = listing.photos;
+                      }
+
+                      console.log("Booking data to save:", bookingData); // ✅ Debug log
+
+                      const bookingsRef = collection(database, "bookings");
+                      const docRef = await addDoc(bookingsRef, bookingData);
+
+                      alert("Booking successful and payout sent!");
+                      onClose();
+
+                    } catch (error) {
+                      console.error("Error creating reservation:", error);
+                      alert(`Failed to create reservation: ${error.message}`);
+                    }
+                  }}
+                  onCancel={() => {
+                    // alert("Payment canceled.");
+                    setShowPayPal(false);
+                  }}
+                />
+              </div>
+            ) : (
+              <button className="reserve-btn" onClick={handleBookNow}>
+                Book Now
+              </button>
+            )}
             </div>
           </>
         );
 
-      case "Experiences":
-      // 👇 Compute price summary for experiences
-      const experiencePriceSummary = () => {
+  case "Experiences": {
+  // 👇 Compute price summary for experiences
+  const experiencePriceSummary = () => {
         if (!selectedDates.checkIn || !selectedDates.selectedTime) return null;
         
         const totalParticipants = adults;
@@ -517,10 +573,11 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
           </div>
         </>
       );
+      }
 
-      case "Services":
-      // 👇 Compute price summary for services
-      const servicePriceSummary = () => {
+  case "Services": {
+  // 👇 Compute price summary for services
+  const servicePriceSummary = () => {
         if (!selectedDates.checkIn || !selectedDates.selectedTime) return null;
 
         const totalParticipants = adults;
@@ -642,6 +699,7 @@ const ListingDetailsModal = ({ listingId, onClose }) => {
           </div>
         </>
       );
+      }
 
       default:
         return <p>No details available.</p>;
