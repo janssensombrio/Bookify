@@ -7,25 +7,9 @@ import {
   serverTimestamp,
   query,
   where,
-  doc,
-  getDoc,
 } from "firebase/firestore";
 import { database, auth } from "../config/firebase";
-import {
-  Box,
-  Typography,
-  Button,
-  Grid,
-  Card,
-  CardContent,
-  TextField,
-  IconButton,
-  Divider,
-  Avatar,
-} from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
-import ChatIcon from "@mui/icons-material/Chat";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import { ArrowLeft, Send, MessageSquare } from "lucide-react";
 
 export const MessagesPage = () => {
   const [conversations, setConversations] = useState([]);
@@ -37,87 +21,69 @@ export const MessagesPage = () => {
   const currentUser = auth.currentUser?.uid;
   const navigate = useNavigate();
 
-  // Fetch all conversations for the current user and user details
+  // Fetch conversations + user info
   useEffect(() => {
     const getConversations = async () => {
-      console.log("Fetching conversations for user:", currentUser);  // Debug: Check current user
       const snapshot = await getDocs(collection(database, "messages"));
-      const allMessages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      console.log("All messages:", allMessages);  // Debug: Check messages
+      const all = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 
-      // Get unique conversations
       const uniqueUsers = {};
-      allMessages.forEach((msg) => {
-        if (msg.senderId === currentUser || msg.receiverId === currentUser) {
-          const otherUser = msg.senderId === currentUser ? msg.receiverId : msg.senderId;
-          if (!uniqueUsers[otherUser]) uniqueUsers[otherUser] = msg;
+      all.forEach((m) => {
+        if (m.senderId === currentUser || m.receiverId === currentUser) {
+          const other = m.senderId === currentUser ? m.receiverId : m.senderId;
+          if (!uniqueUsers[other]) uniqueUsers[other] = m;
         }
       });
 
       setConversations(Object.values(uniqueUsers));
-      console.log("Unique conversations:", Object.values(uniqueUsers));  // Debug: Check conversations
 
-      // Fetch user details for all unique otherUsers
+      // fetch user docs
       const userIds = Object.keys(uniqueUsers);
-      console.log("User IDs to fetch:", userIds);  // Debug: Check UIDs
       const userPromises = userIds.map(async (uid) => {
         try {
-          const q = query(collection(database, "users"), where("uid", "==", uid));
-          const querySnapshot = await getDocs(q);
-
-          if (!querySnapshot.empty) {
-            const data = querySnapshot.docs[0].data();
-            console.log("User data:", data);
-
-            // RETURN the object so Promise.all collects it
+          const qUsers = query(collection(database, "users"), where("uid", "==", uid));
+          const qs = await getDocs(qUsers);
+          if (!qs.empty) {
+            const data = qs.docs[0].data();
             return {
               uid,
-              displayName: `${data.firstName || ''} ${data.lastName || ''}`.trim(),
+              displayName: `${data.firstName || ""} ${data.lastName || ""}`.trim() || uid,
               photoURL: data.photoURL || null,
             };
-          } else {
-            console.log("User not found for UID:", uid);
-            return { uid, displayName: uid, photoURL: null };
           }
-        } catch (error) {
-          console.error("Error fetching user", uid, ":", error);
+          return { uid, displayName: uid, photoURL: null };
+        } catch {
           return { uid, displayName: uid, photoURL: null };
         }
       });
 
-      const userData = await Promise.all(userPromises);
-      const usersMap = {};
-      userData.forEach((user) => {
-        usersMap[user.uid] = { displayName: user.displayName, photoURL: user.photoURL };
-      });
-      setUsers(usersMap);
-      console.log("Users map:", usersMap);  // Debug: Final users state
+      const userArr = await Promise.all(userPromises);
+      const map = {};
+      userArr.forEach((u) => (map[u.uid] = { displayName: u.displayName, photoURL: u.photoURL }));
+      setUsers(map);
     };
 
-    if (currentUser) getConversations();  // Only run if user is logged in
+    if (currentUser) getConversations();
   }, [currentUser]);
 
-  // Open chat with a user
   const openChat = async (userId) => {
     setSelectedChat(userId);
 
     const snapshot = await getDocs(collection(database, "messages"));
     const msgs = snapshot.docs
-      .map((doc) => doc.data())
+      .map((d) => d.data())
       .filter(
         (m) =>
           (m.senderId === currentUser && m.receiverId === userId) ||
           (m.senderId === userId && m.receiverId === currentUser)
       )
-      .sort((a, b) => a.timestamp?.seconds - b.timestamp?.seconds);
+      .sort((a, b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
 
     setMessages(msgs);
   };
 
-  // Send a new message
   const sendMessage = async () => {
     if (!selectedChat || newMessage.trim() === "") return;
-
     await addDoc(collection(database, "messages"), {
       uid: currentUser,
       senderId: currentUser,
@@ -125,165 +91,134 @@ export const MessagesPage = () => {
       message: newMessage,
       timestamp: serverTimestamp(),
     });
-
     setNewMessage("");
     openChat(selectedChat);
   };
 
+  const ChatBubble = ({ own, children }) => (
+    <div className={`flex ${own ? "justify-end" : "justify-start"} mb-2`}>
+      <div
+        className={`max-w-[72%] rounded-2xl px-3 py-2 shadow ${
+          own ? "bg-blue-600 text-white" : "bg-white text-gray-800 border border-gray-200"
+        }`}
+      >
+        {children}
+      </div>
+    </div>
+  );
+
   return (
-    <Box
-      sx={{
-        height: "84vh",
-        display: "flex",
-        bgcolor: "background.default",
-        px: 4,
-      }}
-    >
-      <Grid container sx={{ flex: 1 }}>
-        {/* Conversations Sidebar */}
-        <Grid item xs={12} md={5} sx={{ borderRight: 1, borderColor: "divider" }}>
-          <Card
-            sx={{
-              height: "100%",
-              display: "flex",
-              flexDirection: "column",
-              borderRadius: 0,
-              boxShadow: "none",
-              px: 4,
-            }}
-          >
-            <Typography variant="h4" component="h2" gutterBottom sx={{ fontWeight: 600, color: '#1976d2', mt: 6 }}>
-              Messages
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-              View all your messages here.
-            </Typography>
-            <Box sx={{ flex: 1, overflowY: "auto", p: 1 }}>
+    <div className="w-full">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+        {/* Conversations list */}
+        <div className="md:col-span-5">
+          <div className="glass rounded-3xl p-6 bg-white/70 border border-white/40 shadow-lg">
+            <div className="flex items-center gap-2 mb-1">
+              <MessageSquare className="text-blue-600" size={20} />
+              <h2 className="text-xl font-semibold text-foreground">Messages</h2>
+            </div>
+            <p className="text-muted-foreground mb-4">View all your conversations.</p>
+
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
               {conversations.length === 0 ? (
-                <Typography variant="body2" color="text.secondary" sx={{ p: 2, textAlign: "center" }}>
+                <div className="text-sm text-muted-foreground text-center py-6">
                   No conversations yet
-                </Typography>
+                </div>
               ) : (
                 conversations.map((conv) => {
-                  const otherUser = conv.senderId === currentUser ? conv.receiverId : conv.senderId;
-                  const userData = users[otherUser] || { displayName: otherUser, photoURL: null };
-                  console.log("Rendering user", otherUser, "with data:", userData);  // Debug: Check rendering
+                  const other =
+                    conv.senderId === currentUser ? conv.receiverId : conv.senderId;
+                  const data = users[other] || { displayName: other, photoURL: null };
+                  const active = selectedChat === other;
                   return (
-                    <Card
+                    <button
                       key={conv.id}
-                      onClick={() => openChat(otherUser)}
-                      sx={{
-                        mb: 1,
-                        cursor: "pointer",
-                        bgcolor: selectedChat === otherUser ? "primary.light" : "background.paper",
-                        border: selectedChat === otherUser ? "2px solid" : "1px solid",
-                        borderColor: selectedChat === otherUser ? "primary.main" : "divider",
-                        transition: "all 0.2s",
-                        "&:hover": {
-                          bgcolor: "action.hover",
-                        },
-                      }}
+                      onClick={() => openChat(other)}
+                      className={`w-full flex items-center gap-3 rounded-2xl px-3 py-2 transition ${
+                        active
+                          ? "bg-blue-50 border border-blue-200"
+                          : "bg-white/60 border border-gray-200 hover:bg-white"
+                      }`}
                     >
-                      <CardContent sx={{ py: 2, px: 2 }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <Avatar
-                            src={userData.photoURL}
-                            sx={{ bgcolor: "primary.main" }}
-                          >
-                            {!userData.photoURL && userData.displayName.charAt(0).toUpperCase()}
-                          </Avatar>
-                          <Typography variant="body1" fontWeight={500}>
-                            {userData.displayName}
-                            {console.log("Displayed name:", userData.displayName)}  {/* Debug: Check displayed name */}
-                          </Typography>
-                        </Box>
-                      </CardContent>
-                    </Card>
+                      {data.photoURL ? (
+                        <img
+                          src={data.photoURL}
+                          alt={data.displayName}
+                          className="w-10 h-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                          {data.displayName?.charAt(0)?.toUpperCase() || "U"}
+                        </div>
+                      )}
+                      <div className="text-left">
+                        <p className="font-medium text-foreground">{data.displayName}</p>
+                        <p className="text-xs text-muted-foreground">Tap to open chat</p>
+                      </div>
+                    </button>
                   );
                 })
               )}
-            </Box>
-          </Card>
-        </Grid>
+            </div>
+          </div>
+        </div>
 
         {/* Chat Area */}
-        <Grid item xs={12} md={7} sx={{ display: "flex", flexDirection: "column", flex: 2 }}>
-          {selectedChat ? (
-            <>
-              <Box
-                sx={{
-                  flex: 1,
-                  p: 2,
-                  overflowY: "auto",
-                  bgcolor: "grey.50",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 1,
-                }}
-              >
-                {messages.map((msg, index) => (
-                  <Box
-                    key={index}
-                    sx={{
-                      display: "flex",
-                      justifyContent: msg.senderId === currentUser ? "flex-end" : "flex-start",
-                      mb: 1,
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        maxWidth: "70%",
-                        p: 1.5,
-                        borderRadius: 3,
-                        bgcolor: msg.senderId === currentUser ? "primary.main" : "grey.200",
-                        color: msg.senderId === currentUser ? "white" : "text.primary",
-                        boxShadow: 1,
-                      }}
-                    >
-                      <Typography variant="body1">{msg.message}</Typography>
-                    </Box>
-                  </Box>
-                ))}
-              </Box>
-              <Divider />
-              <Box sx={{ p: 4, display: "flex", gap: 1, alignItems: "center" }}>
-                <TextField
-                  fullWidth
-                  variant="outlined"
-                  placeholder="Type a message..."
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-                  sx={{ borderRadius: 2 }}
-                />
-                <IconButton
-                  onClick={sendMessage}
-                  color="primary"
-                  sx={{
-                    bgcolor: "primary.main",
-                    color: "white",
-                    "&:hover": { bgcolor: "primary.dark" },
-                  }}
+        <div className="md:col-span-7">
+          <div className="glass rounded-3xl bg-white/70 border border-white/40 shadow-lg overflow-hidden">
+            {/* Mobile chat header */}
+            {selectedChat && (
+              <div className="md:hidden flex items-center gap-2 p-3 border-b border-gray-200 bg-white/80">
+                <button
+                  className="p-2 rounded-lg hover:bg-gray-100"
+                  onClick={() => setSelectedChat(null)}
+                  aria-label="Back"
                 >
-                  <SendIcon />
-                </IconButton>
-              </Box>
-            </>
-          ) : (
-            <Box
-              sx={{
-                flex: 1,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "text.secondary",
-              }}
-            >
-              <Typography variant="h6">Select a conversation to start chatting</Typography>
-            </Box>
-          )}
-        </Grid>
-      </Grid>
-    </Box>
+                  <ArrowLeft size={18} />
+                </button>
+                <div className="font-medium">
+                  {users[selectedChat]?.displayName || selectedChat}
+                </div>
+              </div>
+            )}
+
+            {selectedChat ? (
+              <>
+                <div className="h-[48vh] md:h-[54vh] overflow-y-auto p-4 bg-gray-50">
+                  {messages.map((m, i) => (
+                    <ChatBubble key={i} own={m.senderId === currentUser}>
+                      <span className="text-sm">{m.message}</span>
+                    </ChatBubble>
+                  ))}
+                </div>
+
+                <div className="border-t border-gray-200 bg-white/80 p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Type a message..."
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                      className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                    />
+                    <button
+                      onClick={sendMessage}
+                      className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 shadow"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="h-[48vh] md:h-[60vh] flex items-center justify-center text-muted-foreground">
+                <p className="text-base">Select a conversation to start chatting</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };

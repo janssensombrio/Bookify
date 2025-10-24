@@ -1,48 +1,29 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { collection, query, where, getDocs } from "firebase/firestore";
-import { auth, database } from "../config/firebase";
+import {
+  Menu,
+  CalendarDays,
+  MessageSquare,
+  List as ListIcon,
+  Calendar as CalendarIcon,
+  Compass,
+} from "lucide-react";
+import Sidebar from "../pages/guest/components/sidebar.jsx"; 
+import BookifyLogo from "../components/bookify-logo.jsx";
+import { useSidebar } from "../context/SidebarContext";
 import LogoutConfirmationModal from "../pages/host/components/logout-confirmation-modal";
-
-import Avatar from "@mui/material/Avatar";
-import AppBar from "@mui/material/AppBar";
-import Toolbar from "@mui/material/Toolbar";
-import IconButton from "@mui/material/IconButton";
-import Typography from "@mui/material/Typography";
-import MenuIcon from "@mui/icons-material/Menu";
-import Button from "@mui/material/Button";
-import Drawer from "@mui/material/Drawer";
-import List from "@mui/material/List";
-import ListItem from "@mui/material/ListItem";
-import ListItemButton from "@mui/material/ListItemButton";
-import ListItemText from "@mui/material/ListItemText";
-import ListItemIcon from "@mui/material/ListItemIcon";
-import Tabs from "@mui/material/Tabs";
-import Tab from "@mui/material/Tab";
-import Box from "@mui/material/Box";
-import BottomNavigation from "@mui/material/BottomNavigation";
-import BottomNavigationAction from "@mui/material/BottomNavigationAction";
-import AddHomeRoundedIcon from '@mui/icons-material/AddHomeRounded';
-
-import TodayIcon from "@mui/icons-material/Today";
-import MessageIcon from "@mui/icons-material/Message";
-import ListIcon from "@mui/icons-material/List";
-import CalendarIcon from "@mui/icons-material/CalendarToday";
-import LogoutIcon from "@mui/icons-material/Logout";
-import HomeIcon from "@mui/icons-material/HomeRounded";
-import FavoriteIcon from "@mui/icons-material/Favorite";
-import TravelExploreIcon from "@mui/icons-material/BeachAccessRounded";
-import BookIcon from "@mui/icons-material/Book";
+import { auth } from "../config/firebase";
 
 function HostNavigation({ setActivePage }) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState(0);
-  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-
   const navigate = useNavigate();
+  const { sidebarOpen, setSidebarOpen } = useSidebar();
+
   const pages = ["today", "messages", "listings", "calendar"];
   const pageLabels = ["Today", "Messages", "Listings", "Calendar"];
-  const tabIcons = [<TodayIcon />, <MessageIcon />, <ListIcon />, <CalendarIcon />];
+  const tabIcons = [CalendarDays, MessageSquare, ListIcon, CalendarIcon];
+
+  const [activeTab, setActiveTab] = useState(0);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
   const handlePageClick = (index) => {
     setActiveTab(index);
@@ -53,7 +34,7 @@ function HostNavigation({ setActivePage }) {
     try {
       await auth.signOut();
       localStorage.removeItem("isHost");
-      navigate("/login");
+      navigate("/");
     } catch (err) {
       console.error("Logout error:", err.message);
       alert("Failed to logout. Try again.");
@@ -62,128 +43,110 @@ function HostNavigation({ setActivePage }) {
 
   return (
     <>
-      {/* Top AppBar */}
-      <AppBar position="fixed" color="primary">
-        <Toolbar sx={{ justifyContent: "space-between" }}>
-          <IconButton edge="start" color="inherit" onClick={() => setDrawerOpen(true)}>
-            <MenuIcon />
-          </IconButton>
+      {/* Sidebar (shared responsive behavior) */}
+      <Sidebar />
 
-          {/* Title */}
-          <Typography variant="h6" sx={{ fontWeight: "bold" }}>
-            <AddHomeRoundedIcon fontSize="medium" sx={{pt: 1, ml: 2}}/> Host Dashboard
-          </Typography>
-
-          {/* Desktop Tabs */}
-          <Box sx={{ flexGrow: 1, display: { xs: "none", sm: "flex" }, justifyContent: "center" }}>
-            <Tabs
-              value={activeTab}
-              onChange={(e, newValue) => handlePageClick(newValue)}
-              textColor="inherit"
-              indicatorColor="secondary"
-            >
-              {pageLabels.map((label, index) => (
-                <Tab
-                  key={label}
-                  label={label}
-                  icon={activeTab === index ? tabIcons[index] : null}
-                  iconPosition="start"
-                />
-              ))}
-            </Tabs>
-          </Box>
-
-          {/* Desktop Actions */}
-          <Box sx={{ display: { xs: "none", sm: "flex" }, gap: 1 }}>
-            <Button color="inherit" onClick={() => navigate("/home")}>
-              <TravelExploreIcon sx={{mr: 1}}/>
-              Switch to Travelling
-            </Button>
-          </Box>
-        </Toolbar>
-      </AppBar>
-
-      {/* Drawer */}
-      <Drawer
-        anchor="left"
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        PaperProps={{ sx: { width: 300, borderTopRightRadius: 20, borderBottomRightRadius: 20 } }}
+      {/* Top Navbar — matches Dashboard/Explore styling */}
+      <header
+        className={`
+          fixed top-0 right-0 z-30
+          bg-white text-gray-800 border-b border-gray-200 shadow-sm
+          transition-all duration-300
+          left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"} /* desktop offset for sidebar */
+        `}
       >
-        {/* Host Dashboard Header */}
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, p: 2, bgcolor: "primary.main", color: "white", fontWeight: "bold", fontSize: 20 }}>
-          <BookIcon /> Host Dashboard
-        </Box>
-        <Toolbar />
+        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
+          {/* Left: hamburger (mobile) + logo/name */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Open menu"
+              aria-controls="app-sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(true)}
+              className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${
+                sidebarOpen ? "hidden" : ""
+              }`}
+            >
+              <Menu size={20} />
+            </button>
 
-        {/* Profile */}
-        <Box sx={{ p: 2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-          <Avatar src={auth.currentUser?.photoURL || "/default-profile.png"} sx={{ width: 84, height: 84 }} />
-          <Typography variant="h6" sx={{ fontWeight: "bold" }}>
-            {auth.currentUser?.displayName || "Host User"}
-          </Typography>
-          <Typography variant="body4" color="text.secondary">
-            {auth.currentUser?.email || "host@example.com"}
-          </Typography>
-          <Button variant="outlined" size="small" sx={{ mt: 1 }} onClick={() => navigate("/profile")}>
-            View Profile
-          </Button>
-          <Toolbar />
-        </Box>
+            <div
+              className="flex items-center gap-2 cursor-pointer select-none"
+              onClick={() => navigate("/hostpage")}
+            >
+              <BookifyLogo />
+              <span className="hidden sm:inline font-semibold text-gray-800">
+                Host Dashboard
+              </span>
+            </div>
+          </div>
 
-        {/* Drawer Menu */}
-        <List>
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate("/home")}>
-              <ListItemIcon><TravelExploreIcon /></ListItemIcon>
-              <ListItemText primary="Switch to Travelling" />
-            </ListItemButton>
-          </ListItem>
+          {/* Center tabs (desktop only) */}
+          <nav className="hidden md:flex items-center gap-2">
+            {pageLabels.map((label, index) => {
+              const Icon = tabIcons[index];
+              const active = activeTab === index;
+              return (
+                <button
+                  key={label}
+                  onClick={() => handlePageClick(index)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-all ${
+                    active
+                      ? "bg-blue-600 text-white shadow-md shadow-blue-500/30"
+                      : "text-gray-700 hover:text-blue-600 hover:bg-blue-50"
+                  }`}
+                >
+                  <Icon size={18} />
+                  {label}
+                </button>
+              );
+            })}
+          </nav>
 
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => navigate("/favorites")}>
-              <ListItemIcon><FavoriteIcon /></ListItemIcon>
-              <ListItemText primary="Favorites" />
-            </ListItemButton>
-          </ListItem>
+          {/* Right actions: Switch to Travelling (desktop only) */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate("/explore")}
+              className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
+              title="Switch to Travelling"
+            >
+              <Compass size={18} />
+              Switch to Travelling
+            </button>
+          </div>
+        </div>
+      </header>
 
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => setActivePage("messages")}>
-              <ListItemIcon><MessageIcon /></ListItemIcon>
-              <ListItemText primary="Messages" />
-            </ListItemButton>
-          </ListItem>
-          
-         <ListItem disablePadding>
-          <ListItemButton
-            onClick={() => {
-              setIsLogoutModalOpen(true);
-              setDrawerOpen(false);
-            }}
-          >
-            <ListItemIcon>
-              <LogoutIcon />
-            </ListItemIcon>
-            <ListItemText primary="Logout" />
-          </ListItemButton>
-        </ListItem>
-        </List>
-      </Drawer>
+      {/* Spacer so the page content below doesn't sit under the fixed header */}
+      <div className="h-[56px] md:h-[56px]" />
 
-      {/* Bottom Navigation for Mobile */}
-      <Box sx={{ display: { xs: "block", sm: "none" }, position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 10 }}>
-        <BottomNavigation
-          value={activeTab}
-          onChange={(e, newValue) => handlePageClick(newValue)}
-          showLabels
-        >
-          {pageLabels.map((label, index) => (
-            <BottomNavigationAction key={label} label={label} icon={tabIcons[index]} />
-          ))}
-        </BottomNavigation>
-      </Box>
+      {/* Mobile Bottom Navigation — keeps original quick switching functionality */}
+      <div className="md:hidden fixed bottom-0 inset-x-0 z-30">
+        <div className="mx-4 mb-4 rounded-2xl bg-white/95 border border-gray-200 shadow-lg">
+          <nav className="grid grid-cols-4">
+            {pageLabels.map((label, index) => {
+              const Icon = tabIcons[index];
+              const active = activeTab === index;
+              return (
+                <button
+                  key={label}
+                  onClick={() => handlePageClick(index)}
+                  className={`flex flex-col items-center justify-center gap-1 py-2 text-xs font-medium ${
+                    active ? "text-blue-600" : "text-gray-600"
+                  }`}
+                  aria-label={label}
+                >
+                  <Icon size={20} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      </div>
 
-      {/* Logout Modal */}
+      {/* Logout Modal (unchanged behavior) */}
       <LogoutConfirmationModal
         isOpen={isLogoutModalOpen}
         onClose={() => setIsLogoutModalOpen(false)}

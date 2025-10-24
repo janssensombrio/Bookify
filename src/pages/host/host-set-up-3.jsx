@@ -536,7 +536,7 @@ if (step === 2)
         fullWidth
         type="number"
         label="Price"
-        placeholder="Enter your price"
+        placeholder="Enter your price (₱)"
         value={formData.price}
         onChange={(e) => handleChange("price", e.target.value)}
         sx={{ mb: 3 }}

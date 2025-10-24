@@ -3,6 +3,11 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { doc, collection, addDoc, updateDoc, query, where, getDocs } from "firebase/firestore";
 import { auth, database } from "../../config/firebase";
 import "./styles/host-set-up.css";
+import { PolicyComplianceModal } from "./components/PolicyComplianceModal";
+import { Home, BedDouble, Users, Building2, Crown, Mountain, Tent, Wifi, Coffee, Tv, Car, Dumbbell, PawPrint, Snowflake, Waves,
+  ShowerHead, KeyRound, Utensils, Wind, Lock, X, UploadCloud, Image as ImageIcon, Heading1, AlignLeft, Sparkles, BadgeDollarSign, Brush, Percent, Tag, Info, Calculator } from "lucide-react";
+import LocationPickerMapString from "./components/LocationPickerMap";
+
 
 import LocationDropdowns from "./components/LocationDropdowns";
 
@@ -28,24 +33,20 @@ import {
   Link,
 } from "@mui/material";
 
-import { ArrowBackIosNew, ArrowForwardIos } from "@mui/icons-material";
-
-import HomeIcon from "@mui/icons-material/Home";
-import HotelIcon from "@mui/icons-material/Hotel";
-import PeopleIcon from "@mui/icons-material/People";
-
-import CloseIcon from "@mui/icons-material/Close";
-import ApartmentIcon from "@mui/icons-material/Apartment";
-import HouseIcon from "@mui/icons-material/House";
-import CottageIcon from "@mui/icons-material/Cottage"; // If not available, use a generic icon like HomeIcon
-import VillaIcon from "@mui/icons-material/Villa"; // If not available, use a generic icon like HomeIcon
-import CabinIcon from "@mui/icons-material/Cabin"; // If not available, use a generic icon like HomeIcon
-import Chip from "@mui/material/Chip";
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 
 const CLOUD_NAME = "dijmlbysr"; // From Cloudinary dashboard
 const UPLOAD_PRESET = "listing-uploads"; // Create an unsigned preset in Cloudinary for uploads
+
+function DetailRow({ label, value }) {
+  return (
+    <div className="grid grid-cols-[140px,1fr] gap-3 items-start">
+      <span className="text-sm font-semibold text-gray-900">{label}:</span>
+      <span className="text-sm text-gray-800">{value}</span>
+    </div>
+  );
+}
 
 export const HostSetUp = () => {
   const location = useLocation();
@@ -63,17 +64,15 @@ export const HostSetUp = () => {
   const [newAmenity, setNewAmenity] = useState("");  // Add this line
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
+  const [openPolicyModal, setOpenPolicyModal] = useState(false);
+
   const [formData, setFormData] = useState({
     category: initialCategory,
     listingType: "",
-    region: "",
-    province: "",
-    municipality: "",
-    barangay: "",
-    street: "",
+    location: "",
     propertyType: "",
     uniqueDescription: "",
-    guests: 1,
+    guests: { adults: 1, children: 0, infants: 0 },
     bedrooms: 1,
     beds: 1,
     bathrooms: 1,
@@ -103,19 +102,21 @@ export const HostSetUp = () => {
       const user = auth.currentUser;
       if (!user) return alert("You must be logged in to save a draft.");
 
-      // ✅ Get readable names for location fields
-      const selectedRegion = regions.find(r => r.code === formData.region)?.name || "";
-      const selectedProvince = provinces.find(p => p.code === formData.province)?.name || "";
-      const selectedMunicipality = municipalities.find(m => m.code === formData.municipality)?.name || "";
-      const selectedBarangay = barangays.find(b => b.code === formData.barangay)?.name || "";
+      const g = formData.guests || {};
+      const adults = Number(g.adults ?? 1);
+      const children = Number(g.children ?? 0);
+      const infants = Number(g.infants ?? 0);
 
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: { code: formData.region, name: selectedRegion },
-        province: { code: formData.province, name: selectedProvince },
-        municipality: { code: formData.municipality, name: selectedMunicipality },
-        barangay: { code: formData.barangay, name: selectedBarangay },
+        guests: {
+          adults,
+          children,
+          infants,
+          total: adults + children + infants,
+        },
+        location: formData.location || "",
         status: "draft",
         savedAt: new Date(),
       };
@@ -169,10 +170,7 @@ export const HostSetUp = () => {
       const dataToSave = {
         ...formData,
         uid: user.uid,
-        region: { code: formData.region, name: selectedRegion },
-        province: { code: formData.province, name: selectedProvince },
-        municipality: { code: formData.municipality, name: selectedMunicipality },
-        barangay: { code: formData.barangay, name: selectedBarangay },
+        location: formData.location || "",
         status: "published",
         publishedAt: new Date(),
       };
@@ -248,855 +246,1956 @@ export const HostSetUp = () => {
     }
   };
 
+  const setGuests = (key, next) => {
+    const base = formData.guests || { adults: 1, children: 0, infants: 0 };
+    const min = key === "adults" ? 1 : 0;
+    const val = Math.max(min, Number(next || 0));
+    handleChange("guests", { ...base, [key]: val });
+  };
+
+  const adjGuests = (key, delta) => {
+    const curr = (formData.guests?.[key] ?? (key === "adults" ? 1 : 0)) + delta;
+    setGuests(key, curr);
+  };
+
+  const totalGuests =
+    (formData.guests?.adults ?? 0) +
+    (formData.guests?.children ?? 0) +
+    (formData.guests?.infants ?? 0);
+
+    // --- Screen 9 helpers ---
+    const start = formData?.availability?.start || "";
+    const end = formData?.availability?.end || "";
+
+    const invalidRange =
+      start && end ? new Date(start) > new Date(end) : false;
+
+    const nights =
+      start && end
+        ? Math.max(
+            0,
+            Math.ceil(
+              (new Date(end).setHours(12) - new Date(start).setHours(12)) /
+                (1000 * 60 * 60 * 24)
+            )
+          )
+        : 0;
+
   return (
     <div className="host-setup-page">
       {/* 🖥️ Screen 1 */}
       {step === 1 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-        <Toolbar/>
-        <Toolbar/>
-        <Toolbar/>
-        <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+      <section
+        className="
+          px-4 md:px-8 py-20
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,1fr,auto] gap-12
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        "
+      >
+        {/* Title */}
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">
             What kind of place are you listing?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+          </h1>
+          <p className="mt-2 text-gray-700">
             Choose the type of accommodation you're offering to get started.
-          </Typography>
+          </p>
+        </div>
 
-          <RadioGroup
-            value={formData.listingType}
-            onChange={(e) => handleSelect(e.target.value)}
-            sx={{ mb: 4 }}
-          >
-            <Grid container spacing={3} justifyContent="center">
-              {[
-                { value: "Entire place", label: "Entire place", desc: "Guests have the whole space to themselves.", icon: <HomeIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-                { value: "Private room", label: "Private room", desc: "Guests have a private room but share common spaces.", icon: <HotelIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-                { value: "Shared room", label: "Shared room", desc: "Guests share both the room and common areas.", icon: <PeopleIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-              ].map((option) => (
-                <Grid item xs={12} sm={6} md={4} key={option.value}>
-                  <Card
-                    sx={{
-                      height: '100%',
-                      border: formData.listingType === option.value ? '2px solid' : '1px solid',
-                      borderColor: formData.listingType === option.value ? 'primary.main' : 'grey.300',
-                      boxShadow: formData.listingType === option.value ? 4 : 1,
-                      transition: 'all 0.3s ease',
-                      '&:hover': { boxShadow: 3 },
-                    }}
+        {/* Full-height selectable options */}
+        <div
+          role="radiogroup"
+          aria-label="Listing type"
+          className="
+            max-w-6xl mx-auto w-full
+            grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6
+            h-full
+          "
+        >
+          {[
+            {
+              value: "Entire place",
+              label: "Entire place",
+              desc: "Guests have the whole space to themselves.",
+              Icon: Home,
+            },
+            {
+              value: "Private room",
+              label: "Private room",
+              desc: "Guests have a private room but share common spaces.",
+              Icon: BedDouble,
+            },
+            {
+              value: "Shared room",
+              label: "Shared room",
+              desc: "Guests share both the room and common areas.",
+              Icon: Users,
+            },
+          ].map(({ value, label, desc, Icon }) => {
+            const active = formData.listingType === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => handleSelect(value)}
+                role="radio"
+                aria-checked={active}
+                aria-label={label}
+                className={[
+                  "group relative w-full h-full rounded-3xl overflow-hidden",
+                  "bg-white/80 backdrop-blur-md border border-white/60",
+                  // 3D look (layered shadows + hover lift)
+                  "shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]",
+                  "hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),0_30px_60px_rgba(30,58,138,0.12)]",
+                  "transition-all duration-300 hover:-translate-y-1 active:translate-y-0",
+                  active ? "ring-2 ring-blue-400/50 border-blue-600/60" : "",
+                  "flex flex-col"
+                ].join(" ")}
+              >
+                {/* Sheen / highlight for 3D feel */}
+                <div className="pointer-events-none absolute inset-0 rounded-3xl bg-gradient-to-b from-white/50 to-transparent" />
+
+                {/* Icon + text (centered, stacked) */}
+                <div className="relative flex-1 p-6 sm:p-8 flex flex-col items-center justify-center text-center">
+                  <div
+                    className={[
+                      "grid place-items-center rounded-2xl",
+                      "w-20 h-20 sm:w-24 sm:h-24",
+                      active
+                        ? "bg-gradient-to-br from-blue-500 to-indigo-600 text-white"
+                        : "bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700",
+                      "shadow-lg shadow-blue-500/20 ring-4 ring-white/50",
+                    ].join(" ")}
                   >
-                    <CardActionArea
-                      onClick={() => handleSelect(option.value)}
-                      sx={{ height: '100%', p: 2, textAlign: 'center' }}
-                    >
-                      <Box sx={{ mb: 2 }}>{option.icon}</Box>
-                      <Typography variant="h6" component="h3" gutterBottom sx={{ fontWeight: 500 }}>
-                        {option.label}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {option.desc}
-                      </Typography>
-                    </CardActionArea>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          </RadioGroup>
+                    <Icon size={40} className="sm:w-12 sm:h-12" />
+                  </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center">
-            <Button variant="outlined" onClick={handleBack} sx={{ px: 4 }}>
-              Back to Home
-            </Button>
-            <Button
-              variant="contained"
-              onClick={nextStep}
-              disabled={!formData.listingType}
-              sx={{ px: 4 }}
-            >
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+                  <h3
+                    className={[
+                      "mt-4 text-lg sm:text-xl font-semibold",
+                      "text-gray-900",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </h3>
+                  <p className="mt-1 text-sm sm:text-base text-gray-700 max-w-[28ch]">
+                    {desc}
+                  </p>
+                </div>
+
+                {/* Bottom bar with state */}
+                <div
+                  className={[
+                    "relative px-6 sm:px-7 py-4 border-t",
+                    active ? "border-blue-100 bg-blue-50/70" : "border-gray-100 bg-white/70",
+                    "flex items-center justify-between",
+                  ].join(" ")}
+                >
+                  <span className="text-sm font-medium text-gray-700">
+                    {active ? "Selected" : "Click to select"}
+                  </span>
+                  <span
+                    className={[
+                      "text-xs font-semibold px-3 py-1 rounded-full",
+                      active
+                        ? "bg-blue-600 text-white shadow shadow-blue-600/30"
+                        : "bg-gray-100 text-gray-700",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </span>
+                </div>
+
+                {/* Soft drop shadow “cast” for more depth */}
+                <div className="pointer-events-none absolute -bottom-3 left-6 right-6 h-6 rounded-[2rem] bg-gradient-to-b from-blue-500/10 to-transparent blur-md" />
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={handleBack}
+            className="
+              inline-flex items-center justify-center rounded-full
+              border border-gray-300 bg-white
+              px-6 py-3 text-sm font-medium text-gray-800
+              hover:bg-gray-50 transition
+            "
+          >
+            Back to Home
+          </button>
+
+          <button
+            type="button"
+            onClick={nextStep}
+            disabled={!formData.listingType}
+            className="
+              inline-flex items-center justify-center rounded-full
+              bg-gradient-to-r from-blue-500 to-blue-600
+              px-7 py-3 text-sm font-semibold text-white shadow-md
+              hover:from-blue-600 hover:to-blue-700 transition
+              disabled:opacity-50 disabled:pointer-events-none
+            "
+          >
+            Next
+          </button>
+        </div>
+      </section>
+    )}
 
       {/* 📍 Screen 2 */}
       {step === 2 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
-            Where’s your place located?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Help guests find your listing by providing the exact location.
-          </Typography>
+      <section className="px-4 md:px-8 py-6 min-h-[calc(100vh-56px)] grid grid-rows-[auto,1fr,auto] gap-5 bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">Where’s your place located?</h1>
+          <p className="mt-2 text-gray-700">Drop a pin on the map or use your current location.</p>
+        </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {/* Region */}
-            <FormControl fullWidth>
-              <InputLabel>Region</InputLabel>
-              <Select
-                value={formData.region}
-                label="Region"
-                onChange={async (e) => {
-                  const code = e.target.value;
-                  handleChange("region", code);
-                  handleChange("province", "");
-                  handleChange("municipality", "");
-                  handleChange("barangay", "");
-                  setProvinces([]);
-                  setMunicipalities([]);
-                  setBarangays([]);
-
-                  if (code) {
-                    const res = await fetch(`https://psgc.gitlab.io/api/regions/${code}/provinces/`);
-                    const data = await res.json();
-                    setProvinces(data);
-                  }
-                }}
-              >
-                <MenuItem value="">
-                  <em>Select Region</em>
-                </MenuItem>
-                {regions.map((region) => (
-                  <MenuItem key={region.code} value={region.code}>
-                    {region.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {/* Province */}
-            <FormControl fullWidth disabled={!formData.region}>
-              <InputLabel>Province</InputLabel>
-              <Select
-                value={formData.province}
-                label="Province"
-                onChange={async (e) => {
-                  const code = e.target.value;
-                  handleChange("province", code);
-                  handleChange("municipality", "");
-                  handleChange("barangay", "");
-                  setMunicipalities([]);
-                  setBarangays([]);
-
-                  if (code) {
-                    const res = await fetch(`https://psgc.gitlab.io/api/provinces/${code}/municipalities/`);
-                    const data = await res.json();
-                    setMunicipalities(data);
-                  }
-                }}
-              >
-                <MenuItem value="">
-                  <em>Select Province</em>
-                </MenuItem>
-                {provinces.map((prov) => (
-                  <MenuItem key={prov.code} value={prov.code}>
-                    {prov.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {/* Municipality */}
-            <FormControl fullWidth disabled={!formData.province}>
-              <InputLabel>Municipality</InputLabel>
-              <Select
-                value={formData.municipality}
-                label="Municipality"
-                onChange={async (e) => {
-                  const code = e.target.value;
-                  handleChange("municipality", code);
-                  handleChange("barangay", "");
-                  setBarangays([]);
-
-                  if (code) {
-                    const res = await fetch(`https://psgc.gitlab.io/api/municipalities/${code}/barangays/`);
-                    const data = await res.json();
-                    setBarangays(data);
-                  }
-                }}
-              >
-                <MenuItem value="">
-                  <em>Select Municipality</em>
-                </MenuItem>
-                {municipalities.map((mun) => (
-                  <MenuItem key={mun.code} value={mun.code}>
-                    {mun.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {/* Barangay */}
-            <FormControl fullWidth disabled={!formData.municipality}>
-              <InputLabel>Barangay</InputLabel>
-              <Select
-                value={formData.barangay}
-                label="Barangay"
-                onChange={(e) => handleChange("barangay", e.target.value)}
-              >
-                <MenuItem value="">
-                  <em>Select Barangay</em>
-                </MenuItem>
-                {barangays.map((brgy) => (
-                  <MenuItem key={brgy.code} value={brgy.code}>
-                    {brgy.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-
-            {/* Street */}
-            <TextField
-              fullWidth
-              label="Street / House No."
-              placeholder="e.g., 123 Main St."
-              value={formData.street}
-              disabled={!formData.barangay}
-              onChange={(e) => handleChange("street", e.target.value)}
-              variant="outlined"
+        <div className="max-w-5xl w-full mx-auto h-full">
+          <div className="rounded-3xl border border-white/20 bg-white/80 backdrop-blur-md p-5 sm:p-6 md:p-8 shadow-[0_12px_30px_rgba(30,58,138,0.10),0_30px_60px_rgba(30,58,138,0.08)] grid gap-5 content-start">
+            <LocationPickerMapString
+              address={formData.location}
+              onAddressChange={(addr) => handleChange("location", addr)}
             />
-          </Box>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button
-              variant="contained"
-              onClick={async () => {
-                await saveHost(); // save host before moving
-                nextStep();
-              }}
-              disabled={!formData.street}
-              sx={{ px: 4 }}
-            >
-              Get Started
-            </Button>
-          </Stack>
-        </Box>
-      )}
+            <div className="grid gap-3">
+              <label className="text-sm font-semibold text-gray-900">Detected address (editable)</label>
+              <input
+                type="text"
+                value={formData.location}
+                onChange={(e) => handleChange("location", e.target.value)}
+                placeholder="Click on the map to populate, or type an address"
+                className="w-full rounded-2xl border border-gray-300 bg-white/90 px-4 py-3 text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+              />
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!navigator.geolocation) return;
+                    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+                      const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${coords.latitude}&lon=${coords.longitude}&zoom=18&addressdetails=1&accept-language=en&email=you@example.com`;
+                      const res = await fetch(url);
+                      const data = await res.json();
+                      handleChange("location", data.display_name || "");
+                    });
+                  }}
+                  className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                >
+                  Use my location
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleChange("location", "")}
+                  className="inline-flex items-center justify-center rounded-full bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200 transition"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={prevStep}
+            className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={async () => { await saveHost(); nextStep(); }}
+            disabled={!formData.location}
+            className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
+          >
+            Get Started
+          </button>
+        </div>
+      </section>
+    )}
 
       {/* 🏡 Screen 3 */}
       {step === 3 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
-            What type of place do you have?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Select the best category that describes your property.
-          </Typography>
+  <section
+    className="
+      px-3 sm:px-6 md:px-8 py-12 sm:py-16
+      min-h-[calc(100vh-56px)]
+      grid grid-rows-[auto,auto,1fr,auto] gap-6
+      bg-gradient-to-br from-blue-50 via-white to-indigo-50
+    "
+  >
+    {/* Title */}
+    <div className="max-w-3xl mx-auto text-center">
+      <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
+        What type of place do you have?
+      </h1>
+      <p className="mt-2 text-gray-700 text-sm sm:text-base">
+        Select the best category that describes your property.
+      </p>
+    </div>
 
-          <Grid container spacing={3} justifyContent="center" sx={{ mb: 4 }}>
-            {[
-              { value: "Apartment", label: "Apartment", desc: "A self-contained unit in a building.", icon: <ApartmentIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-              { value: "House", label: "House", desc: "A standalone home with full privacy.", icon: <HouseIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-              { value: "Cottage", label: "Cottage", desc: "A cozy, small home often in rural areas.", icon: <CottageIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-              { value: "Villa", label: "Villa", desc: "A luxurious home with spacious amenities.", icon: <VillaIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-              { value: "Cabin", label: "Cabin", desc: "A rustic retreat surrounded by nature.", icon: <CabinIcon sx={{ fontSize: 40, color: 'primary.main' }} /> },
-            ].map((type) => (
-              <Grid item xs={12} sm={6} md={4} key={type.value}>
-                <Card
-                  sx={{
-                    height: '100%',
-                    border: formData.propertyType === type.value ? '2px solid' : '1px solid',
-                    borderColor: formData.propertyType === type.value ? 'primary.main' : 'grey.300',
-                    boxShadow: formData.propertyType === type.value ? 4 : 1,
-                    transition: 'all 0.3s ease',
-                    '&:hover': { boxShadow: 3 },
-                  }}
-                >
-                  <CardActionArea
-                    onClick={() => handleChange("propertyType", type.value)}
-                    sx={{ height: '100%', p: 2, textAlign: 'center' }}
-                  >
-                    <Box sx={{ mb: 2 }}>{type.icon}</Box>
-                    <Typography variant="h6" component="h3" gutterBottom sx={{ fontWeight: 500 }}>
-                      {type.label}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {type.desc}
-                    </Typography>
-                  </CardActionArea>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
+    {/* Cards grid with Unique Description as a grid item */}
+    <div className="w-full max-w-7xl mx-auto">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+        {[
+          { value: "Apartment", label: "Apartment", desc: "A self-contained unit in a building.", Icon: Building2 },
+          { value: "House",     label: "House",     desc: "A standalone home with full privacy.", Icon: Home },
+          { value: "Cottage",   label: "Cottage",   desc: "A cozy, small home often in rural areas.", Icon: Mountain },
+          { value: "Villa",     label: "Villa",     desc: "A luxurious home with spacious amenities.", Icon: Crown },
+          { value: "Cabin",     label: "Cabin",     desc: "A rustic retreat surrounded by nature.", Icon: Tent },
+        ].map(({ value, label, desc, Icon }) => {
+          const active = formData.propertyType === value;
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', mb: 4 }}>
-            <TextField
-              fullWidth
-              multiline
-              rows={4}
-              label="What makes your place unique? (optional)"
-              placeholder="Describe any special features or highlights..."
-              value={formData.uniqueDescription}
-              onChange={(e) => handleChange("uniqueDescription", e.target.value)}
-              variant="outlined"
-            />
-          </Box>
-
-          <Stack direction="row" spacing={2} justifyContent="center">
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button
-              variant="contained"
-              onClick={nextStep}
-              disabled={!formData.propertyType}
-              sx={{ px: 4 }}
+          const Card = (
+            <button
+              key={`card-${value}`}
+              type="button"
+              onClick={() => handleChange("propertyType", value)}
+              aria-pressed={active}
+              className={[
+                "group relative w-full h-full rounded-2xl sm:rounded-3xl overflow-hidden text-left",
+                "bg-white/80 backdrop-blur-md border border-white/60",
+                "shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]",
+                "hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),0_30px_60px_rgba(30,58,138,0.12)]",
+                "transition-all duration-300 hover:-translate-y-1 active:translate-y-0",
+                active ? "ring-2 ring-blue-400/50 border-blue-600/60" : "",
+                "flex flex-col",
+              ].join(" ")}
             >
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+              {/* top sheen */}
+              <div className="pointer-events-none absolute inset-0 rounded-2xl sm:rounded-3xl bg-gradient-to-b from-white/50 to-transparent" />
+
+              <div className="relative flex-1 p-4 sm:p-6 md:p-8 flex flex-col items-center justify-center text-center">
+                <div
+                  className={[
+                    "grid place-items-center rounded-xl sm:rounded-2xl",
+                    "w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24",
+                    active
+                      ? "bg-gradient-to-br from-blue-500 to-indigo-600 text-white"
+                      : "bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700",
+                    "shadow-lg shadow-blue-500/20 ring-4 ring-white/50",
+                  ].join(" ")}
+                >
+                  <Icon className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12" />
+                </div>
+
+                <h3 className="mt-3 sm:mt-4 text-base sm:text-lg md:text-xl font-semibold text-gray-900">
+                  {label}
+                </h3>
+                <p className="mt-1 text-sm sm:text-base text-gray-700 max-w-[40ch] md:max-w-[30ch]">
+                  {desc}
+                </p>
+              </div>
+
+              <div
+                className={[
+                  "relative px-4 sm:px-6 md:px-7 py-3 sm:py-4 border-t",
+                  active ? "border-blue-100 bg-blue-50/70" : "border-gray-100 bg-white/70",
+                  "flex flex-col sm:flex-row items-center justify-between gap-2",
+                ].join(" ")}
+              >
+                <span className="text-xs sm:text-sm font-medium text-gray-700">
+                  {active ? "Selected" : "Tap to select"}
+                </span>
+                <span
+                  className={[
+                    "text-xs font-semibold px-3 py-1 rounded-full",
+                    active
+                      ? "bg-blue-600 text-white shadow shadow-blue-600/30"
+                      : "bg-gray-100 text-gray-700",
+                  ].join(" ")}
+                >
+                  {label}
+                </span>
+              </div>
+
+              {/* soft cast shadow */}
+              <div className="pointer-events-none absolute -bottom-3 left-6 right-6 h-6 rounded-[2rem] bg-gradient-to-b from-blue-500/10 to-transparent blur-md" />
+            </button>
+          );
+
+          // After rendering the "Cabin" card, inject the Unique Description as a grid item
+          if (value === "Cabin") {
+            return [
+              Card,
+              (
+                <div
+                  key="unique-description-card"
+                  className="
+                    col-span-1 sm:col-span-1 md:col-span-3
+                    rounded-2xl sm:rounded-3xl overflow-hidden
+                    bg-white/80 backdrop-blur-md border border-white/60
+                    shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]
+                    p-4 sm:p-6 md:p-8
+                    flex flex-col
+                  "
+                >
+                  <label className="block text-lg font-semibold text-gray-900 mb-6">
+                    What makes your place unique? <span className="text-gray-500">(optional)</span>
+                  </label>
+                  <textarea
+                    rows={4}
+                    placeholder="Describe any special features or highlights..."
+                    value={formData.uniqueDescription}
+                    onChange={(e) => handleChange("uniqueDescription", e.target.value)}
+                    className="
+                      w-full rounded-xl sm:rounded-2xl border border-gray-300 bg-white/90
+                      px-3 sm:px-4 py-3 text-gray-800 shadow-sm
+                      focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+                      min-h-[180px]
+                    "
+                  />
+                </div>
+              ),
+            ];
+          }
+
+          return Card;
+        })}
+      </div>
+    </div>
+
+    {/* Actions */}
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+      <button
+        type="button"
+        onClick={prevStep}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+      >
+        Back
+      </button>
+
+      <button
+        type="button"
+        onClick={saveDraft}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+      >
+        Save to Drafts
+      </button>
+
+      <button
+        type="button"
+        onClick={nextStep}
+        disabled={!formData.propertyType}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
+      >
+        Next
+      </button>
+    </div>
+  </section>
+)}
+
 
       {/* 🛏️ Screen 4 */}
       {step === 4 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+      <section
+        className="
+          px-3 sm:px-6 md:px-8 py-12 sm:py-16
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,auto,1fr,auto] gap-6
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        "
+      >
+        {/* Title */}
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
             How many guests can stay?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Provide details about the capacity and sleeping arrangements.
-          </Typography>
+          </h1>
+          <p className="mt-2 text-gray-700 text-sm sm:text-base">
+            Provide details about capacity and sleeping arrangements.
+          </p>
+          <p className="mt-1 text-xs sm:text-sm text-gray-600">
+            Total guests: <span className="font-semibold text-gray-900">{totalGuests}</span>
+          </p>
+        </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <TextField
-              fullWidth
-              type="number"
-              label="Guests"
-              value={formData.guests}
-              onChange={(e) => handleChange("guests", e.target.value)}
-              variant="outlined"
-              inputProps={{ min: 1 }}
-            />
-            <TextField
-              fullWidth
-              type="number"
-              label="Bedrooms"
-              value={formData.bedrooms}
-              onChange={(e) => handleChange("bedrooms", e.target.value)}
-              variant="outlined"
-              inputProps={{ min: 0 }}
-            />
-            <TextField
-              fullWidth
-              type="number"
-              label="Beds"
-              value={formData.beds}
-              onChange={(e) => handleChange("beds", e.target.value)}
-              variant="outlined"
-              inputProps={{ min: 0 }}
-            />
-            <TextField
-              fullWidth
-              type="number"
-              label="Bathrooms"
-              value={formData.bathrooms}
-              onChange={(e) => handleChange("bathrooms", e.target.value)}
-              variant="outlined"
-              inputProps={{ min: 0 }}
-            />
-          </Box>
+        {/* Counters Grid */}
+        <div className="w-full max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+            {/* Adults */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* Users icon looks good for adults */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Adults</h3>
+                  <p className="text-sm text-gray-600">Ages 13+ (min 1)</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => adjGuests("adults", -1)}
+                  className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition"
+                  aria-label="Decrease adults"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={1}
+                  value={formData.guests?.adults ?? 1}
+                  onChange={(e) => setGuests("adults", e.target.value)}
+                  className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => adjGuests("adults", 1)}
+                  className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition"
+                  aria-label="Increase adults"
+                >
+                  +
+                </button>
+              </div>
+            </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+            {/* Children */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* child-like icon */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M7 21v-2a4 4 0 0 1 4-4h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Children</h3>
+                  <p className="text-sm text-gray-600">Ages 2–12</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => adjGuests("children", -1)}
+                  className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition"
+                  aria-label="Decrease children"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  value={formData.guests?.children ?? 0}
+                  onChange={(e) => setGuests("children", e.target.value)}
+                  className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => adjGuests("children", 1)}
+                  className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition"
+                  aria-label="Increase children"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {/* Infants */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* baby icon */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M12 22a5 5 0 0 0 5-5v-2a5 5 0 0 0-10 0v2a5 5 0 0 0 5 5Z" stroke="currentColor" strokeWidth="2"/><circle cx="12" cy="7" r="3" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Infants</h3>
+                  <p className="text-sm text-gray-600">Under 2</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => adjGuests("infants", -1)}
+                  className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition"
+                  aria-label="Decrease infants"
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min={0}
+                  value={formData.guests?.infants ?? 0}
+                  onChange={(e) => setGuests("infants", e.target.value)}
+                  className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => adjGuests("infants", 1)}
+                  className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition"
+                  aria-label="Increase infants"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
+            {/* Bedrooms */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* BedDouble icon */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M3 10h18v10H3z" stroke="currentColor" strokeWidth="2"/><path d="M7 10V7a2 2 0 0 1 2-2h2v5M19 10V7a2 2 0 0 0-2-2h-2v5" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Bedrooms</h3>
+                  <p className="text-sm text-gray-600">Optional</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button type="button" onClick={() => handleChange("bedrooms", Math.max(0, Number(formData.bedrooms) - 1))} className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition">−</button>
+                <input type="number" min={0} value={formData.bedrooms} onChange={(e) => handleChange("bedrooms", Math.max(0, Number(e.target.value || 0)))} className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none" />
+                <button type="button" onClick={() => handleChange("bedrooms", Number(formData.bedrooms) + 1)} className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition">+</button>
+              </div>
+            </div>
+
+            {/* Beds */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* BedSingle icon */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M3 12h18v8H3z" stroke="currentColor" strokeWidth="2"/><path d="M7 12v-1a2 2 0 0 1 2-2h3v3" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Beds</h3>
+                  <p className="text-sm text-gray-600">Optional</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button type="button" onClick={() => handleChange("beds", Math.max(0, Number(formData.beds) - 1))} className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition">−</button>
+                <input type="number" min={0} value={formData.beds} onChange={(e) => handleChange("beds", Math.max(0, Number(e.target.value || 0)))} className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none" />
+                <button type="button" onClick={() => handleChange("beds", Number(formData.beds) + 1)} className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition">+</button>
+              </div>
+            </div>
+
+            {/* Bathrooms */}
+            <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
+              <div className="flex items-center gap-3">
+                <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  {/* Droplet icon */}
+                  <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M12 2.5C12 2.5 5 9 5 13.5a7 7 0 1 0 14 0C19 9 12 2.5 12 2.5Z" stroke="currentColor" strokeWidth="2"/></svg>
+                </div>
+                <div>
+                  <h3 className="text-base sm:text-lg font-semibold text-gray-900">Bathrooms</h3>
+                  <p className="text-sm text-gray-600">Optional</p>
+                </div>
+              </div>
+              <div className="mt-5 flex items-center justify-between">
+                <button type="button" onClick={() => handleChange("bathrooms", Math.max(0, Number(formData.bathrooms) - 1))} className="w-11 h-11 rounded-full border border-gray-300 bg-white hover:bg-gray-50 active:scale-95 transition">−</button>
+                <input type="number" min={0} value={formData.bathrooms} onChange={(e) => handleChange("bathrooms", Math.max(0, Number(e.target.value || 0)))} className="w-20 text-center text-lg font-semibold text-gray-900 bg-transparent outline-none" />
+                <button type="button" onClick={() => handleChange("bathrooms", Number(formData.bathrooms) + 1)} className="w-11 h-11 rounded-full border border-blue-500 text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow active:scale-95 transition">+</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+          <button type="button" onClick={prevStep} className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition">Back</button>
+          <button type="button" onClick={saveDraft} className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition">Save to Drafts</button>
+          <button type="button" onClick={nextStep} className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition">Next</button>
+        </div>
+      </section>
+    )}
 
       {/* 🛋️ Screen 5 */}
       {step === 5 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+      <section
+        className="
+          px-3 sm:px-6 md:px-8 py-12 sm:py-16
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,auto,1fr,auto] gap-6
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        "
+      >
+        {/* Title */}
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
             What amenities do you offer?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+          </h1>
+          <p className="mt-2 text-gray-700 text-sm sm:text-base">
             Add amenities that guests can enjoy at your place.
-          </Typography>
+          </p>
+        </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', mb: 4 }}>
-            {/* Display added amenities as chips */}
-            <Box sx={{ mb: 4 }}>
-              <Stack direction="row" spacing={2} flexWrap="wrap">
-                {formData.amenities.map((amenity, index) => (
-                  <Chip
-                    key={index}
-                    label={amenity}
-                    onDelete={() => {
-                      const updated = formData.amenities.filter((_, i) => i !== index);
-                      handleChange("amenities", updated);
-                    }}
-                    color="primary"
-                    variant="outlined"
-                  />
+        {/* Content */}
+        <div className="w-full max-w-7xl mx-auto space-y-6">
+          {/* Selected amenities (pills with remove) */}
+          <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Selected amenities</h3>
+
+            {formData.amenities?.length ? (
+              <div className="flex flex-wrap gap-2">
+                {formData.amenities.map((amenity, idx) => (
+                  <span
+                    key={amenity + idx}
+                    className="
+                      inline-flex items-center gap-2 pl-3 pr-2 py-1.5
+                      rounded-full border border-blue-200 bg-blue-50 text-blue-700
+                      text-xs sm:text-sm font-medium shadow-sm
+                    "
+                  >
+                    {amenity}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = formData.amenities.filter((_, i) => i !== idx);
+                        handleChange("amenities", updated);
+                      }}
+                      className="grid place-items-center w-5 h-5 rounded-full hover:bg-blue-100"
+                      aria-label={`Remove ${amenity}`}
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </span>
                 ))}
-              </Stack>
-            </Box>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600">No amenities selected yet.</p>
+            )}
+          </div>
 
-            {/* Add new amenity */}
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Add an amenity"
-                placeholder="e.g., Wi-Fi, Kitchen, Pool"
+          {/* Suggested amenities grid (toggle cards) */}
+          <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+            <h3 className="text-sm font-semibold text-gray-900 mb-4">Popular amenities</h3>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+              {[
+                { label: "Wi-Fi", Icon: Wifi },
+                { label: "Air conditioning", Icon: Snowflake },
+                { label: "Heating", Icon: Wind },
+                { label: "TV", Icon: Tv },
+                { label: "Kitchen", Icon: Utensils },
+                { label: "Coffee maker", Icon: Coffee },
+                { label: "Free parking", Icon: Car },
+                { label: "Gym", Icon: Dumbbell },
+                { label: "Pet-friendly", Icon: PawPrint },
+                { label: "Pool", Icon: Waves },
+                { label: "Shower", Icon: ShowerHead },
+                { label: "Lockbox", Icon: Lock },
+                { label: "Key access", Icon: KeyRound },
+              ].map(({ label, Icon }) => {
+                const on = formData.amenities?.includes(label);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => handleAmenityToggle(label)}
+                    aria-pressed={on}
+                    className={[
+                      "group w-full rounded-2xl border p-4 sm:p-5 text-left",
+                      "transition-all duration-200",
+                      on
+                        ? "border-blue-500 bg-blue-50/80 shadow-[0_8px_20px_rgba(30,58,138,0.10)]"
+                        : "border-gray-200 bg-white/70 hover:bg-gray-50",
+                      "flex items-center gap-3",
+                    ].join(" ")}
+                  >
+                    <span
+                      className={[
+                        "grid place-items-center rounded-xl w-10 h-10",
+                        on
+                          ? "bg-gradient-to-br from-blue-500 to-indigo-600 text-white ring-4 ring-white/60 shadow"
+                          : "bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow",
+                      ].join(" ")}
+                    >
+                      <Icon className="w-5 h-5" />
+                    </span>
+                    <span className="text-sm sm:text-base font-medium text-gray-900">{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Add new amenity */}
+          <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+            <h3 className="text-sm font-semibold text-gray-900 mb-3">Add a custom amenity</h3>
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
+              <input
+                type="text"
                 value={newAmenity}
                 onChange={(e) => setNewAmenity(e.target.value)}
-                variant="outlined"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const a = (newAmenity || "").trim();
+                    if (a && !formData.amenities.includes(a)) {
+                      handleChange("amenities", [...formData.amenities, a]);
+                      setNewAmenity("");
+                    }
+                  }
+                }}
+                placeholder="e.g., Fireplace, EV charger, Crib"
+                className="
+                  flex-1 rounded-2xl border border-gray-300 bg-white/90
+                  px-4 py-3 text-gray-800 shadow-sm
+                  focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+                "
               />
-              <Button
-                variant="contained"
+              <button
+                type="button"
                 onClick={() => {
-                  if (newAmenity.trim() && !formData.amenities.includes(newAmenity.trim())) {
-                    handleChange("amenities", [...formData.amenities, newAmenity.trim()]);
+                  const a = (newAmenity || "").trim();
+                  if (a && !formData.amenities.includes(a)) {
+                    handleChange("amenities", [...formData.amenities, a]);
                     setNewAmenity("");
                   }
                 }}
-                sx={{ px: 4 }}
+                className="
+                  inline-flex items-center justify-center
+                  rounded-full bg-gradient-to-r from-blue-500 to-blue-600
+                  px-6 py-3 text-sm font-semibold text-white shadow-md
+                  hover:from-blue-600 hover:to-blue-700 transition
+                "
               >
                 Add
-              </Button>
-            </Box>
-          </Box>
+              </button>
+            </div>
+          </div>
+        </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center">
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+        {/* Actions */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={prevStep}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+          >
+            Back
+          </button>
+
+          <button
+            type="button"
+            onClick={saveDraft}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+          >
+            Save to Drafts
+          </button>
+
+          <button
+            type="button"
+            onClick={nextStep}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition"
+          >
+            Next
+          </button>
+        </div>
+      </section>
+    )}
 
       {/* 📸 Screen 6 */}
       {step === 6 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+      <section
+        className="
+          px-3 sm:px-6 md:px-8 py-12 sm:py-16
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,auto,1fr,auto] gap-6
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        "
+      >
+        {/* Title */}
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
             Show guests what your place looks like
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+          </h1>
+          <p className="mt-2 text-gray-700 text-sm sm:text-base">
             Upload high-quality photos to attract more guests.
-          </Typography>
+          </p>
+        </div>
 
-          {/* File upload for images */}
-          <Box sx={{ maxWidth: 600, mx: 'auto', mb: 4 }}>
-            <Button
-              variant="outlined"
-              component="label"
-              fullWidth
-              sx={{ py: 2, borderStyle: 'dashed', borderWidth: 2 }}
+        {/* Uploader + Grid */}
+        <div className="w-full max-w-5xl mx-auto space-y-6">
+          {/* Upload Dropzone (click-to-upload) */}
+          <div
+            className="
+              rounded-3xl border-2 border-dashed border-blue-300
+              bg-white/70 backdrop-blur-md
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-5 sm:p-6 md:p-8 text-center
+            "
+          >
+            <label
+              htmlFor="photo-upload"
+              className="
+                cursor-pointer select-none flex flex-col items-center justify-center gap-3
+              "
             >
-              <Typography variant="body1">Click to upload images</Typography>
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                hidden
-                onChange={async (e) => {
-                  const files = Array.from(e.target.files);
-                  const uploadedUrls = [];
+              <span
+                className="
+                  grid place-items-center w-16 h-16 sm:w-20 sm:h-20
+                  rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100
+                  text-blue-700 ring-4 ring-white/60 shadow
+                "
+              >
+                <UploadCloud className="w-8 h-8 sm:w-10 sm:h-10" />
+              </span>
 
-                  for (const file of files) {
-                    const formDataUpload = new FormData();
-                    formDataUpload.append("file", file);
-                    formDataUpload.append("upload_preset", UPLOAD_PRESET);
+              <div>
+                <p className="text-base sm:text-lg font-semibold text-gray-900">
+                  Click to upload images
+                </p>
+                <p className="text-xs sm:text-sm text-gray-600">
+                  You can select multiple files (PNG, JPG)
+                </p>
+              </div>
+            </label>
 
-                    try {
-                      const response = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
-                        method: "POST",
-                        body: formDataUpload,
-                      });
-                      const data = await response.json();
-                      if (data.secure_url) {
-                        uploadedUrls.push(data.secure_url); // Store the Cloudinary URL
-                      }
-                    } catch (error) {
-                      console.error("Upload failed:", error);
-                      alert("Failed to upload image. Try again.");
+            <input
+              id="photo-upload"
+              type="file"
+              multiple
+              accept="image/*"
+              className="hidden"
+              onChange={async (e) => {
+                const files = Array.from(e.target.files || []);
+                if (!files.length) return;
+
+                const uploadedUrls = [];
+                for (const file of files) {
+                  const formDataUpload = new FormData();
+                  formDataUpload.append("file", file);
+                  formDataUpload.append("upload_preset", UPLOAD_PRESET);
+
+                  try {
+                    const response = await fetch(
+                      `https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`,
+                      { method: "POST", body: formDataUpload }
+                    );
+                    const data = await response.json();
+                    if (data.secure_url) {
+                      uploadedUrls.push(data.secure_url);
                     }
+                  } catch (err) {
+                    console.error("Upload failed:", err);
+                    alert("Failed to upload image. Try again.");
                   }
+                }
 
-                  // Add uploaded URLs to formData.photos
+                if (uploadedUrls.length) {
                   setFormData((prev) => ({
                     ...prev,
                     photos: [...prev.photos, ...uploadedUrls],
                   }));
-                }}
-              />
-            </Button>
-          </Box>
+                }
+                // optional: e.target.value = ""; // reset file input
+              }}
+            />
+          </div>
 
-          {/* Display uploaded images */}
-          <Box sx={{ maxWidth: 800, mx: 'auto'}}>
-            <Grid container spacing={2}>
-              {formData.photos.map((url, index) => (
-                <Grid item xs={12} sm={6} md={4} key={index}>
-                  <Card sx={{ position: 'relative', height: 200 }}>
-                    <CardMedia
-                      component="img"
-                      image={url}
+          {/* Thumbnails Grid */}
+          <div
+            className="
+              rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-4 sm:p-6
+            "
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900">Uploaded photos</h3>
+              <span className="text-xs text-gray-600">{formData.photos?.length || 0} total</span>
+            </div>
+
+            {formData.photos?.length ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4">
+                {formData.photos.map((url, index) => (
+                  <div
+                    key={index}
+                    className="
+                      group relative aspect-[4/3] w-full
+                      overflow-hidden rounded-2xl border border-gray-200 bg-white
+                      shadow-sm
+                    "
+                  >
+                    {/* placeholder bg while image loads */}
+                    <div className="absolute inset-0 grid place-items-center bg-gray-100">
+                      <ImageIcon className="w-6 h-6 text-gray-400" />
+                    </div>
+
+                    <img
+                      src={url}
                       alt={`Photo ${index + 1}`}
-                      sx={{ height: '100%', objectFit: 'cover' }}
+                      className="relative z-10 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                      loading="lazy"
                     />
-                    <IconButton
-                      sx={{
-                        position: 'absolute',
-                        top: 8,
-                        right: 8,
-                        bgcolor: 'rgba(255, 255, 255, 0.8)',
-                        '&:hover': { bgcolor: 'rgba(255, 255, 255, 1)' },
-                      }}
+
+                    {/* Remove button */}
+                    <button
+                      type="button"
                       onClick={() => {
                         const newPhotos = formData.photos.filter((_, i) => i !== index);
                         setFormData({ ...formData, photos: newPhotos });
                       }}
+                      aria-label={`Remove photo ${index + 1}`}
+                      className="absolute z-20 top-2 right-2 inline-flex w-8 h-8 items-center justify-center rounded-full bg-white/90 hover:bg-white border border-gray-200 shadow"
                     >
-                      <CloseIcon />
-                    </IconButton>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          </Box>
+                      <X className="w-4 h-4 text-gray-700" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center py-10 text-gray-500 text-sm">
+                No photos uploaded yet.
+              </div>
+            )}
+          </div>
+        </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+        {/* Actions */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={prevStep}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+          >
+            Back
+          </button>
+
+          <button
+            type="button"
+            onClick={saveDraft}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+          >
+            Save to Drafts
+          </button>
+
+          <button
+            type="button"
+            onClick={nextStep}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition"
+          >
+            Next
+          </button>
+        </div>
+      </section>
+    )}
 
       {/* 📝 Screen 7 */}
       {step === 7 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
-            Add a title and description
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Create an appealing title and detailed description to highlight your listing.
-          </Typography>
+        <section
+          className="
+            px-3 sm:px-6 md:px-8 py-12 sm:py-16
+            min-h-[calc(100vh-56px)]
+            grid grid-rows-[auto,1fr,auto] gap-6
+            bg-gradient-to-br from-blue-50 via-white to-indigo-50
+          "
+        >
+          {/* Title */}
+          <div className="max-w-3xl mx-auto text-center">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
+              Add a title and description
+            </h1>
+            <p className="mt-2 text-gray-700 text-sm sm:text-base">
+              Create an appealing title and detailed description to highlight your listing.
+            </p>
+          </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <TextField
-              fullWidth
-              label="Listing Title"
-              placeholder="e.g., Cozy Beachfront Villa"
-              value={formData.title}
-              onChange={(e) => handleChange("title", e.target.value)}
-              variant="outlined"
-            />
-            <TextField
-              fullWidth
-              multiline
-              rows={6}
-              label="Detailed Description"
-              placeholder="Describe your place, amenities, and what makes it special..."
-              value={formData.description}
-              onChange={(e) => handleChange("description", e.target.value)}
-              variant="outlined"
-            />
-          </Box>
+          {/* Content */}
+          <div className="w-full max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+            {/* Left: Form */}
+            <div className="
+              rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-4 sm:p-6 md:p-8
+            ">
+              {/* Listing Title */}
+              <label className="block text-sm font-semibold text-gray-900 mb-2">
+                Listing Title
+              </label>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
+              <div className="relative">
+                <div className="
+                  pointer-events-none absolute left-3 top-1/2 -translate-y-1/2
+                  grid place-items-center w-9 h-9 rounded-xl
+                  bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+                  ring-4 ring-white/60 shadow
+                ">
+                  <Heading1 className="w-4.5 h-4.5" />
+                </div>
+
+                <input
+                  type="text"
+                  placeholder="e.g., Cozy Beachfront Villa"
+                  value={formData.title}
+                  onChange={(e) => handleChange("title", e.target.value)}
+                  className="
+                    w-full rounded-2xl border border-gray-300 bg-white/90
+                    pl-14 pr-4 py-3 text-gray-900 shadow-sm
+                    placeholder:text-gray-400
+                    focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+                  "
+                />
+              </div>
+
+              {/* Title helper + counter */}
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-xs text-gray-600">Keep it short and compelling (≈ 50–60 chars)</p>
+                <span className="text-xs font-medium text-gray-700">
+                  {(formData.title?.length || 0)}/60
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-500 to-indigo-600"
+                  style={{ width: `${Math.min(100, ((formData.title?.length || 0) / 60) * 100)}%` }}
+                />
+              </div>
+
+              {/* Description */}
+              <label className="block text-sm font-semibold text-gray-900 mt-6 mb-2">
+                Detailed Description
+              </label>
+
+              <div className="relative">
+                <div className="
+                  pointer-events-none absolute left-3 top-3
+                  grid place-items-center w-9 h-9 rounded-xl
+                  bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+                  ring-4 ring-white/60 shadow
+                ">
+                  <AlignLeft className="w-4.5 h-4.5" />
+                </div>
+
+                <textarea
+                  rows={8}
+                  placeholder="Describe your place, amenities, and what makes it special..."
+                  value={formData.description}
+                  onChange={(e) => handleChange("description", e.target.value)}
+                  className="
+                    w-full rounded-2xl border border-gray-300 bg-white/90
+                    pl-14 pr-4 py-3 text-gray-900 shadow-sm
+                    placeholder:text-gray-400
+                    focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+                    resize-y
+                  "
+                />
+              </div>
+
+              {/* Description helper + counter */}
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-xs text-gray-600">Aim for clarity and helpful details (≈ 200–600 chars)</p>
+                <span className="text-xs font-medium text-gray-700">
+                  {(formData.description?.length || 0)}/1000
+                </span>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-blue-500 to-indigo-600"
+                  style={{ width: `${Math.min(100, ((formData.description?.length || 0) / 1000) * 100)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Right: Tips / Suggestions */}
+            <div className="
+              rounded-3xl bg-white/70 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-4 sm:p-6 md:p-8
+            ">
+              <div className="flex items-center gap-3">
+                <div className="
+                  grid place-items-center w-10 h-10 rounded-xl
+                  bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+                  ring-4 ring-white/60 shadow
+                ">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900">Writing tips</h3>
+              </div>
+
+              <ul className="mt-4 space-y-3 text-sm text-gray-700">
+                <li>• Start with the most attractive highlight (e.g., “Beachfront”, “City-view”).</li>
+                <li>• Mention capacity, key amenities, and nearby landmarks.</li>
+                <li>• Keep sentences concise; avoid all caps and heavy emojis.</li>
+                <li>• Proofread for grammar and clarity.</li>
+              </ul>
+
+              <div className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/60 p-4">
+                <p className="text-sm text-blue-900">
+                  <span className="font-semibold">Example title:</span> Sunny Beachfront Villa with Private Pool
+                </p>
+                <p className="mt-2 text-sm text-blue-900">
+                  <span className="font-semibold">Example description:</span> Wake up to ocean views in this airy 3-bedroom villa.
+                  Steps from the beach, with private pool, fast Wi-Fi, full kitchen, and parking. Cafés and markets within a 5-minute walk.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={prevStep}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+            >
               Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
+            </button>
+
+            <button
+              type="button"
+              onClick={saveDraft}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+            >
               Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
+            </button>
+
+            <button
+              type="button"
+              onClick={nextStep}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition"
+            >
               Next
-            </Button>
-          </Stack>
-        </Box>
+            </button>
+          </div>
+        </section>
       )}
 
       {/* 💰 Screen 8 */}
       {step === 8 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
-            Set your nightly price
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Choose a competitive price and optional fees.
-          </Typography>
+  <section
+    className="
+      px-3 sm:px-6 md:px-8 py-12 sm:py-16
+      min-h-[calc(100vh-56px)]
+      grid grid-rows-[auto,1fr,auto] gap-6
+      bg-gradient-to-br from-blue-50 via-white to-indigo-50
+    "
+  >
+    {/* Title */}
+    <div className="max-w-3xl mx-auto text-center">
+      <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
+        Set your nightly price
+      </h1>
+      <p className="mt-2 text-gray-700 text-sm sm:text-base">
+        Choose a competitive price and optional fees.
+      </p>
+    </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <TextField
-              fullWidth
+    {/* Content: Form + Summary */}
+    <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+      {/* Left: Form (2 columns on large) */}
+      <div className="lg:col-span-2 space-y-4 sm:space-y-6">
+        {/* Nightly Price */}
+        <div className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            Price per night
+          </label>
+          <div className="relative">
+            <div className="
+              pointer-events-none absolute left-3 top-1/2 -translate-y-1/2
+              grid place-items-center w-10 h-10 rounded-xl
+              bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+              ring-4 ring-white/60 shadow
+            ">
+              <BadgeDollarSign className="w-5 h-5" />
+            </div>
+            <span className="absolute left-14 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">
+              ₱
+            </span>
+            <input
               type="number"
-              label="Price per night"
-              placeholder="e.g., 100"
+              min={0}
+              inputMode="decimal"
+              placeholder="e.g., 2500"
               value={formData.price}
               onChange={(e) => handleChange("price", e.target.value)}
-              variant="outlined"
-              InputProps={{ startAdornment: <Typography sx={{ mr: 1 }}>$</Typography> }}
+              className="
+                w-full rounded-2xl border border-gray-300 bg-white/90
+                pl-20 pr-4 py-3 text-gray-900 shadow-sm
+                placeholder:text-gray-400
+                focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+              "
             />
-            <TextField
-              fullWidth
+          </div>
+          <p className="mt-2 text-xs text-gray-600 flex items-center gap-1">
+            <Info className="w-4 h-4" /> You can adjust this anytime after publishing.
+          </p>
+        </div>
+
+        {/* Cleaning Fee */}
+        <div className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            Cleaning fee <span className="text-gray-500">(optional)</span>
+          </label>
+          <div className="relative">
+            <div className="
+              pointer-events-none absolute left-3 top-1/2 -translate-y-1/2
+              grid place-items-center w-10 h-10 rounded-xl
+              bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+              ring-4 ring-white/60 shadow
+            ">
+              <Brush className="w-5 h-5" />
+            </div>
+            <span className="absolute left-14 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">
+              ₱
+            </span>
+            <input
               type="number"
-              label="Cleaning fee (optional)"
-              placeholder="e.g., 50"
+              min={0}
+              inputMode="decimal"
+              placeholder="e.g., 500"
               value={formData.cleaningFee}
               onChange={(e) => handleChange("cleaningFee", e.target.value)}
-              variant="outlined"
-              InputProps={{ startAdornment: <Typography sx={{ mr: 1 }}>$</Typography> }}
+              className="
+                w-full rounded-2xl border border-gray-300 bg-white/90
+                pl-20 pr-4 py-3 text-gray-900 shadow-sm
+                placeholder:text-gray-400
+                focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+              "
             />
-            <FormControl fullWidth>
-              <InputLabel>Discount Type</InputLabel>
-              <Select
-                value={formData.discountType}
-                label="Discount Type"
-                onChange={(e) => handleChange("discountType", e.target.value)}
-              >
-                <MenuItem value="">
-                  <em>Select discount type</em>
-                </MenuItem>
-                <MenuItem value="none">None</MenuItem>
-                <MenuItem value="percentage">Percentage (%)</MenuItem>
-                <MenuItem value="fixed">Fixed amount</MenuItem>
-              </Select>
-            </FormControl>
-            <TextField
-              fullWidth
-              type="number"
-              label="Discount Value"
-              placeholder="Enter discount value"
-              value={formData.discountValue}
-              onChange={(e) => handleChange("discountValue", Number(e.target.value))}
-              variant="outlined"
-              disabled={formData.discountType === "none" || !formData.discountType}
-              InputProps={{
-                startAdornment: formData.discountType === "percentage" ? <Typography sx={{ mr: 1 }}>%</Typography> : <Typography sx={{ mr: 1 }}>$</Typography>
-              }}
-            />
-          </Box>
+          </div>
+          <p className="mt-2 text-xs text-gray-600">
+            One-time fee added to each booking.
+          </p>
+        </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+        {/* Discount Controls */}
+        <div className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)] space-y-4">
+          <label className="block text-sm font-semibold text-gray-900">
+            Discounts <span className="text-gray-500">(optional)</span>
+          </label>
+
+          {/* Discount Type - segmented */}
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {[
+              { key: "none", label: "None", Icon: Tag },
+              { key: "percentage", label: "% Off", Icon: Percent },
+              { key: "fixed", label: "₱ Off", Icon: BadgeDollarSign },
+            ].map(({ key, label, Icon }) => {
+              const active = (formData.discountType || "none") === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => handleChange("discountType", key)}
+                  aria-pressed={active}
+                  className={[
+                    "w-full rounded-2xl border px-3 py-2.5 sm:py-3 flex items-center justify-center gap-2",
+                    "transition-all duration-200",
+                    active
+                      ? "border-blue-500 bg-blue-50/80 shadow-[0_8px_20px_rgba(30,58,138,0.10)]"
+                      : "border-gray-200 bg-white/70 hover:bg-gray-50",
+                    "text-sm font-semibold text-gray-900",
+                  ].join(" ")}
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Discount Value */}
+          <div>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">
+              Discount value
+            </label>
+            <div className="relative">
+              {/* left badge shows unit depending on type */}
+              <div className="
+                pointer-events-none absolute left-3 top-1/2 -translate-y-1/2
+                grid place-items-center w-10 h-10 rounded-xl
+                bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+                ring-4 ring-white/60 shadow
+              ">
+                {(formData.discountType === "percentage") ? (
+                  <Percent className="w-5 h-5" />
+                ) : (
+                  <BadgeDollarSign className="w-5 h-5" />
+                )}
+              </div>
+
+              {formData.discountType === "percentage" && (
+                <span className="absolute left-14 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">
+                  %
+                </span>
+              )}
+              {formData.discountType === "fixed" && (
+                <span className="absolute left-14 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">
+                  ₱
+                </span>
+              )}
+
+              <input
+                type="number"
+                min={0}
+                inputMode="decimal"
+                placeholder={
+                  formData.discountType === "percentage" ? "e.g., 10" :
+                  formData.discountType === "fixed" ? "e.g., 300" :
+                  "Select a discount type first"
+                }
+                value={formData.discountValue}
+                onChange={(e) => handleChange("discountValue", Number(e.target.value || 0))}
+                disabled={!formData.discountType || formData.discountType === "none"}
+                className={[
+                  "w-full rounded-2xl border bg-white/90 pr-4 py-3 text-gray-900 shadow-sm placeholder:text-gray-400",
+                  formData.discountType === "percentage" || formData.discountType === "fixed"
+                    ? "pl-20 border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    : "pl-4 border-gray-200",
+                  (!formData.discountType || formData.discountType === "none") ? "opacity-50 pointer-events-auto" : "",
+                ].join(" ")}
+              />
+            </div>
+
+            {/* tiny helper */}
+            <p className="mt-2 text-xs text-gray-600">
+              Percentage applies to nightly price only; fixed amount is deducted per booking.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Right: Live Summary */}
+      <div className="
+        rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+        shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+        p-4 sm:p-6 md:p-8 h-fit
+      ">
+        <div className="flex items-center gap-3">
+          <div className="
+            grid place-items-center w-10 h-10 rounded-xl
+            bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700
+            ring-4 ring-white/60 shadow
+          ">
+            <Calculator className="w-5 h-5" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-900">Price summary</h3>
+        </div>
+
+        {(() => {
+          const price = Number(formData.price || 0);
+          const clean = Number(formData.cleaningFee || 0);
+          const type  = formData.discountType || "none";
+          const dVal  = Number(formData.discountValue || 0);
+
+          let discount = 0;
+          if (type === "percentage") discount = Math.max(0, (price * dVal) / 100);
+          if (type === "fixed")      discount = Math.max(0, dVal);
+
+          const nightlyAfter = Math.max(0, price - (type === "percentage" ? discount : 0));
+          const bookingTotal = Math.max(0, nightlyAfter + clean - (type === "fixed" ? discount : 0));
+
+          // --- Screen 9 helpers ---
+          const start = formData.availability.start;
+          const end = formData.availability.end;
+          const invalidRange =
+            Boolean(start) && Boolean(end) && new Date(start) > new Date(end);
+          const nights =
+            start && end
+              ? Math.max(
+                  0,
+                  Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24))
+                )
+              : 0;
+
+          return (
+            <div className="mt-4 space-y-3 text-sm text-gray-800">
+              <div className="flex items-center justify-between">
+                <span>Nightly price</span>
+                <span className="font-semibold">₱{price.toLocaleString()}</span>
+              </div>
+
+              {type === "percentage" && (
+                <div className="flex items-center justify-between">
+                  <span>Discount ({dVal || 0}%)</span>
+                  <span className="font-semibold">− ₱{discount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between">
+                <span>Cleaning fee</span>
+                <span className="font-semibold">₱{clean.toLocaleString()}</span>
+              </div>
+
+              {type === "fixed" && dVal > 0 && (
+                <div className="flex items-center justify-between">
+                  <span>Discount (fixed)</span>
+                  <span className="font-semibold">− ₱{discount.toLocaleString()}</span>
+                </div>
+              )}
+
+              <div className="h-px bg-gray-200 my-1" />
+
+              <div className="flex items-center justify-between text-base">
+                <span className="font-semibold text-gray-900">Estimated total / booking</span>
+                <span className="font-bold text-blue-700">₱{bookingTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              </div>
+
+              <p className="text-xs text-gray-600 mt-2">
+                This preview is for guidance only and may not include taxes or platform fees.
+              </p>
+            </div>
+          );
+        })()}
+      </div>
+    </div>
+
+    {/* Actions */}
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+      <button
+        type="button"
+        onClick={prevStep}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+      >
+        Back
+      </button>
+
+      <button
+        type="button"
+        onClick={saveDraft}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+      >
+        Save to Drafts
+      </button>
+
+      <button
+        type="button"
+        onClick={nextStep}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition"
+      >
+        Next
+      </button>
+    </div>
+  </section>
+)}
 
       {/* 📅 Screen 9 - Enhanced with Calendar */}
       {step === 9 && (
-        <Box sx={{ textAlign: 'center', mb: 4 }}>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
-            When can guests book your place?
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
-            Set the dates when your listing is available.
-          </Typography>
+  <section
+    className="
+      px-4 md:px-8 py-12
+      min-h-[calc(100vh-56px)]
+      grid grid-rows-[auto,1fr,auto] gap-6
+      bg-gradient-to-br from-blue-50 via-white to-indigo-50
+    "
+  >
+    {/* Title */}
+    <div className="max-w-3xl mx-auto text-center">
+      <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">
+        When can guests book your place?
+      </h1>
+      <p className="mt-2 text-gray-700">
+        Set the dates when your listing is available.
+      </p>
+    </div>
 
-          <Box sx={{ maxWidth: 600, mx: 'auto', display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <TextField
-              fullWidth
-              type="date"
-              label="Start Date"
-              value={formData.availability.start}
-              onChange={(e) =>
+    {/* Content */}
+    <div className="max-w-5xl w-full mx-auto h-full">
+      <div className="
+        rounded-3xl border border-white/20 bg-white/80 backdrop-blur-md
+        p-5 sm:p-6 md:p-8
+        shadow-[0_12px_30px_rgba(30,58,138,0.10),0_30px_60px_rgba(30,58,138,0.08)]
+      ">
+        {/* Inputs */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+          {/* Start date */}
+          <div className="group">
+            <label className="block text-sm font-semibold text-gray-900 mb-2">
+              Start Date
+            </label>
+            <div
+              className={[
+                "flex items-center gap-3 rounded-2xl border bg-white/90 px-4 py-3",
+                "shadow-sm transition",
+                invalidRange ? "border-red-300" : "border-gray-300 focus-within:border-blue-500",
+              ].join(" ")}
+            >
+              <input
+                type="date"
+                value={start || ""}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    availability: {
+                      ...formData.availability,
+                      start: e.target.value,
+                    },
+                  })
+                }
+                min={new Date().toISOString().split("T")[0]}
+                className="w-full bg-transparent outline-none text-gray-800"
+              />
+            </div>
+          </div>
+
+          {/* End date */}
+          <div className="group">
+            <label className="block text-sm font-semibold text-gray-900 mb-2">
+              End Date
+            </label>
+            <div
+              className={[
+                "flex items-center gap-3 rounded-2xl border bg-white/90 px-4 py-3",
+                "shadow-sm transition",
+                invalidRange ? "border-red-300" : "border-gray-300 focus-within:border-blue-500",
+              ].join(" ")}
+            >
+              <input
+                type="date"
+                value={end || ""}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    availability: {
+                      ...formData.availability,
+                      end: e.target.value,
+                    },
+                  })
+                }
+                min={start || new Date().toISOString().split("T")[0]}
+                className="w-full bg-transparent outline-none text-gray-800"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Summary / validation */}
+        <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          {/* Nights badge */}
+          <div className="inline-flex items-center gap-2">
+            <span className="text-sm text-gray-700">
+              {start && end && !invalidRange ? (
+                <>
+                  <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-blue-700 font-semibold text-xs shadow-sm">
+                    {nights} {nights === 1 ? "night" : "nights"}
+                  </span>
+                  <span className="ml-2 text-gray-700">
+                    {start} → {end}
+                  </span>
+                </>
+              ) : (
+                <span className="text-gray-600">Select a start and end date</span>
+              )}
+            </span>
+          </div>
+
+          {/* Error note */}
+          {invalidRange && (
+            <p className="text-sm font-medium text-red-600">
+              End date must be after the start date.
+            </p>
+          )}
+
+          {/* Quick actions */}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() =>
                 setFormData({
                   ...formData,
-                  availability: { ...formData.availability, start: e.target.value },
+                  availability: { start: "", end: "" },
                 })
               }
-              variant="outlined"
-              InputLabelProps={{ shrink: true }}
-            />
-            <TextField
-              fullWidth
-              type="date"
-              label="End Date"
-              value={formData.availability.end}
-              onChange={(e) =>
-                setFormData({
-                  ...formData,
-                  availability: { ...formData.availability, end: e.target.value },
-                })
-              }
-              variant="outlined"
-              InputLabelProps={{ shrink: true }}
-            />
-          </Box>
+              className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
 
-          <Stack direction="row" spacing={2} justifyContent="center" sx={{ mt: 4 }}>
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button variant="contained" onClick={nextStep} sx={{ px: 4 }}>
-              Next
-            </Button>
-          </Stack>
-        </Box>
-      )}
+    {/* Actions */}
+    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+      <button
+        type="button"
+        onClick={prevStep}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+      >
+        Back
+      </button>
+
+      <button
+        type="button"
+        onClick={saveDraft}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+      >
+        Save to Drafts
+      </button>
+
+      <button
+        type="button"
+        onClick={nextStep}
+        disabled={!start || !end || invalidRange}
+        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
+      >
+        Next
+      </button>
+    </div>
+  </section>
+)}
 
       {/* ✅ Screen 10 */}
       {step === 10 && (
-        <Box sx={{ textAlign: 'center', mb: 1, height: 'auto' }}>
-          <Toolbar/>
-          <Typography variant="h3" component="h1" gutterBottom sx={{ fontWeight: 600, color: 'primary.main' }}>
+      <section
+        className="
+          px-4 md:px-8 py-10
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,1fr,auto] gap-6
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        "
+      >
+        {/* Title */}
+        <div className="max-w-3xl mx-auto text-center">
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">
             Review and publish
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+          </h1>
+          <p className="mt-2 text-gray-700">
             Double-check your details before publishing your listing.
-          </Typography>
+          </p>
+        </div>
 
-          <Box sx={{ maxWidth: '80%', height: '500px', mx: 'auto', mb: 4, display: 'flex', gap: 3, alignItems: 'stretch' }}>  {/* Changed maxHeight to fixed height: '500px' */}
-            {/* Left Side: Photo Carousel */}
-            <Box sx={{ flex: 1 }}>
-              <Card sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>  {/* Changed to height: '100%' */}
-                {formData.photos.length > 0 ? (
-                  <Box sx={{ position: 'relative', width: '100%', height: '100%' }}>
+        {/* Content */}
+        <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Left: Photo preview / carousel */}
+          <div className="
+            relative rounded-3xl overflow-hidden
+            bg-white/70 backdrop-blur-md border border-white/60
+            shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]
+            hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),0_30px_60px_rgba(30,58,138,0.12)]
+            transition-shadow
+          ">
+            <div className="relative w-full">
+              {formData.photos?.length ? (
+                <>
+                  {/* Natural-size image wrapper */}
+                  <div className="w-full flex items-center justify-center bg-gray-50">
                     <img
-                      src={formData.photos[currentPhotoIndex || 0]} // Use state for current index
-                      alt="Listing Photo"
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      src={formData.photos[currentPhotoIndex || 0]}
+                      alt={`Listing Photo ${currentPhotoIndex + 1}`}
+                      className="block max-w-full h-auto max-h-[70vh] object-contain mx-auto"
+                      loading="lazy"
                     />
-                    {formData.photos.length > 1 && (
-                      <>
-                        <IconButton
-                          sx={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', bgcolor: 'rgba(255,255,255,0.7)' }}
-                          onClick={() => setCurrentPhotoIndex((prev) => Math.max(0, prev - 1))}
-                          disabled={(currentPhotoIndex || 0) === 0}
-                        >
-                          <ArrowBackIcon />
-                        </IconButton>
-                        <IconButton
-                          sx={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', bgcolor: 'rgba(255,255,255,0.7)' }}
-                          onClick={() => setCurrentPhotoIndex((prev) => Math.min(formData.photos.length - 1, prev + 1))}
-                          disabled={(currentPhotoIndex || 0) === formData.photos.length - 1}
-                        >
-                          <ArrowForwardIcon />
-                        </IconButton>
-                      </>
-                    )}
-                  </Box>
-                ) : (
-                  <Typography variant="body1" color="text.secondary">No photos uploaded</Typography>
-                )}
-              </Card>
-            </Box>
+                  </div>
 
-            {/* Right Side: Details Card */}
-            <Box sx={{ flex: 1 }}>  {/* Removed flexWrap: 'wrap' */}
-              <Card sx={{ height: 'auto', p: 4, overflowY: 'auto' }}>  {/* Changed to height: '100%' */}
-                <Typography variant="h4" gutterBottom sx={{ color: 'primary.main', fontWeight: 500 }}>
-                  Listing Details
-                </Typography>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, textAlign: 'left' }}>
-                  <Typography variant="body1"><strong>Category:</strong> {formData.category || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Listing Type:</strong> {formData.listingType || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Location:</strong> {[
-                    regions.find(r => r.code === formData.region)?.name,
-                    provinces.find(p => p.code === formData.province)?.name,
-                    municipalities.find(m => m.code === formData.municipality)?.name,
-                    barangays.find(b => b.code === formData.barangay)?.name,
-                    formData.street
-                  ].filter(Boolean).join(", ") || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Property Type:</strong> {formData.propertyType || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Guests:</strong> {formData.guests || 0} | <strong>Bedrooms:</strong> {formData.bedrooms || 0} | <strong>Beds:</strong> {formData.beds || 0} | <strong>Bathrooms:</strong> {formData.bathrooms || 0}</Typography>
-                  <Typography variant="body1"><strong>Amenities:</strong> {formData.amenities.length > 0 ? formData.amenities.join(", ") : "None"}</Typography>
-                  <Typography variant="body1"><strong>Title:</strong> {formData.title || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Description:</strong> {formData.description || "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Price:</strong> {formData.price ? `$${formData.price}` : "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Cleaning Fee:</strong> {formData.cleaningFee ? `$${formData.cleaningFee}` : "Not set"}</Typography>
-                  <Typography variant="body1"><strong>Discount:</strong> {formData.discountType && formData.discountValue ? `${formData.discountValue} (${formData.discountType})` : "None"}</Typography>
-                  <Typography variant="body1"><strong>Availability:</strong> {formData.availability.start && formData.availability.end ? `${formData.availability.start} to ${formData.availability.end}` : "Not set"}</Typography>
-                </Box>
-              </Card>
-            </Box>
-          </Box>
+                  {/* index pill */}
+                  <div className="absolute top-4 right-4 rounded-full bg-black/50 text-white text-xs font-medium px-3 py-1">
+                    {currentPhotoIndex + 1} / {formData.photos.length}
+                  </div>
 
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={formData.agreeToTerms}
-                onChange={(e) => handleChange("agreeToTerms", e.target.checked)}
-                color="primary"
+                  {/* nav arrows */}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPhotoIndex((prev) => Math.max(0, (prev || 0) - 1))}
+                    disabled={(currentPhotoIndex || 0) === 0}
+                    className="
+                      absolute left-3 top-1/2 -translate-y-1/2
+                      h-11 w-11 rounded-full
+                      bg-white/80 hover:bg-white
+                      border border-white/60
+                      shadow-md grid place-items-center
+                      disabled:opacity-50 disabled:pointer-events-none
+                    "
+                    aria-label="Previous photo"
+                  >
+                    <svg className="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6"/>
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCurrentPhotoIndex((prev) => Math.min((formData.photos.length - 1), (prev || 0) + 1))
+                    }
+                    disabled={(currentPhotoIndex || 0) === formData.photos.length - 1}
+                    className="
+                      absolute right-3 top-1/2 -translate-y-1/2
+                      h-11 w-11 rounded-full
+                      bg-white/80 hover:bg-white
+                      border border-white/60
+                      shadow-md grid place-items-center
+                      disabled:opacity-50 disabled:pointer-events-none
+                    "
+                    aria-label="Next photo"
+                  >
+                    <svg className="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6"/>
+                    </svg>
+                  </button>
+                </>
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 grid place-items-center shadow-inner mb-3">
+                    <svg className="w-9 h-9" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 17h16M7 4v16M17 4v16"/>
+                    </svg>
+                  </div>
+                  <p className="text-gray-800 font-semibold">No photos uploaded</p>
+                  <p className="text-gray-600 text-sm">Add some photos on the previous step to preview here.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right: Details */}
+          <div className="
+            rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+            shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]
+            overflow-hidden flex flex-col
+          ">
+            <div className="px-6 sm:px-8 pt-6">
+              <h2 className="text-2xl font-bold text-gray-900">Listing Details</h2>
+              <p className="text-gray-600 text-sm mt-1">Here’s a summary of your setup.</p>
+            </div>
+
+            <div className="px-6 sm:px-8 py-6 space-y-3 overflow-auto">
+              <DetailRow label="Category" value={formData.category || "Not set"} />
+              <DetailRow label="Listing Type" value={formData.listingType || "Not set"} />
+              <DetailRow
+                label="Location"
+                value={
+                  formData.location ||
+                  [
+                    regions.find((r) => r.code === formData.region)?.name,
+                    provinces.find((p) => p.code === formData.province)?.name,
+                    municipalities.find((m) => m.code === formData.municipality)?.name,
+                    barangays.find((b) => b.code === formData.barangay)?.name,
+                    formData.street,
+                  ]
+                    .filter(Boolean)
+                    .join(", ") || "Not set"
+                }
               />
-            }
-            label="I agree to the hosting terms"
-            sx={{ mb: 4 }}
-          />
+              <DetailRow label="Property Type" value={formData.propertyType || "Not set"} />
 
-          <Stack direction="row" spacing={2} justifyContent="center">
-            <Button variant="outlined" onClick={prevStep} sx={{ px: 4 }}>
-              Back
-            </Button>
-            <Button variant="text" onClick={saveDraft} sx={{ px: 4 }}>
-              Save to Drafts
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleSubmit}
-              disabled={!formData.agreeToTerms}
-              sx={{ px: 4 }}
-            >
-              Publish
-            </Button>
-          </Stack>
-        </Box>
-      )}
+              {/* Guests breakdown (object) */}
+              <DetailRow
+                label="Guests"
+                value={
+                  (() => {
+                    const a = Number(formData?.guests?.adults ?? 0);
+                    const c = Number(formData?.guests?.children ?? 0);
+                    const i = Number(formData?.guests?.infants ?? 0);
+                    const total = a + c + i;
+                    return total > 0
+                      ? `${total} total (Adults: ${a}, Children: ${c}, Infants: ${i})`
+                      : "0";
+                  })()
+                }
+              />
+
+              <DetailRow
+                label="Rooms"
+                value={`Bedrooms: ${formData.bedrooms || 0} | Beds: ${formData.beds || 0} | Bathrooms: ${formData.bathrooms || 0}`}
+              />
+
+              <DetailRow
+                label="Amenities"
+                value={formData.amenities?.length ? formData.amenities.join(", ") : "None"}
+              />
+
+              <DetailRow label="Title" value={formData.title || "Not set"} />
+              <DetailRow label="Description" value={formData.description || "Not set"} />
+
+              <DetailRow
+                label="Price"
+                value={formData.price ? `₱${Number(formData.price).toLocaleString()}` : "Not set"}
+              />
+              <DetailRow
+                label="Cleaning Fee"
+                value={
+                  formData.cleaningFee
+                    ? `₱${Number(formData.cleaningFee).toLocaleString()}`
+                    : "Not set"
+                }
+              />
+              <DetailRow
+                label="Discount"
+                value={
+                  formData.discountType && formData.discountType !== "none"
+                    ? formData.discountType === "percentage"
+                      ? `${formData.discountValue || 0}%`
+                      : `₱${Number(formData.discountValue || 0).toLocaleString()}`
+                    : "None"
+                }
+              />
+              <DetailRow
+                label="Availability"
+                value={
+                  formData?.availability?.start && formData?.availability?.end
+                    ? `${formData.availability.start} to ${formData.availability.end}`
+                    : "Not set"
+                }
+              />
+            </div>
+
+            {/* Terms */}
+            <div className="px-6 sm:px-8 pb-6">
+              <label className="flex items-start gap-3 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!formData.agreeToTerms}
+                  onChange={(e) => handleChange("agreeToTerms", e.target.checked)}
+                  className="mt-1 h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">
+                  I agree to the hosting{" "}
+                  <button
+                    type="button"
+                    className="text-blue-600 hover:text-blue-700 underline underline-offset-2"
+                    onClick={() => setOpenPolicyModal(true)}
+                  >
+                    Policy &amp; Compliance
+                  </button>{" "}
+                  terms.
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={prevStep}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+          >
+            Back
+          </button>
+
+          <button
+            type="button"
+            onClick={saveDraft}
+            className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+          >
+            Save to Drafts
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!formData.agreeToTerms}
+            className="
+              w-full sm:w-auto inline-flex items-center justify-center
+              rounded-full bg-gradient-to-r from-blue-500 to-blue-600
+              px-7 py-3 text-sm font-semibold text-white shadow-md
+              hover:from-blue-600 hover:to-blue-700
+              transition disabled:opacity-50 disabled:pointer-events-none
+            "
+          >
+            Publish
+          </button>
+        </div>
+
+        {/* Policy modal (unchanged API) */}
+        <PolicyComplianceModal
+          open={openPolicyModal}
+          onClose={() => setOpenPolicyModal(false)}
+          onConfirm={() => {
+            handleChange("agreeToTerms", true);
+            setOpenPolicyModal(false);
+          }}
+        />
+      </section>
+    )}
     </div>
   );
 };

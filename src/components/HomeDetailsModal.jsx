@@ -15,6 +15,8 @@ import {
   Switch,
   Chip,
 } from "@mui/material";
+
+import Avatar from "@mui/material/Avatar";
 import CloseIcon from "@mui/icons-material/Close";
 import ArrowBackIosNewIcon from "@mui/icons-material/ArrowBackIosNew";
 import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
@@ -28,6 +30,7 @@ import AvailabilityCalendar from './availability-calendar';
 import { database } from "../config/firebase";
 import { PayPalButtons } from "@paypal/react-paypal-js";  // New import for PayPal
 import { auth } from "../config/firebase";  
+import { MessageHostModal } from "./message-host-modal";
 
 const HomesDetailsModal = ({ listingId, onClose }) => {
   const [listing, setListing] = useState(null);
@@ -44,6 +47,26 @@ const HomesDetailsModal = ({ listingId, onClose }) => {
 
   const [showPayPal, setShowPayPal] = useState(false);  // Tracks whether to show PayPal buttons
   const [totalAmount, setTotalAmount] = useState(0);   // Stores the total amount for PayPal
+
+  const [host, setHost] = useState(null);
+  const [showMessageModal, setShowMessageModal] = useState(false);
+
+  useEffect(() => {
+  if (!listing) return;
+
+  const fetchHost = async () => {
+    if (!listing.uid) return;
+    try {
+      const docRef = doc(database, "users", listing.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) setHost(docSnap.data());
+    } catch (err) {
+      console.error("Failed to fetch host:", err);
+    }
+  };
+
+  fetchHost();
+}, [listing]);
 
   useEffect(() => {
     const fetchListingDetails = async () => {
@@ -527,6 +550,29 @@ const HomesDetailsModal = ({ listingId, onClose }) => {
                   </Box>
               </Box>
 
+              {console.log(host)}
+
+              {host && (
+                <Card sx={{ mt: 3, boxShadow: 2 }}>
+                  <CardContent sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <Avatar src={host.photoURL || ""}>
+                      {!host.photoURL && (host.firstName?.charAt(0) || "H")}
+                    </Avatar>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="subtitle1" fontWeight={600}>
+                        {host.firstName} {host.lastName}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Host of this listing
+                      </Typography>
+                    </Box>
+                    <Button variant="outlined" onClick={() => setShowMessageModal(true)}>
+                      Message Host
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
               <Box sx={{ mt: 4 }}>
                 <Typography variant="subtitle1" gutterBottom>
                   Select Dates:
@@ -746,6 +792,13 @@ const HomesDetailsModal = ({ listingId, onClose }) => {
             </Box>
           </Grid>
         </Grid>
+        
+      {/* Message Host Modal */}
+        <MessageHostModal
+          open={showMessageModal}
+          onClose={() => setShowMessageModal(false)}
+          hostId={listing?.uid}
+        />
       </Box>
     </Modal>
   );
