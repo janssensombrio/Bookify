@@ -19,14 +19,19 @@ import { useSidebar } from "../../context/SidebarContext";
 import { auth, database } from "../../config/firebase";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import HostCategModal from "../../components/host-categ-modal.jsx";
+import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
+  const user = auth.currentUser;
+  const firstName = user?.displayName?.trim().split(/\s+/)[0];
 
   // ✅ Host state (mirrors Explore)
   const [isHost, setIsHost] = useState(localStorage.getItem("isHost") === "true");
   const [showHostModal, setShowHostModal] = useState(false);
+  const [showPoliciesModal, setShowPoliciesModal] = useState(false);
+  const [policiesAccepted, setPoliciesAccepted] = useState(false);
 
   useEffect(() => {
     const checkIfHost = async () => {
@@ -42,13 +47,44 @@ export default function Dashboard() {
     checkIfHost();
   }, []);
 
+    // keep a per-user remember flag in localStorage
+    useEffect(() => {
+      const u = auth.currentUser;
+      const key = u?.uid ? `hostPoliciesAccepted:${u.uid}` : null;
+      if (!key) return;
+      setPoliciesAccepted(localStorage.getItem(key) === "true");
+    }, [auth.currentUser?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleOpenHostModal = () => setShowHostModal(true);
   const handleCloseHostModal = () => setShowHostModal(false);
 
+    const handleOpenPoliciesModal = () => setShowPoliciesModal(true);
+  const handleClosePoliciesModal = () => setShowPoliciesModal(false);
+
+  const handleAgreePolicies = () => {
+    const u = auth.currentUser;
+    const key = u?.uid ? `hostPoliciesAccepted:${u.uid}` : null;
+
+    if (key) localStorage.setItem(key, "true");
+      setPoliciesAccepted(true);
+      setShowPoliciesModal(false);
+      // once accepted, immediately open category picker
+      setShowHostModal(true);
+  };
+
+
   // ✅ What the mobile-only button in Sidebar will call
   const handleHostClick = () => {
-    if (isHost) navigate("/hostpage");
-    else handleOpenHostModal();
+    if (isHost) {
+      navigate("/hostpage");
+    } else {
+      // not a host: gate with policies
+      if (!isHost) {
+        setShowPoliciesModal(true);
+      } else {
+        handleOpenPoliciesModal();
+      }
+    }
   };
 
   const stats = [
@@ -169,7 +205,7 @@ export default function Dashboard() {
           {/* Welcome Section */}
           <div className="glass rounded-4xl p-8 bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-600/10 border-white/30 shadow-lg shadow-gray-300/40 hover:shadow-xl hover:shadow-gray-400/50 transition-all duration-300">
             <h1 className="text-4xl font-bold text-foreground mb-2">
-              Welcome back, Sarah! 👋
+              Welcome back, {firstName}! 👋
             </h1>
             <p className="text-muted-foreground text-lg">
               Ready to explore your next adventure?
@@ -273,11 +309,19 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Host Category Modal (same as Explore) */}
+         {/* Hosting Policies (first-time gate) */}
+        {showPoliciesModal && (
+          <HostPoliciesModal
+            onClose={handleClosePoliciesModal}
+            onAgree={handleAgreePolicies}
+          />
+        )}
+
+        {/* Host Category Modal (opens after Agree, or if already accepted) */}
         {showHostModal && (
           <HostCategModal
             onClose={handleCloseHostModal}
-            onSelectCategory={handleCloseHostModal}
+            onSelectCategory={handleCloseHostModal}  // or pass nothing if your modal auto-navigates
           />
         )}
       </main>

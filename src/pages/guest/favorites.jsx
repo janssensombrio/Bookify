@@ -12,16 +12,17 @@ import {
 } from "firebase/firestore";
 import { auth, database } from "../../config/firebase";
 
-import Sidebar from "./components/sidebar.jsx"; // 
+import Sidebar from "./components/sidebar.jsx";
 import { useSidebar } from "../../context/SidebarContext";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 
 import HostCategModal from "../../components/host-categ-modal.jsx";
+import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
 import HomeDetailsModal from "../../components/HomeDetailsModal";
 import ExperienceDetailsModal from "../../components/ExperienceDetailsModal";
 import ServiceDetailsModal from "../../components/ServiceDetailsModal";
 
-import { Menu, Heart } from "lucide-react";
+import { Menu, Heart, Compass } from "lucide-react";
 
 const FavoritesPage = () => {
   const navigate = useNavigate();
@@ -32,23 +33,22 @@ const FavoritesPage = () => {
   const [favoriteListings, setFavoriteListings] = useState([]); // full listing docs (published only)
   const [loading, setLoading] = useState(true);
 
-  // Host button state
+  // Host state (no local remember of policies)
   const [isHost, setIsHost] = useState(
     typeof window !== "undefined" && localStorage.getItem("isHost") === "true"
   );
   const [showHostModal, setShowHostModal] = useState(false);
+  const [showPoliciesModal, setShowPoliciesModal] = useState(false);
 
-  const user = auth.currentUser;
-
-  // Check if user is a host (mirrors Explore)
+  // Check if user is a host (mirrors Explore/Dashboard)
   useEffect(() => {
     const checkIfHost = async () => {
       const u = auth.currentUser;
       if (!u) return;
       try {
         const hostsRef = collection(database, "hosts");
-        const q = query(hostsRef, where("uid", "==", u.uid));
-        const snapshot = await getDocs(q);
+        const qh = query(hostsRef, where("uid", "==", u.uid));
+        const snapshot = await getDocs(qh);
         const hostStatus = !snapshot.empty;
         setIsHost(hostStatus);
         localStorage.setItem("isHost", hostStatus ? "true" : "false");
@@ -111,16 +111,24 @@ const FavoritesPage = () => {
         createdAt: new Date(),
       });
       setFavorites((prev) => [...prev, listingId]);
-      // We don't refetch listing doc here; the card will appear next load if needed.
     }
   };
 
+  // 🔔 Always show policies for non-hosts; after Agree → open category picker
   const handleHostClick = () => {
-    if (isHost) navigate("/hostpage");
-    else setShowHostModal(true);
+    if (isHost) {
+      navigate("/hostpage");
+    } else {
+      setShowPoliciesModal(true);
+    }
   };
 
   const handleCloseHostModal = () => setShowHostModal(false);
+  const handleClosePoliciesModal = () => setShowPoliciesModal(false);
+  const handleAgreePolicies = () => {
+    setShowPoliciesModal(false);
+    setShowHostModal(true);
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
@@ -168,6 +176,7 @@ const FavoritesPage = () => {
             onClick={handleHostClick}
             className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
           >
+            <Compass size={18} />
             {isHost ? "Switch to Hosting" : "Become a Host"}
           </button>
         </div>
@@ -312,7 +321,15 @@ const FavoritesPage = () => {
         </>
       )}
 
-      {/* Host Category Modal */}
+      {/* Hosting Policies (always shown for non-hosts on action) */}
+      {showPoliciesModal && (
+        <HostPoliciesModal
+          onClose={handleClosePoliciesModal}
+          onAgree={handleAgreePolicies}
+        />
+      )}
+
+      {/* Host Category Modal (opens after Agree) */}
       {showHostModal && (
         <HostCategModal
           onClose={handleCloseHostModal}

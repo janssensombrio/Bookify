@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Menu,
@@ -11,14 +11,17 @@ import {
   Settings,
   LogOut,
   User,
+  MessageSquareText, // ← added
 } from "lucide-react";
 import { auth } from "../../../config/firebase";
 import { useSidebar } from "../../../context/SidebarContext";
+import LogoutConfirmationModal from "../../host/components/logout-confirmation-modal";
 
 const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
   const user = auth.currentUser;
 
   // Prefer prop (keeps in sync with Explore), otherwise read localStorage
@@ -44,6 +47,7 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
     { icon: Home, label: "Dashboard", path: "/dashboard" },
     { icon: Compass, label: "Explore", path: "/explore" },
     { icon: Calendar, label: "Bookings", path: "/bookings" },
+    { icon: MessageSquareText, label: "Messages", path: "/guest-messages" }, // ← new shortcut
     { icon: Heart, label: "Favorites", path: "/favorites" },
     { icon: Wallet, label: "E-Wallet", path: "/wallet" },
     { icon: Settings, label: "Settings", path: "/settings" },
@@ -53,8 +57,6 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
     navigate(path);
     setSidebarOpen(false); // close drawer on mobile
   };
-
-  const handleLogout = () => navigate("/login");
 
   // Prevent background scroll when sidebar is open on mobile
   useEffect(() => {
@@ -83,6 +85,17 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
       else navigate("/host-setup");
     }
     setSidebarOpen(false);
+  };
+
+  const handleLogout = async () => {
+    try {
+      await auth.signOut();
+      localStorage.removeItem("isHost");
+      navigate("/");
+    } catch (err) {
+      console.error("Logout error:", err.message);
+      alert("Failed to logout. Try again.");
+    }
   };
 
   return (
@@ -189,6 +202,7 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
                     : "text-foreground hover:bg-white/10"
                 }`}
                 title={item.label}
+                aria-current={isActive ? "page" : undefined}
               >
                 <item.icon size={20} />
                 {sidebarOpen && <span className="font-medium">{item.label}</span>}
@@ -200,7 +214,7 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
         {/* Logout */}
         <div className="p-4 border-t border-white/10">
           <button
-            onClick={handleLogout}
+            onClick={() => setIsLogoutModalOpen(true)}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-foreground hover:bg-white/10 transition-all duration-200"
           >
             <LogOut size={20} />
@@ -217,6 +231,13 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
           aria-hidden="true"
         />
       )}
+
+      {/* Logout Modal */}
+      <LogoutConfirmationModal
+        open={isLogoutModalOpen}
+        onClose={() => setIsLogoutModalOpen(false)}
+        onLogout={handleLogout}
+      />
     </>
   );
 };

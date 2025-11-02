@@ -1,40 +1,14 @@
 import { useState, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { doc, collection, addDoc, updateDoc, query, where, getDocs } from "firebase/firestore";
+import { doc, collection, addDoc, updateDoc, query, where, getDocs, getDoc, serverTimestamp } from "firebase/firestore";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
 import { auth, database } from "../../config/firebase";
 import "./styles/host-set-up.css";
-import { PolicyComplianceModal } from "./components/PolicyComplianceModal";
+import PolicyComplianceModal from "./components/PolicyComplianceModal";
 import { Home, BedDouble, Users, Building2, Crown, Mountain, Tent, Wifi, Coffee, Tv, Car, Dumbbell, PawPrint, Snowflake, Waves,
-  ShowerHead, KeyRound, Utensils, Wind, Lock, X, UploadCloud, Image as ImageIcon, Heading1, AlignLeft, Sparkles, BadgeDollarSign, Brush, Percent, Tag, Info, Calculator } from "lucide-react";
+  ShowerHead, KeyRound, Utensils, Wind, Lock, X, UploadCloud, Image as ImageIcon, Heading1, AlignLeft, Sparkles, BadgeDollarSign, Brush, Percent, Tag, Info, Calculator, ChevronLeft, ChevronRight } from "lucide-react";
 import LocationPickerMapString from "./components/LocationPickerMap";
-
-
-import LocationDropdowns from "./components/LocationDropdowns";
-
-import {
-  Box,
-  Typography,
-  Button,
-  Card,
-  CardActionArea,
-  Grid,
-  RadioGroup,
-  Stack,
-  CardMedia,
-  IconButton,
-  Toolbar,
-  FormControl,  // Added for dropdowns
-  InputLabel,   // Added for dropdown labels
-  Select,       // Added for dropdowns
-  MenuItem,     // Added for dropdown options
-  TextField,
-  Checkbox,
-  FormControlLabel,
-  Link,
-} from "@mui/material";
-
-import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 
 const CLOUD_NAME = "dijmlbysr"; // From Cloudinary dashboard
 const UPLOAD_PRESET = "listing-uploads"; // Create an unsigned preset in Cloudinary for uploads
@@ -48,9 +22,16 @@ function DetailRow({ label, value }) {
   );
 }
 
+const nightsBetween = (s, e) => {
+  if (!s || !e) return 0;
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const startMs = new Date(`${s}T00:00:00`).setHours(12);
+  const endMs   = new Date(`${e}T00:00:00`).setHours(12);
+  return Math.max(0, Math.ceil((endMs - startMs) / msPerDay));
+};
+
 export const HostSetUp = () => {
   const location = useLocation();
-  const initialCategory = location.state?.category || "";
   
   const navigate = useNavigate();
 
@@ -67,7 +48,7 @@ export const HostSetUp = () => {
   const [openPolicyModal, setOpenPolicyModal] = useState(false);
 
   const [formData, setFormData] = useState({
-    category: initialCategory,
+    category: "Homes",
     listingType: "",
     location: "",
     propertyType: "",
@@ -82,7 +63,7 @@ export const HostSetUp = () => {
     description: "",
     price: "",
     cleaningFee: "",
-    discountType: "",
+    discountType: "none",
     discountValue: 0,
     availability: { start: "", end: "" },
     agreeToTerms: false,
@@ -99,6 +80,8 @@ export const HostSetUp = () => {
 
   const saveDraft = async () => {
     try {
+      await saveHost();
+
       const user = auth.currentUser;
       if (!user) return alert("You must be logged in to save a draft.");
 
@@ -118,7 +101,7 @@ export const HostSetUp = () => {
         },
         location: formData.location || "",
         status: "draft",
-        savedAt: new Date(),
+        savedAt: serverTimestamp(),
       };
 
       let docRef;
@@ -156,23 +139,100 @@ export const HostSetUp = () => {
     }));
   };
 
+  const parseName = (displayName = "") => {
+    const parts = displayName.trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return { firstName: "", lastName: "" };
+    const firstName = parts.shift();
+    const lastName = parts.join(" ");
+    return { firstName, lastName };
+  };
+
+  const saveHost = async () => {
+  try {
+    const user = auth.currentUser;
+    if (!user) {
+      alert("You must be logged in first.");
+      return;
+    }
+
+    // --- Gather profile fields with safe fallbacks ---
+    const fromAuth = parseName(user.displayName || "");
+    let firstName = fromAuth.firstName || "";
+    let lastName  = fromAuth.lastName  || "";
+    let photoURL  = user.photoURL || "";
+
+    // Optional: if you keep a users/{uid} profile doc, prefer its values
+    try {
+      const profSnap = await getDoc(doc(database, "users", user.uid));
+      if (profSnap.exists()) {
+        const p = profSnap.data() || {};
+        firstName = p.firstName ?? firstName;
+        lastName  = p.lastName  ?? lastName;
+        photoURL  = p.photoURL  ?? photoURL;
+      }
+    } catch (e) {
+      console.warn("Profile lookup failed (non-fatal):", e);
+    }
+
+    const hostsRef = collection(database, "hosts");
+    const q = query(hostsRef, where("uid", "==", user.uid));
+    const snapshot = await getDocs(q);
+
+    const base = {
+      uid: user.uid,
+      email: user.email || "",
+      firstName,
+      lastName,
+      photoURL,
+      displayName: `${firstName} ${lastName}`.trim() || (user.displayName || ""),
+      updatedAt: serverTimestamp(),
+    };
+
+    if (snapshot.empty) {
+      await addDoc(hostsRef, {
+        ...base,
+        createdAt: serverTimestamp(),
+      });
+      console.log("Host added successfully!");
+    } else {
+      // Update the first matching host doc (you only ever create one per uid)
+      const existing = snapshot.docs[0].ref;
+      await updateDoc(existing, base);
+      console.log("Host already exists, updated profile fields.");
+    }
+  } catch (err) {
+    console.error("Error adding host:", err);
+    alert("Something went wrong saving host.");
+  }
+};
+
   const handleSubmit = async () => {
     try {
+      await saveHost();
+
       const user = auth.currentUser;
       if (!user) return alert("You must be logged in to publish.");
 
-      // ✅ Get readable names
-      const selectedRegion = regions.find(r => r.code === formData.region)?.name || "";
-      const selectedProvince = provinces.find(p => p.code === formData.province)?.name || "";
-      const selectedMunicipality = municipalities.find(m => m.code === formData.municipality)?.name || "";
-      const selectedBarangay = barangays.find(b => b.code === formData.barangay)?.name || "";
+      const normalized = {
+        ...formData,
+        price: Number(formData.price || 0),
+        cleaningFee: Number(formData.cleaningFee || 0),
+        discountValue: Number(formData.discountValue || 0),
+      };
+
+      const g = formData.guests || {};
+      const adults = Number(g.adults ?? 1);
+      const children = Number(g.children ?? 0);
+      const infants = Number(g.infants ?? 0);
+      const guests = { adults, children, infants, total: adults + children + infants };
 
       const dataToSave = {
-        ...formData,
+        ...normalized,
         uid: user.uid,
+        guests,
         location: formData.location || "",
         status: "published",
-        publishedAt: new Date(),
+        publishedAt: serverTimestamp(),
       };
 
 
@@ -195,35 +255,6 @@ export const HostSetUp = () => {
     }
   };
 
-
-  const saveHost = async () => {
-    try {
-      const user = auth.currentUser;
-      if (!user) {
-        alert("You must be logged in first.");
-        return;
-      }
-
-      const hostsRef = collection(database, "hosts");
-      const q = query(hostsRef, where("uid", "==", user.uid));
-      const snapshot = await getDocs(q);
-
-      if (snapshot.empty) {
-        await addDoc(hostsRef, {
-          uid: user.uid,
-          email: user.email,
-          createdAt: new Date(),
-        });
-        console.log("Host added successfully!");
-      } else {
-        console.log("Host already exists, skipping creation.");
-      }
-    } catch (err) {
-      console.error("Error adding host:", err);
-      alert("Something went wrong saving host.");
-    }
-  };
-
   useEffect(() => {
     fetch("https://psgc.gitlab.io/api/regions/")
       .then((res) => res.json())
@@ -242,7 +273,7 @@ export const HostSetUp = () => {
     if (!snapshot.empty) {
       navigate("/hostpage"); // user is already a host
     } else {
-      navigate("/home"); // regular user
+      navigate("/dashboard"); // regular user
     }
   };
 
@@ -265,21 +296,46 @@ export const HostSetUp = () => {
 
     // --- Screen 9 helpers ---
     const start = formData?.availability?.start || "";
-    const end = formData?.availability?.end || "";
+    const end   = formData?.availability?.end || "";
 
     const invalidRange =
-      start && end ? new Date(start) > new Date(end) : false;
-
-    const nights =
       start && end
-        ? Math.max(
-            0,
-            Math.ceil(
-              (new Date(end).setHours(12) - new Date(start).setHours(12)) /
-                (1000 * 60 * 60 * 24)
-            )
-          )
-        : 0;
+        ? new Date(`${start}T00:00:00`).setHours(12) >
+          new Date(`${end}T00:00:00`).setHours(12)
+        : false;
+
+    const nights = nightsBetween(start, end);
+
+
+  // convert Date -> "YYYY-MM-DD" (no timezone surprises)
+  const formatYMD = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+
+  // derive Date objects from your stored strings
+  const startDate = formData?.availability?.start
+    ? new Date(formData.availability.start + "T00:00:00")
+    : null;
+  const endDate = formData?.availability?.end
+    ? new Date(formData.availability.end + "T00:00:00")
+    : null;
+
+  // update formData when range changes
+  const handleRangeChange = (dates) => {
+    const [start, end] = dates || [];
+    setFormData(prev => ({
+      ...prev,
+      availability: {
+        start: start ? formatYMD(start) : "",
+        end:   end   ? formatYMD(end)   : "",
+      },
+    }));
+  };
+
+
 
   return (
     <div className="host-setup-page">
@@ -510,7 +566,7 @@ export const HostSetUp = () => {
           </button>
           <button
             type="button"
-            onClick={async () => { await saveHost(); nextStep(); }}
+            onClick={nextStep}
             disabled={!formData.location}
             className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
           >
@@ -1638,7 +1694,9 @@ export const HostSetUp = () => {
                   formData.discountType === "percentage" || formData.discountType === "fixed"
                     ? "pl-20 border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
                     : "pl-4 border-gray-200",
-                  (!formData.discountType || formData.discountType === "none") ? "opacity-50 pointer-events-auto" : "",
+                  (!formData.discountType || formData.discountType === "none")
+                    ? "opacity-50 pointer-events-none"
+                    : "",
                 ].join(" ")}
               />
             </div>
@@ -1674,25 +1732,20 @@ export const HostSetUp = () => {
           const type  = formData.discountType || "none";
           const dVal  = Number(formData.discountValue || 0);
 
-          let discount = 0;
-          if (type === "percentage") discount = Math.max(0, (price * dVal) / 100);
-          if (type === "fixed")      discount = Math.max(0, dVal);
+          // % discount is per-night
+          const discountPerNight = type === "percentage" ? Math.max(0, (price * dVal) / 100) : 0;
+          const nightlyAfter     = Math.max(0, price - discountPerNight);
 
-          const nightlyAfter = Math.max(0, price - (type === "percentage" ? discount : 0));
-          const bookingTotal = Math.max(0, nightlyAfter + clean - (type === "fixed" ? discount : 0));
+          // Use 1 night as the preview default until real dates are chosen
+          const hasDates        = !!(formData?.availability?.start && formData?.availability?.end);
+          const nightsSelected  = nightsBetween(formData?.availability?.start, formData?.availability?.end);
+          const displayNights   = hasDates && nightsSelected > 0 ? nightsSelected : 1;
 
-          // --- Screen 9 helpers ---
-          const start = formData.availability.start;
-          const end = formData.availability.end;
-          const invalidRange =
-            Boolean(start) && Boolean(end) && new Date(start) > new Date(end);
-          const nights =
-            start && end
-              ? Math.max(
-                  0,
-                  Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24))
-                )
-              : 0;
+          // Fixed discount is per booking
+          const fixedDiscount = type === "fixed" ? Math.max(0, dVal) : 0;
+
+          const staySubtotal = displayNights * nightlyAfter;
+          const bookingTotal = Math.max(0, staySubtotal + clean - fixedDiscount);
 
           return (
             <div className="mt-4 space-y-3 text-sm text-gray-800">
@@ -1703,10 +1756,17 @@ export const HostSetUp = () => {
 
               {type === "percentage" && (
                 <div className="flex items-center justify-between">
-                  <span>Discount ({dVal || 0}%)</span>
-                  <span className="font-semibold">− ₱{discount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                  <span>Discount per night ({dVal || 0}%)</span>
+                  <span className="font-semibold">
+                    − ₱{discountPerNight.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
                 </div>
               )}
+
+              <div className="flex items-center justify-between">
+                <span>Nights</span>
+                <span className="font-semibold">{displayNights}</span>
+              </div>
 
               <div className="flex items-center justify-between">
                 <span>Cleaning fee</span>
@@ -1715,8 +1775,10 @@ export const HostSetUp = () => {
 
               {type === "fixed" && dVal > 0 && (
                 <div className="flex items-center justify-between">
-                  <span>Discount (fixed)</span>
-                  <span className="font-semibold">− ₱{discount.toLocaleString()}</span>
+                  <span>Discount (fixed, per booking)</span>
+                  <span className="font-semibold">
+                    − ₱{fixedDiscount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
                 </div>
               )}
 
@@ -1724,12 +1786,16 @@ export const HostSetUp = () => {
 
               <div className="flex items-center justify-between text-base">
                 <span className="font-semibold text-gray-900">Estimated total / booking</span>
-                <span className="font-bold text-blue-700">₱{bookingTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                <span className="font-bold text-blue-700">
+                  ₱{bookingTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </span>
               </div>
 
-              <p className="text-xs text-gray-600 mt-2">
-                This preview is for guidance only and may not include taxes or platform fees.
-              </p>
+              {(!hasDates || nightsSelected <= 0) && (
+                <p className="text-xs text-gray-600 mt-2">
+                  Preview assumes <b>1 night</b>. Select dates to see the exact total.
+                </p>
+              )}
             </div>
           );
         })()}
@@ -1767,169 +1833,138 @@ export const HostSetUp = () => {
 
       {/* 📅 Screen 9 - Enhanced with Calendar */}
       {step === 9 && (
-  <section
-    className="
-      px-4 md:px-8 py-12
-      min-h-[calc(100vh-56px)]
-      grid grid-rows-[auto,1fr,auto] gap-6
-      bg-gradient-to-br from-blue-50 via-white to-indigo-50
-    "
-  >
-    {/* Title */}
-    <div className="max-w-3xl mx-auto text-center">
-      <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">
-        When can guests book your place?
-      </h1>
-      <p className="mt-2 text-gray-700">
-        Set the dates when your listing is available.
-      </p>
-    </div>
-
-    {/* Content */}
-    <div className="max-w-5xl w-full mx-auto h-full">
-      <div className="
-        rounded-3xl border border-white/20 bg-white/80 backdrop-blur-md
-        p-5 sm:p-6 md:p-8
-        shadow-[0_12px_30px_rgba(30,58,138,0.10),0_30px_60px_rgba(30,58,138,0.08)]
-      ">
-        {/* Inputs */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-          {/* Start date */}
-          <div className="group">
-            <label className="block text-sm font-semibold text-gray-900 mb-2">
-              Start Date
-            </label>
-            <div
-              className={[
-                "flex items-center gap-3 rounded-2xl border bg-white/90 px-4 py-3",
-                "shadow-sm transition",
-                invalidRange ? "border-red-300" : "border-gray-300 focus-within:border-blue-500",
-              ].join(" ")}
-            >
-              <input
-                type="date"
-                value={start || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    availability: {
-                      ...formData.availability,
-                      start: e.target.value,
-                    },
-                  })
-                }
-                min={new Date().toISOString().split("T")[0]}
-                className="w-full bg-transparent outline-none text-gray-800"
-              />
-            </div>
-          </div>
-
-          {/* End date */}
-          <div className="group">
-            <label className="block text-sm font-semibold text-gray-900 mb-2">
-              End Date
-            </label>
-            <div
-              className={[
-                "flex items-center gap-3 rounded-2xl border bg-white/90 px-4 py-3",
-                "shadow-sm transition",
-                invalidRange ? "border-red-300" : "border-gray-300 focus-within:border-blue-500",
-              ].join(" ")}
-            >
-              <input
-                type="date"
-                value={end || ""}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    availability: {
-                      ...formData.availability,
-                      end: e.target.value,
-                    },
-                  })
-                }
-                min={start || new Date().toISOString().split("T")[0]}
-                className="w-full bg-transparent outline-none text-gray-800"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Summary / validation */}
-        <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          {/* Nights badge */}
-          <div className="inline-flex items-center gap-2">
-            <span className="text-sm text-gray-700">
-              {start && end && !invalidRange ? (
-                <>
-                  <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-blue-700 font-semibold text-xs shadow-sm">
-                    {nights} {nights === 1 ? "night" : "nights"}
-                  </span>
-                  <span className="ml-2 text-gray-700">
-                    {start} → {end}
-                  </span>
-                </>
-              ) : (
-                <span className="text-gray-600">Select a start and end date</span>
-              )}
-            </span>
-          </div>
-
-          {/* Error note */}
-          {invalidRange && (
-            <p className="text-sm font-medium text-red-600">
-              End date must be after the start date.
+        <section
+          className="
+            px-4 md:px-8 py-12
+            min-h-[calc(100vh-56px)]
+            grid grid-rows-[auto,1fr,auto] gap-6
+            bg-gradient-to-br from-blue-50 via-white to-indigo-50
+          "
+        >
+          {/* Title */}
+          <div className="max-w-3xl mx-auto text-center">
+            <h1 className="text-3xl sm:text-4xl font-bold text-gray-900">
+              When can guests book your place?
+            </h1>
+            <p className="mt-2 text-gray-700">
+              Set the dates when your listing is available.
             </p>
-          )}
+          </div>
 
-          {/* Quick actions */}
-          <div className="flex gap-2">
+          {/* Content */}
+          <div className="max-w-5xl w-full mx-auto h-full">
+            <div className="
+              rounded-3xl border border-white/20 bg-white/80 backdrop-blur-md
+              p-5 sm:p-6 md:p-8
+              shadow-[0_12px_30px_rgba(30,58,138,0.10),0_30px_60px_rgba(30,58,138,0.08)]
+            ">
+              {/* Inputs */}
+              <div className="space-y-2">
+              <label className="block text-sm font-semibold text-gray-900">Availability (date range)</label>
+
+              <div className="rounded-2xl border border-gray-300 bg-white/90 p-3 shadow-sm">
+              <DatePicker
+                inline
+                selectsRange
+                startDate={startDate}
+                endDate={endDate}
+                onChange={handleRangeChange}
+                minDate={new Date()}
+                monthsShown={2}
+                shouldCloseOnSelect={false}
+                calendarClassName="bookify-calendar"
+              />
+            </div>
+
+              {/* Optional quick actions */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setFormData((prev) => ({ ...prev, availability: { start: "", end: "" } }))
+                  }
+                  className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+              {/* Summary / validation */}
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                {/* Nights badge */}
+                <div className="inline-flex items-center gap-2">
+                  <span className="text-sm text-gray-700">
+                    {start && end && !invalidRange ? (
+                      <>
+                        <span className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-blue-700 font-semibold text-xs shadow-sm">
+                          {nights} {nights === 1 ? "night" : "nights"}
+                        </span>
+                        <span className="ml-2 text-gray-700">
+                          {start} → {end}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-600">Select a start and end date</span>
+                    )}
+                  </span>
+                </div>
+
+                {/* Error note */}
+                {invalidRange && (
+                  <p className="text-sm font-medium text-red-600">
+                    End date must be after the start date.
+                  </p>
+                )}
+
+                {/* Quick actions */}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFormData({
+                        ...formData,
+                        availability: { start: "", end: "" },
+                      })
+                    }
+                    className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
             <button
               type="button"
-              onClick={() =>
-                setFormData({
-                  ...formData,
-                  availability: { start: "", end: "" },
-                })
-              }
-              className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+              onClick={prevStep}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
             >
-              Clear
+              Back
+            </button>
+
+            <button
+              type="button"
+              onClick={saveDraft}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+            >
+              Save to Drafts
+            </button>
+
+            <button
+              type="button"
+              onClick={nextStep}
+              disabled={!start || !end || invalidRange}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
+            >
+              Next
             </button>
           </div>
-        </div>
-      </div>
-    </div>
-
-    {/* Actions */}
-    <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
-      <button
-        type="button"
-        onClick={prevStep}
-        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
-      >
-        Back
-      </button>
-
-      <button
-        type="button"
-        onClick={saveDraft}
-        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
-      >
-        Save to Drafts
-      </button>
-
-      <button
-        type="button"
-        onClick={nextStep}
-        disabled={!start || !end || invalidRange}
-        className="w-full sm:w-auto inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 transition disabled:opacity-50 disabled:pointer-events-none"
-      >
-        Next
-      </button>
-    </div>
-  </section>
-)}
+        </section>
+      )}
 
       {/* ✅ Screen 10 */}
       {step === 10 && (
@@ -1954,84 +1989,118 @@ export const HostSetUp = () => {
         {/* Content */}
         <div className="max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Left: Photo preview / carousel */}
-          <div className="
-            relative rounded-3xl overflow-hidden
-            bg-white/70 backdrop-blur-md border border-white/60
-            shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]
-            hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),0_30px_60px_rgba(30,58,138,0.12)]
-            transition-shadow
-          ">
-            <div className="relative w-full">
-              {formData.photos?.length ? (
-                <>
-                  {/* Natural-size image wrapper */}
-                  <div className="w-full flex items-center justify-center bg-gray-50">
-                    <img
-                      src={formData.photos[currentPhotoIndex || 0]}
-                      alt={`Listing Photo ${currentPhotoIndex + 1}`}
-                      className="block max-w-full h-auto max-h-[70vh] object-contain mx-auto"
-                      loading="lazy"
-                    />
+          <div
+            className="
+              relative rounded-3xl overflow-hidden
+              bg-white/70 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_30px_60px_rgba(30,58,138,0.12)]
+              transition-shadow p-5 sm:p-6 md:p-8
+            "
+          >
+            {formData.photos?.length ? (
+              <>
+                {/* Hero preview (large) */}
+                <div
+                  className="
+                    relative w-full rounded-2xl overflow-hidden border border-gray-200 bg-gray-50
+                    h-[300px] sm:h-[380px] md:h-[460px] lg:h-[560px]
+                  "
+                >
+                  <img
+                    src={formData.photos[currentPhotoIndex || 0]}
+                    alt={`Listing Photo ${(currentPhotoIndex || 0) + 1}`}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+
+                  {/* Index pill */}
+                  <div className="absolute top-3 right-3 rounded-full bg-black/55 text-white text-xs font-medium px-3 py-1">
+                    {(currentPhotoIndex || 0) + 1} / {formData.photos.length}
                   </div>
 
-                  {/* index pill */}
-                  <div className="absolute top-4 right-4 rounded-full bg-black/50 text-white text-xs font-medium px-3 py-1">
-                    {currentPhotoIndex + 1} / {formData.photos.length}
-                  </div>
+                  {/* Prev / Next */}
+                  {formData.photos.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        aria-label="Previous photo"
+                        onClick={() => setCurrentPhotoIndex((prev) => Math.max(0, (prev || 0) - 1))}
+                        disabled={(currentPhotoIndex || 0) === 0}
+                        className="
+                          absolute left-3 top-1/2 -translate-y-1/2
+                          h-11 w-11 rounded-full bg-white/85 hover:bg-white
+                          border border-white/60 shadow grid place-items-center
+                          disabled:opacity-50 disabled:pointer-events-none
+                        "
+                      >
+                        <ChevronLeft className="w-5 h-5 text-gray-700" />
+                      </button>
 
-                  {/* nav arrows */}
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPhotoIndex((prev) => Math.max(0, (prev || 0) - 1))}
-                    disabled={(currentPhotoIndex || 0) === 0}
-                    className="
-                      absolute left-3 top-1/2 -translate-y-1/2
-                      h-11 w-11 rounded-full
-                      bg-white/80 hover:bg-white
-                      border border-white/60
-                      shadow-md grid place-items-center
-                      disabled:opacity-50 disabled:pointer-events-none
-                    "
-                    aria-label="Previous photo"
-                  >
-                    <svg className="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="m15 18-6-6 6-6"/>
-                    </svg>
-                  </button>
+                      <button
+                        type="button"
+                        aria-label="Next photo"
+                        onClick={() =>
+                          setCurrentPhotoIndex((prev) =>
+                            Math.min(formData.photos.length - 1, (prev || 0) + 1)
+                          )
+                        }
+                        disabled={(currentPhotoIndex || 0) === formData.photos.length - 1}
+                        className="
+                          absolute right-3 top-1/2 -translate-y-1/2
+                          h-11 w-11 rounded-full bg-white/85 hover:bg-white
+                          border border-white/60 shadow grid place-items-center
+                          disabled:opacity-50 disabled:pointer-events-none
+                        "
+                      >
+                        <ChevronRight className="w-5 h-5 text-gray-700" />
+                      </button>
+                    </>
+                  )}
+                </div>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setCurrentPhotoIndex((prev) => Math.min((formData.photos.length - 1), (prev || 0) + 1))
-                    }
-                    disabled={(currentPhotoIndex || 0) === formData.photos.length - 1}
-                    className="
-                      absolute right-3 top-1/2 -translate-y-1/2
-                      h-11 w-11 rounded-full
-                      bg-white/80 hover:bg-white
-                      border border-white/60
-                      shadow-md grid place-items-center
-                      disabled:opacity-50 disabled:pointer-events-none
-                    "
-                    aria-label="Next photo"
-                  >
-                    <svg className="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6"/>
-                    </svg>
-                  </button>
-                </>
-              ) : (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                {/* Thumbnails filmstrip */}
+                <div className="mt-4 flex gap-3 overflow-x-auto">
+                  {formData.photos.map((url, index) => {
+                    const active = index === (currentPhotoIndex || 0);
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        onClick={() => setCurrentPhotoIndex(index)}
+                        className={[
+                          "relative flex-none rounded-xl overflow-hidden border transition",
+                          "w-28 sm:w-32 aspect-[4/3]",
+                          active
+                            ? "border-blue-500 ring-2 ring-blue-400/60"
+                            : "border-gray-200 hover:border-gray-300",
+                        ].join(" ")}
+                      >
+                        <img
+                          src={url}
+                          alt={`Thumbnail ${index + 1}`}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              // Empty state (same footprint as hero)
+              <div className="grid place-items-center rounded-2xl border border-dashed border-gray-300 bg-white/70 h-[300px] sm:h-[380px] md:h-[460px] lg:h-[560px]">
+                <div className="text-center p-6">
                   <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 grid place-items-center shadow-inner mb-3">
                     <svg className="w-9 h-9" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <path strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 17h16M7 4v16M17 4v16"/>
                     </svg>
                   </div>
                   <p className="text-gray-800 font-semibold">No photos uploaded</p>
-                  <p className="text-gray-600 text-sm">Add some photos on the previous step to preview here.</p>
+                  <p className="text-gray-600 text-sm">Add photos on the previous step to preview here.</p>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
 
           {/* Right: Details */}
@@ -2188,12 +2257,13 @@ export const HostSetUp = () => {
         {/* Policy modal (unchanged API) */}
         <PolicyComplianceModal
           open={openPolicyModal}
-          onClose={() => setOpenPolicyModal(false)}
-          onConfirm={() => {
-            handleChange("agreeToTerms", true);
-            setOpenPolicyModal(false);
-          }}
+          onClose={() => setOpenPolicyModal(false)} 
+          onConfirm={() => { 
+            // mark that they agreed via the modal 
+            setFormData(prev => ({ ...prev, agreeToTerms: true })); 
+          }} 
         />
+
       </section>
     )}
     </div>

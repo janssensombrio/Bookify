@@ -1,69 +1,131 @@
-import React, { useEffect, useState } from "react";
-import { PayPalButtons } from "@paypal/react-paypal-js";  // For PayPal
-import { auth } from "../config/firebase";  // For user auth
-import { collection, addDoc } from "firebase/firestore";  // For Firestore (add to existing Firestore import)
+// components/ExperienceDetailsModal.jsx
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { PayPalButtons } from "@paypal/react-paypal-js";
+import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import { auth, database } from "../config/firebase";
+import emailjs from "@emailjs/browser";
 
+// Icons
 import {
-  Modal,
-  Box,
-  Typography,
-  IconButton,
-  Button,
-  Grid,
-  useMediaQuery,
-  Card,
-  CardContent,
-  Divider,
-  FormControlLabel,
-  Switch,
-  Chip,
-} from "@mui/material";
-import CloseIcon from "@mui/icons-material/Close";
-import ArrowBackIosNewIcon from "@mui/icons-material/ArrowBackIosNew";
-import ArrowForwardIosIcon from "@mui/icons-material/ArrowForwardIos";
-import AddIcon from "@mui/icons-material/Add";
-import RemoveIcon from "@mui/icons-material/Remove";
-import ScheduleIcon from "@mui/icons-material/Schedule";
-import GroupIcon from "@mui/icons-material/Group";
-import LanguageIcon from "@mui/icons-material/Language";
-import PlaceIcon from "@mui/icons-material/Place";
-import { doc, getDoc } from "firebase/firestore";
-import { database } from "../config/firebase";
+  X as CloseIcon,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Minus,
+  Clock,
+  Users,
+  Languages,
+  MapPin,
+  Tag,
+} from "lucide-react";
 
+/* ================= EmailJS config & helper (matches your template) ================= */
+// You can swap these to env vars if you prefer (REACT_APP_EMAILJS_*). They're public on the client either way.
+const EMAILJS_SERVICE_ID = "service_x9dtjt6";
+const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
+const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
+
+// Initialize once (optional when passing publicKey to send; harmless if called repeatedly)
+emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+
+async function sendBookingEmail({
+  user,                // { displayName, email }
+  title,               // listing/experience title
+  category,            // string -> {{listing_category}}
+  location,            // string -> {{listing_address}}
+  total,               // number -> {{total_price}}
+  paymentStatus = "Paid",     // string -> {{payment_status}}
+  currencySymbol = "₱",       // string -> {{currency_symbol}}
+  brandSiteUrl,               // string -> {{brand_site_url}}
+}) {
+  const params = {
+    to_name: user?.displayName || (user?.email || "").split("@")[0] || "Guest",
+    to_email: String(user?.email || ""),
+    listing_title: String(title || "Untitled"),
+    listing_category: String(category || "—"),
+    listing_address: String(location || "—"),
+    payment_status: String(paymentStatus || "Paid"),
+    currency_symbol: String(currencySymbol || "₱"),
+    total_price: Number(total || 0).toFixed(2),
+    brand_site_url: String(brandSiteUrl || (typeof window !== "undefined" ? window.location.origin : "")),
+  };
+
+  // Helpful during dev to confirm all fields are present
+  console.log("[EmailJS] sending with params:", params);
+
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params, EMAILJS_PUBLIC_KEY);
+}
+
+/* ================================= helpers ================================= */
+const numberOr = (v, d = 0) => {
+  const n = typeof v === "string" ? parseFloat(v) : v;
+  return Number.isFinite(n) ? n : d;
+};
+
+const SERVICE_FEE_RATE = 0.20; // 20%
+
+const fmtDate = (isoDate) => {
+  if (!isoDate) return "—";
+  const d = new Date(`${isoDate}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  return d.toLocaleDateString("en-US", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+const fmtTime = (t) => {
+  const hhmm = t || "";
+  const probe = new Date(`1970-01-01T${hhmm}:00`);
+  if (Number.isNaN(probe.getTime())) return hhmm;
+  return probe.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+};
+
+/* ================================ component ================================ */
 const ExperienceDetailsModal = ({ listingId, onClose }) => {
   const [experience, setExperience] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
   const [selectedParticipants, setSelectedParticipants] = useState(1);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
-  const [paymentBreakdown, setPaymentBreakdown] = useState(null);
-  const [includeExtras, setIncludeExtras] = useState(true);
-  const isMobile = useMediaQuery("(max-width:768px)");
-
+  const [payment, setPayment] = useState(null);
   const [showPayPal, setShowPayPal] = useState(false);
 
+  // Load experience
   useEffect(() => {
-    const fetchExperienceDetails = async () => {
+    const run = async () => {
+      if (!listingId) return;
       try {
-        const docRef = doc(database, "listings", listingId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setExperience(docSnap.data());
-          setSelectedParticipants(1);
-        }
-      } catch (error) {
-        console.error("Error fetching experience details:", error);
+        const ref = doc(database, "listings", listingId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return setExperience(null);
+        const data = snap.data();
+        setExperience(data);
+
+        // preselect soonest schedule
+        const sched = Array.isArray(data.schedule) ? [...data.schedule] : [];
+        const sorted = sched
+          .filter((s) => s?.date)
+          .sort((a, b) =>
+            `${a.date} ${a.time || a.startTime || ""}`.localeCompare(
+              `${b.date} ${b.time || b.startTime || ""}`
+            )
+          );
+        setSelectedSchedule(sorted[0] || null);
+        setSelectedParticipants(1);
+        setCurrentPhoto(0);
+      } catch (e) {
+        console.error("Failed to fetch experience:", e);
+        setExperience(null);
       }
     };
-
-    if (listingId) fetchExperienceDetails();
-    setCurrentPhoto(0);
+    run();
   }, [listingId]);
 
+  // Keep photo index in bounds
   useEffect(() => {
-    if (!experience?.photos?.length) {
-      setCurrentPhoto(0);
-      return;
-    }
+    if (!experience?.photos?.length) return setCurrentPhoto(0);
     setCurrentPhoto((idx) => {
       const len = experience.photos.length;
       if (idx >= len) return 0;
@@ -72,674 +134,574 @@ const ExperienceDetailsModal = ({ listingId, onClose }) => {
     });
   }, [experience?.photos]);
 
-  // Calculate payment breakdown when participants, schedule, or extras preference changes
+  // Compute payment
   useEffect(() => {
-    if (selectedSchedule && experience) {
-      calculatePayment();
-    } else {
-      setPaymentBreakdown(null);
-    }
-  }, [selectedParticipants, selectedSchedule, experience]);
-
-  const calculatePayment = () => {
-    if (!experience || !selectedSchedule) return;
-
-    const basePrice = parseFloat(experience.price) || 0;
+    if (!experience || !selectedSchedule) return setPayment(null);
+    const basePrice = numberOr(experience.price);
     const subtotal = basePrice * selectedParticipants;
-    const totalBeforeTax = subtotal;  // No extrasCost added
-    const tax = totalBeforeTax * 0.12;  // 12% tax
-    const total = totalBeforeTax + tax;
-
-    setPaymentBreakdown({
-      participants: selectedParticipants,
+    const serviceFee = subtotal * SERVICE_FEE_RATE; // ← 20%
+    const total = subtotal + serviceFee;
+    setPayment({
       basePrice,
+      participants: selectedParticipants,
       subtotal,
-      tax,
+      serviceFee,
       total,
     });
-  };
+  }, [experience, selectedSchedule, selectedParticipants]);
 
-  const handleIncrementParticipants = () => {
-    const maxParticipants = experience.maxParticipants || 30;
-    if (selectedParticipants < maxParticipants) {
-      setSelectedParticipants(prev => prev + 1);
-    }
-  };
+  // Derived
+  const photos = useMemo(
+    () => (Array.isArray(experience?.photos) ? experience.photos : []),
+    [experience?.photos]
+  );
+  const hasPhotos = photos.length > 0;
 
-  const handleDecrementParticipants = () => {
-    if (selectedParticipants > 1) {
-      setSelectedParticipants(prev => prev - 1);
-    }
-  };
+  const languages = Array.isArray(experience?.languages) ? experience.languages : [];
+  const hasLanguages = languages.length > 0;
+  const amenities = Array.isArray(experience?.amenities) ? experience.amenities : [];
+  const hasAmenities = amenities.length > 0;
+  const schedule = Array.isArray(experience?.schedule) ? experience.schedule : [];
+  const hasSchedule = schedule.length > 0;
+  const maxParticipants = numberOr(experience?.maxParticipants, 0);
 
-  const handleScheduleSelect = (schedule) => {
-    setSelectedSchedule(schedule);
-  };
+  const title = experience?.title || "Untitled";
+  const category = experience?.category || "Experiences";
+  const listingType = experience?.listingType || "";
+  const exType = experience?.experienceType === "online" ? "Online" : "In-Person";
+  const locationStr = experience?.location || "—";
+  const duration = experience?.duration || "—";
+  const price = numberOr(experience?.price);
+  const currencySymbol =
+    experience?.currencySymbol ||
+    (experience?.currency === "USD" ? "$" : experience?.currency === "EUR" ? "€" : "₱");
 
-  const handleExtrasToggle = (event) => {
-    setIncludeExtras(event.target.checked);
-  };
-
-  const handleBookNow = () => {
-    if (!selectedSchedule || !paymentBreakdown) {
-      alert("Please select a schedule and ensure payment details are calculated.");
-      return;
-    }
-    setShowPayPal(true);  // Show PayPal buttons
-  };
-
+  // Carousel controls
   const nextPhoto = (e) => {
     e?.stopPropagation();
     if (!hasPhotos) return;
     setCurrentPhoto((p) => (p + 1) % photos.length);
   };
-
   const prevPhoto = (e) => {
     e?.stopPropagation();
     if (!hasPhotos) return;
     setCurrentPhoto((p) => (p - 1 + photos.length) % photos.length);
   };
 
+  // Book
+  const handleBookNow = () => {
+    if (!payment || !selectedSchedule) {
+      alert("Please select a schedule first.");
+      return;
+    }
+    setShowPayPal(true);
+  };
+
   if (!experience) return null;
 
-  const photos = Array.isArray(experience.photos) ? experience.photos : [];
-  const hasPhotos = photos.length > 0;
-  const hasAmenities = experience.amenities && experience.amenities.length > 0;
-  const hasSchedule = experience.schedule && experience.schedule.length > 0;
-  const hasLanguages = experience.languages && experience.languages.length > 0;
-
-  return (
-    <Modal
-      open={!!listingId}
-      onClose={onClose}
-      aria-labelledby="experience-details-title"
-      aria-describedby="experience-details-desc"
+  // ------------------- UI -------------------
+  const modal = (
+    <div
+      className={[
+        "fixed inset-0 z-[2147483000] flex items-center justify-center p-0 sm:p-4",
+        "bg-black/30",
+        "bg-[radial-gradient(ellipse_at_top,rgba(59,130,246,0.12),transparent_55%),radial-gradient(ellipse_at_bottom,rgba(99,102,241,0.12),transparent_55%)]",
+        "backdrop-blur-md sm:backdrop-blur-lg supports-[backdrop-filter]:backdrop-blur-xl",
+      ].join(" ")}
+      onClick={(e) => {
+        if (e.currentTarget === e.target) onClose?.();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="exp-details-title"
+      aria-describedby="exp-details-desc"
     >
-      <Box
-        sx={{
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          width: isMobile ? "95%" : "1300px",
-          height: isMobile ? "92vh" : "88vh",
-          bgcolor: "background.paper",
-          boxShadow: 24,
-          borderRadius: 8,
-          overflow: "hidden",
-          outline: "none",
-          display: "flex",
-        }}
+      <div
+        className={[
+          "relative w-full h-[100vh] sm:h-[90vh] sm:max-w-[1200px]",
+          "grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-2",
+          "min-h-0 rounded-none sm:rounded-[2rem] overflow-hidden",
+          "bg-gradient-to-br from-blue-50/55 via-white/70 to-indigo-50/55",
+          "backdrop-blur-xl border border-white/60",
+          "shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_30px_60px_rgba(30,58,138,0.12)]",
+        ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
-        <Grid container sx={{ height: "100%", flex: 1 }}>
-          {/* LEFT - Image carousel */}
-          <Grid
-            item
-            xs={12}
-            md={6}
-            sx={{
-              height: "100%",
-              position: "relative",
-              bgcolor: "grey.900",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: 300,
-              flex: 2,
-            }}
-          >
-            <Box
-              sx={{
-                width: "100%",
-                height: "100%",
-                position: "relative",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              {hasPhotos ? (
-                <img
-                  key={photos[currentPhoto]}
-                  src={photos[currentPhoto]}
-                  alt={`${experience.title} - photo ${currentPhoto + 1}`}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    display: "block",
-                  }}
-                />
-              ) : (
-                <Box
-                  sx={{
-                    width: "100%",
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "text.secondary",
-                    p: 2,
-                  }}
-                >
-                  <Typography>No photos available</Typography>
-                </Box>
-              )}
+        {/* Close */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute right-3 top-3 z-[2147483646] inline-flex items-center justify-center w-10 h-10 rounded-full bg-white/95 border border-white/70 shadow hover:shadow-md hover:bg-white transition"
+        >
+          <CloseIcon className="w-5 h-5 text-gray-700" />
+        </button>
 
-              {hasPhotos && photos.length > 1 && (
-                <>
-                  <IconButton
-                    onClick={prevPhoto}
-                    aria-label="previous-photo"
-                    sx={{
-                      position: "absolute",
-                      left: 16,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      bgcolor: "rgba(0,0,0,0.6)",
-                      color: "common.white",
-                      "&:hover": { bgcolor: "rgba(0,0,0,0.8)" },
+        {/* LEFT: Photos */}
+        <div className="hidden md:block relative bg-gray-900/90">
+          {hasPhotos ? (
+            <>
+              <img
+                src={photos[currentPhoto]}
+                alt={`${title} photo ${currentPhoto + 1}`}
+                className="w-full h-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+            </>
+          ) : (
+            <div className="w-full h-full grid place-items-center text-white/80 p-6">
+              No photos available
+            </div>
+          )}
+
+          {hasPhotos && photos.length > 1 && (
+            <>
+              <button
+                onClick={prevPhoto}
+                aria-label="Previous photo"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                onClick={nextPhoto}
+                aria-label="Next photo"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                {photos.map((_, i) => (
+                  <button
+                    key={i}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCurrentPhoto(i);
                     }}
-                  >
-                    <ArrowBackIosNewIcon />
-                  </IconButton>
+                    className={`h-2 w-2 rounded-full ${
+                      i === currentPhoto ? "bg-white" : "bg-white/60"
+                    }`}
+                    aria-label={`Go to photo ${i + 1}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
-                  <IconButton
-                    onClick={nextPhoto}
-                    aria-label="next-photo"
-                    sx={{
-                      position: "absolute",
-                      right: 16,
-                      top: "50%",
-                      transform: "translateY(-50%)",
-                      bgcolor: "rgba(0,0,0,0.6)",
-                      color: "common.white",
-                      "&:hover": { bgcolor: "rgba(0,0,0,0.8)" },
-                    }}
-                  >
-                    <ArrowForwardIosIcon />
-                  </IconButton>
-                </>
-              )}
+        {/* RIGHT: Content with fixed footer row */}
+        <div className="relative h-full min-h-0 grid grid-rows-[1fr,auto] bg-gradient-to-br from-blue-50/35 via-white/55 to-indigo-50/35">
+          {/* Scrollable content */}
+          <div className="min-h-0 overflow-y-auto">
+            <div className="max-w-[720px] mx-auto px-5 sm:px-6 md:px-7 py-5 sm:py-6 md:py-7 space-y-6 sm:space-y-7">
+              {/* Header & meta */}
+              <section className="space-y-3">
+                <h2 id="exp-details-title" className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                  {title}
+                </h2>
 
-              {hasPhotos && photos.length > 1 && (
-                <Box
-                  sx={{
-                    position: "absolute",
-                    bottom: 16,
-                    left: "50%",
-                    transform: "translateX(-50%)",
-                    display: "flex",
-                    gap: 1,
-                    zIndex: 5,
-                  }}
-                >
-                  {photos.map((_, i) => (
-                    <Box
-                      key={i}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setCurrentPhoto(i);
-                      }}
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        bgcolor: i === currentPhoto ? "primary.main" : "rgba(255,255,255,0.6)",
-                        cursor: "pointer",
-                        transition: "all 0.2s",
-                      }}
-                    />
-                  ))}
-                </Box>
-              )}
-            </Box>
-          </Grid>
+                <div className="flex flex-wrap items-center gap-2">
+                  {category && (
+                    <span className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1 text-[12px] sm:text-xs font-semibold text-blue-700 shadow-sm">
+                      {category}
+                    </span>
+                  )}
+                  {listingType && (
+                    <span className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1 text-[12px] sm:text-xs font-semibold text-indigo-700 shadow-sm">
+                      {listingType}
+                    </span>
+                  )}
+                </div>
 
-          {/* RIGHT - Content and booking section */}
-          <Grid
-            item
-            xs={12}
-            md={6}
-            sx={{
-              height: "100%",
-              position: "relative",
-              p: { xs: 3, md: 4 },
-              overflowY: "auto",
-              bgcolor: "background.paper",
-              flex: 1,
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "flex-start",
-            }}
-          >
-            <IconButton
-              onClick={onClose}
-              sx={{ position: "fixed", right: 24, top: 20, zIndex: 5,          
-                    backgroundColor: 'grey.200',  // Light grey background
-                    borderRadius: 10,  
-                    padding: 0.8,  
-                }}
-            >
-              <CloseIcon />
-            </IconButton>
+                {/* Price per person */}
+                <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700">
+                  <Tag className="w-6 h-6 text-blue-600" />
+                  <span className="font-semibold text-gray-900">
+                    {currencySymbol}{price.toLocaleString()}
+                  </span>
+                  <span className="text-gray-600">/ person</span>
+                </p>
 
-            <Box sx={{ pt: 1 }}>
-              {/* Header Section */}
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="h4" fontWeight={700} gutterBottom>
-                  {experience.title}
-                </Typography>
-                <Chip 
-                  label={experience.listingType} 
-                  color="primary" 
-                  variant="outlined"
-                  size="medium"
-                  sx={{ mb: 2 }}
-                />
-                <Typography variant="body1" color="text.secondary" paragraph>
-                  {experience.description}
-                </Typography>
-              </Box>
+                {/* Location */}
+                <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700">
+                  <MapPin className="w-8 h-8 text-blue-600" />
+                  <span className="font-medium text-gray-900">{locationStr}</span>
+                </p>
 
-              {/* Key Details Grid */}
-              <Grid container spacing={3} sx={{ mb: 4 }}>
-                <Grid item xs={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <ScheduleIcon color="primary" />
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary">
-                        Duration
-                      </Typography>
-                      <Typography variant="body1" fontWeight={500}>
-                        {experience.duration}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </Grid>
-                
-                <Grid item xs={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <GroupIcon color="primary" />
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary">
-                        Max Participants
-                      </Typography>
-                      <Typography variant="body1" fontWeight={500}>
-                        {experience.maxParticipants}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </Grid>
-
-                <Grid item xs={6}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <PlaceIcon color="primary" />
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary">
-                        Experience Type
-                      </Typography>
-                      <Typography variant="body1" fontWeight={500}>
-                        {experience.experienceType === "in-person" ? "In-Person" : "Online"}
-                      </Typography>
-                    </Box>
-                  </Box>
-                </Grid>
-
-                {hasLanguages && (
-                  <Grid item xs={6}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <LanguageIcon color="primary" />
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary">
-                          Languages
-                        </Typography>
-                        <Typography variant="body1" fontWeight={500}>
-                          {experience.languages.join(", ")}
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </Grid>
+                {experience.description && (
+                  <p id="exp-details-desc" className="text-[15px] sm:text-base leading-relaxed text-gray-800">
+                    {experience.description}
+                  </p>
                 )}
-              </Grid>
+              </section>
 
-              {/* Location */}
-              <Box sx={{ mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Location
-                </Typography>
-                <Typography variant="body1">
-                  {[experience.street, experience.barangay.name, experience.municipality.name, experience.province.name, experience.region.name]
-                    .filter(Boolean)
-                    .join(", ")}
-                </Typography>
-              </Box>
+              {/* Facts grid */}
+              <section className="grid grid-cols-2 gap-3">
+                {/* Duration */}
+                <div className="rounded-2xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm flex items-center gap-3">
+                  <div className="rounded-xl bg-blue-50 p-2 text-blue-700">
+                    <Clock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[12px] sm:text-xs text-gray-600">Duration</p>
+                    <p className="mt-1 text-sm sm:text-base font-semibold text-gray-900">
+                      {duration}
+                    </p>
+                  </div>
+                </div>
 
-              {/* Age Restriction */}
-              {experience.ageRestriction && (
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Age Requirements
-                  </Typography>
-                  <Typography variant="body1">
-                    {experience.ageRestriction.min} - {experience.ageRestriction.max} years old
-                  </Typography>
-                </Box>
-              )}
+                {/* Type */}
+                <div className="rounded-2xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                  <p className="text-[12px] sm:text-xs text-gray-600">Experience Type</p>
+                  <p className="mt-1 text-sm sm:text-base font-semibold text-gray-900">
+                    {exType}
+                  </p>
+                </div>
+
+                {/* Max participants */}
+                <div className="rounded-2xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm flex items-center gap-3">
+                  <div className="rounded-xl bg-blue-50 p-2 text-blue-700">
+                    <Users className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-[12px] sm:text-xs text-gray-600">Max Participants</p>
+                    <p className="mt-1 text-sm sm:text-base font-semibold text-gray-900">
+                      {maxParticipants || "—"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Languages */}
+                {hasLanguages && (
+                  <div className="rounded-2xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm flex items-center gap-3">
+                    <div className="rounded-xl bg-blue-50 p-2 text-blue-700">
+                      <Languages className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <p className="text-[12px] sm:text-xs text-gray-600">Languages</p>
+                      <p className="mt-1 text-sm sm:text-base font-semibold text-gray-900">
+                        {languages.join(", ")}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              {/* Age Requirements */}
+              {experience?.ageRestriction &&
+                (typeof experience.ageRestriction.min !== "undefined" ||
+                  typeof experience.ageRestriction.max !== "undefined") && (
+                  <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                    <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-1">
+                      Age Requirements
+                    </h3>
+                    <p className="text-[15px] sm:text-base text-gray-800">
+                      {typeof experience.ageRestriction.min !== "undefined"
+                        ? experience.ageRestriction.min
+                        : 0}{" "}
+                      –{" "}
+                      {typeof experience.ageRestriction.max !== "undefined"
+                        ? experience.ageRestriction.max
+                        : 100}{" "}
+                      years old
+                    </p>
+                  </section>
+                )}
 
               {/* Host Requirements */}
-              {experience.hostRequirements && (
-                <Box sx={{ mb: 3 }}>
-                  <Typography variant="h6" gutterBottom>
+              {!!experience?.hostRequirements && (
+                <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                  <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-1">
                     Requirements
-                  </Typography>
-                  <Typography variant="body1">
-                    {experience.hostRequirements}
-                  </Typography>
-                </Box>
+                  </h3>
+                    <p className="text-[15px] sm:text-base text-gray-800">
+                      {experience.hostRequirements}
+                    </p>
+                </section>
               )}
 
-              {/* Booking Section */}
-              <Card variant="outlined" sx={{ mb: 3 }}>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Book This Experience
-                  </Typography>
+              {/* Schedule selector */}
+              <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-3">
+                  Select Schedule
+                </h3>
+                {hasSchedule ? (
+                  <div className="grid gap-2">
+                    {schedule.map((s, idx) => {
+                      const t = s?.time || s?.startTime || "";
+                      const isSelected =
+                        selectedSchedule?.date === s.date &&
+                        (selectedSchedule?.time || selectedSchedule?.startTime || "") === t;
+                      return (
+                        <button
+                          key={`${s.date}-${t}-${idx}`}
+                          type="button"
+                          onClick={() => setSelectedSchedule(s)}
+                          className={`flex w-full items-start justify-between rounded-2xl border p-3 text-left transition ${
+                            isSelected
+                              ? "border-2 border-blue-500 bg-blue-50"
+                              : "border-white/60 bg-white/80 hover:border-blue-300"
+                          }`}
+                        >
+                          <div>
+                            <p className="font-semibold text-gray-900">{fmtDate(s.date)}</p>
+                            <p className="text-sm text-gray-600">{fmtTime(t)}</p>
+                          </div>
+                          {isSelected && (
+                            <span className="mt-1 inline-flex h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-600">No schedules available.</p>
+                )}
+              </section>
 
-                  {/* Participants Selection */}
-                  <Box sx={{ mb: 3 }}>
-                    <Typography variant="subtitle1" gutterBottom>
-                      Number of Participants
-                    </Typography>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                      <IconButton 
-                        onClick={handleDecrementParticipants} 
-                        disabled={selectedParticipants <= 1}
-                        size="small"
-                      >
-                        <RemoveIcon />
-                      </IconButton>
-                      <Typography variant="h6" sx={{ minWidth: "40px", textAlign: "center" }}>
-                        {selectedParticipants}
-                      </Typography>
-                      <IconButton 
-                        onClick={handleIncrementParticipants} 
-                        disabled={selectedParticipants >= experience.maxParticipants}
-                        size="small"
-                      >
-                        <AddIcon />
-                      </IconButton>
-                      <Typography variant="body2" color="text.secondary">
-                        Max: {experience.maxParticipants}
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  {/* Schedule Selection */}
-                  <Box sx={{ mb: 3 }}>
-                    <Typography variant="subtitle1" gutterBottom>
-                      Select Schedule
-                    </Typography>
-                    {hasSchedule ? (
-                      <Box sx={{ display: "grid", gap: 1 }}>
-                        {experience.schedule.map((schedule, index) => (
-                          <Card
-                            key={index}
-                            variant="outlined"
-                            sx={{
-                              cursor: "pointer",
-                              border: selectedSchedule?.date === schedule.date && selectedSchedule?.time === schedule.time 
-                                ? "2px solid" 
-                                : "1px solid",
-                              borderColor: selectedSchedule?.date === schedule.date && selectedSchedule?.time === schedule.time 
-                                ? "primary.main" 
-                                : "divider",
-                              bgcolor: selectedSchedule?.date === schedule.date && selectedSchedule?.time === schedule.time 
-                                ? "primary.light" 
-                                : "background.paper",
-                              transition: "all 0.2s",
-                              '&:hover': {
-                                borderColor: "primary.main",
-                              },
-                            }}
-                            onClick={() => handleScheduleSelect(schedule)}
-                          >
-                            <CardContent sx={{ py: 2 }}>
-                              <Typography variant="subtitle1" fontWeight="bold">
-                                {new Date(schedule.date).toLocaleDateString('en-US', { 
-                                  weekday: 'long', 
-                                  year: 'numeric', 
-                                  month: 'long', 
-                                  day: 'numeric' 
-                                })}
-                              </Typography>
-                              <Typography variant="body2" color="text.secondary">
-                                {schedule.time}
-                              </Typography>
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No schedules available.
-                      </Typography>
-                    )}
-                  </Box>
-
-                  {/* Amenities Toggle */}
-                  {hasAmenities && (
-                    <Box sx={{ mb: 3 }}>
-                      <Typography variant="h6" gutterBottom>
-                        Included Amenities
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {experience.amenities.map((amenity, index) => (
-                          <Chip
-                            key={index}
-                            label={amenity}
-                            color="primary"
-                            variant="outlined"
-                            size="small"
-                          />
-                        ))}
-                      </Box>
-                    </Box>
+              {/* Participants control */}
+              <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <p className="text-[13.5px] sm:text-sm font-semibold text-gray-900">
+                    Participants
+                  </p>
+                  {!!maxParticipants && (
+                    <span className="text-[12px] sm:text-xs text-gray-600">
+                      Max: {maxParticipants}
+                    </span>
                   )}
-                </CardContent>
-              </Card>
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedParticipants((v) => Math.max(1, v - 1))}
+                    disabled={selectedParticipants <= 1}
+                    className="inline-flex items-center justify-center w-9 h-9 rounded-full border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 shadow disabled:opacity-50 disabled:pointer-events-none"
+                    aria-label="Decrease participants"
+                  >
+                    <Minus className="w-4 h-4" />
+                  </button>
+                  <span className="w-10 text-center font-semibold text-gray-900">
+                    {selectedParticipants}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedParticipants((v) =>
+                        maxParticipants ? Math.min(maxParticipants, v + 1) : v + 1
+                      )
+                    }
+                    disabled={!!maxParticipants && selectedParticipants >= maxParticipants}
+                    className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:from-blue-600 hover:to-blue-700 shadow disabled:opacity-50 disabled:pointer-events-none"
+                    aria-label="Increase participants"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </section>
+
+              {/* Amenities */}
+              {hasAmenities && (
+                <section>
+                  <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">
+                    Included Amenities
+                  </h3>
+                  <div className="mt-3 flex flex-wrap gap-2.5">
+                    {amenities.map((a, i) => (
+                      <span
+                        key={`${a}-${i}`}
+                        className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1.5 text-[12.5px] sm:text-xs font-medium text-gray-900 shadow-sm"
+                      >
+                        {a}
+                      </span>
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* Payment Breakdown */}
-              {paymentBreakdown && (
-                <Card sx={{ mb: 3 }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                      Payment Summary
-                    </Typography>
-                    
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2">
-                        ₱{experience.price} × {paymentBreakdown.participants} {paymentBreakdown.participants === 1 ? 'person' : 'people'}
-                      </Typography>
-                      <Typography variant="body2">
-                        ₱{paymentBreakdown.subtotal.toLocaleString()}
-                      </Typography>
-                    </Box>
+              {payment && (
+                <section className="rounded-3xl bg-white/85 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-lg space-y-2">
+                  <h3 className="text-base sm:text-lg font-bold text-gray-900 mb-1">
+                    Payment Breakdown
+                  </h3>
 
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-                      <Typography variant="body2">
-                        Service Fee (12%)
-                      </Typography>
-                      <Typography variant="body2">
-                        ₱{paymentBreakdown.tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </Typography>
-                    </Box>
+                  <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
+                    <span>
+                      <span className="font-semibold">
+                        {currencySymbol}{price.toLocaleString()}
+                      </span>{" "}
+                      × {payment.participants}{" "}
+                      {payment.participants === 1 ? "person" : "people"}
+                    </span>
+                    <span className="font-medium">
+                      {currencySymbol}{payment.subtotal.toLocaleString()}
+                    </span>
+                  </div>
 
-                    <Divider sx={{ my: 2 }} />
+                  <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
+                    <span>Service fee ({Math.round(SERVICE_FEE_RATE * 100)}%)</span>
+                    <span>
+                      {currencySymbol}{payment.serviceFee.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
 
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                        Total
-                      </Typography>
-                      <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                        ₱{paymentBreakdown.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </Typography>
-                    </Box>
-                  </CardContent>
-                </Card>
+                  <div className="my-2 h-px bg-white/60" />
+
+                  <div className="flex items-center justify-between">
+                    <span className="text-base sm:text-lg font-bold text-gray-900">
+                      Total
+                    </span>
+                    <span className="text-base sm:text-lg font-bold text-blue-700">
+                      {currencySymbol}{payment.total.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                        minimumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
+                </section>
               )}
 
               {/* Cancellation Policy */}
-              {experience.cancellationPolicy && (
-                <Box sx={{ mt: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                  <Typography variant="subtitle2" gutterBottom>
+              {!!experience?.cancellationPolicy && (
+                <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+                  <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-1">
                     Cancellation Policy
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
+                  </h3>
+                  <p className="text-[14px] sm:text-[15px] text-gray-800">
                     {experience.cancellationPolicy}
-                  </Typography>
-                </Box>
+                  </p>
+                </section>
               )}
+            </div>
+          </div>
 
-              {/* Action Buttons */}
-              <Box
-                sx={{
-                  position: 'sticky',
-                  bottom: -34,
-                  width: '100%',  // Ensures it takes the parent's width
-                  mt: 4,
-                  display: "flex",
-                  gap: 2,
-                  flexWrap: "wrap",
-                  backgroundColor: "white",
-                  paddingY: 2,
-                }}
-              >
-                {showPayPal ? (
-                  <>
-                    <div style={{ marginTop: "20px", width: "100%" }}>  {/* Wrapper for PayPal */}
-                      <PayPalButtons
-                        style={{ layout: "vertical" }}
-                        createOrder={(data, actions) => {
-                          return actions.order.create({
-                            purchase_units: [
-                              {
-                                amount: {
-                                  value: paymentBreakdown.total.toFixed(2),  // Use paymentBreakdown.total
-                                },
-                              },
-                            ],
+          {/* Fixed footer row */}
+          <div
+            className="w-full bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-t border-white/50 px-4 pt-4 pb-6 sm:pb-6"
+            style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
+          >
+            {showPayPal ? (
+              <div className="w-full sm:max-w-md mx-auto">
+                <div className="w-full rounded-2xl border border-white/60 bg-white/80 p-3 shadow-sm">
+                  <PayPalButtons
+                    style={{ layout: "vertical" }}
+                    createOrder={(data, actions) => {
+                      return actions.order.create({
+                        purchase_units: [
+                          { amount: { value: (payment?.total || 0).toFixed(2) } },
+                        ],
+                      });
+                    }}
+                    onApprove={async (data, actions) => {
+                      const details = await actions.order.capture();
+                      const user = auth.currentUser;
+                      if (!user) {
+                        alert("Please log in to make a reservation.");
+                        return;
+                      }
+                      try {
+                        if (!selectedSchedule || !payment) {
+                          alert("Invalid schedule or payment.");
+                          return;
+                        }
+
+                        const completed = details?.status === "COMPLETED";
+                        const bookingStatus = completed ? "confirmed" : "pending";
+                        const emailPaymentStatus = completed ? "Paid" : "Pending";
+                        const storedPaymentStatus = completed ? "paid" : "pending";
+
+                        const bookingData = {
+                          uid: user.uid,
+                          listingId,
+                          quantity: payment.participants,
+                          schedule: selectedSchedule, // {date, time}
+                          guestEmail: user.email,
+                          subtotal: payment.subtotal,
+                          serviceFee: payment.serviceFee,
+                          totalPrice: payment.total, // numeric
+                          listingTitle: title,
+                          listingCategory: category,
+                          status: bookingStatus,
+                          paymentStatus: storedPaymentStatus, // stored in lowercase
+                          listingPhotos: photos,
+                          createdAt: serverTimestamp(),
+                          updatedAt: serverTimestamp(),
+                        };
+                        if (experience.uid) bookingData.hostId = experience.uid;
+                        if (user.displayName) bookingData.guestName = user.displayName;
+                        if (experience.experienceType)
+                          bookingData.experienceType = experience.experienceType;
+                        if (experience.duration) bookingData.duration = experience.duration;
+                        if (locationStr) bookingData.listingAddress = locationStr;
+
+                        await addDoc(collection(database, "bookings"), bookingData);
+
+                        // === Send the confirmation email (matches your template fields) ===
+                        try {
+                          await sendBookingEmail({
+                            user,
+                            title,
+                            category,
+                            location: locationStr,
+                            total: bookingData.totalPrice,
+                            paymentStatus: emailPaymentStatus,  // "Paid" or "Pending"
+                            currencySymbol,
+                            brandSiteUrl: typeof window !== "undefined" ? window.location.origin : "",
                           });
-                        }}
-                        onApprove={async (data, actions) => {
-                          const details = await actions.order.capture();
-                          const user = auth.currentUser;
+                        } catch (mailErr) {
+                          console.error("EmailJS send failed:", mailErr);
+                          // Non-blocking by design
+                        }
 
-                          if (!user) {
-                            alert("Please log in to make a reservation.");
-                            return;
-                          }
+                        alert("Booking successful!");
+                        onClose?.();
+                      } catch (err) {
+                        console.error("Error creating reservation:", err);
+                        alert(`Failed to create reservation: ${err.message}`);
+                      }
+                    }}
+                    onCancel={() => setShowPayPal(false)}
+                  />
+                </div>
 
-                          try {
-                            // Experience-specific: Use selectedParticipants and selectedSchedule
-                            const quantity = selectedParticipants;
-                            const schedule = selectedSchedule;  // e.g., { date: "2023-10-01", time: "10:00 AM" }
-
-                            if (!schedule || quantity <= 0) {
-                              alert("Invalid schedule or quantity selected.");
-                              return;
-                            }
-
-                            // Use your existing paymentBreakdown
-                            const subtotal = paymentBreakdown.subtotal;
-                            const serviceFee = paymentBreakdown.tax;  // 12% tax
-                            const totalPrice = paymentBreakdown.total;
-
-                            const bookingData = {
-                              uid: user.uid,
-                              quantity: quantity,
-                              schedule: schedule,  // Add schedule details
-                              guestEmail: user.email,
-                              subtotal: subtotal,
-                              serviceFee: serviceFee,
-                              totalPrice: totalPrice,
-                              listingTitle: experience.title || "Untitled",
-                              listingCategory: "Experiences",  // Changed for experiences
-                              status: "pending",
-                              paymentStatus: "paid",
-                              createdAt: new Date(),
-                              updatedAt: new Date(),
-                              // Add listing photos
-                              listingPhotos: experience.photos && experience.photos.length > 0 ? experience.photos : [],
-                            };
-
-                            // Add optional fields from your experience listing
-                            if (experience.uid) {
-                              bookingData.hostId = experience.uid;  // Assuming experience has a host UID
-                            }
-
-                            if (user.displayName) {
-                              bookingData.guestName = user.displayName;
-                            }
-
-                            if (experience.experienceType) {
-                              bookingData.experienceType = experience.experienceType;  // e.g., "in-person" or "online"
-                            }
-
-                            if (experience.duration) {
-                              bookingData.duration = experience.duration;
-                            }
-
-                            const bookingsRef = collection(database, "bookings");
-                            const docRef = await addDoc(bookingsRef, bookingData);
-
-                            alert("Booking successful!");
-                            onClose();  // Closes the modal
-                          } catch (error) {
-                            console.error("Error creating reservation:", error);
-                            alert(`Failed to create reservation: ${error.message}`);
-                          }
-                        }}
-
-                        onCancel={() => {
-                          setShowPayPal(false);  // Handle cancel
-                        }}
-                      />
-                    </div>
-                    <Button 
-                      variant="outlined" 
-                      color="inherit" 
-                      sx={{ flex: 1, minWidth: 140 }} 
-                      onClick={() => setShowPayPal(false)}  // Reverts to original buttons
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <Button 
-                      variant="contained" 
-                      color="primary" 
-                      sx={{ flex: 1, minWidth: 140 }}
-                      disabled={!paymentBreakdown}
-                      onClick={handleBookNow}  // Calls the new function
-                    >
-                      Book Now
-                    </Button>
-                    <Button variant="outlined" color="inherit" sx={{ flex: 1, minWidth: 140 }} onClick={onClose}>
-                      Close
-                    </Button>
-                  </>
-                )}
-              </Box>
-
-            </Box>
-          </Grid>
-        </Grid>
-      </Box>
-    </Modal>
+                <button
+                  type="button"
+                  onClick={() => setShowPayPal(false)}
+                  className="mt-3 w-full inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={handleBookNow}
+                  disabled={!payment || !selectedSchedule}
+                  className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none"
+                >
+                  Book Now
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
+
+  return createPortal(modal, document.body);
 };
 
 export default ExperienceDetailsModal;

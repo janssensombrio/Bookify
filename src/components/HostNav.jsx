@@ -18,8 +18,8 @@ function HostNavigation({ setActivePage }) {
   const navigate = useNavigate();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
-  const pages = ["today", "messages", "listings", "calendar"];
-  const pageLabels = ["Today", "Messages", "Listings", "Calendar"];
+  const pages = ["bookings", "messages", "listings", "calendar"];
+  const pageLabels = ["Bookings", "Messages", "Listings", "Calendar"];
   const tabIcons = [CalendarDays, MessageSquare, ListIcon, CalendarIcon];
 
   const [activeTab, setActiveTab] = useState(0);

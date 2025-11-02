@@ -37,6 +37,7 @@ export const Signup = () => {
       alert("Verification email sent! Please check your inbox.");
 
       await addDoc(usersCollectionRef, {
+        uid: user.id,
         firstName,
         lastName,
         email: user.email,

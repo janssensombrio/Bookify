@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import Search from "../../components/search.jsx";
 import HostCategModal from "../../components/host-categ-modal.jsx";
+import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
 import Sidebar from "./components/sidebar.jsx";
 import "slick-carousel/slick/slick.css";
 import "slick-carousel/slick/slick-theme.css";
@@ -14,23 +15,60 @@ import { useSidebar } from "../../context/SidebarContext";
 import ListingCardContainer from "../../components/listing-card-container.jsx";
 import FormBg from "../../media/beach.mp4";
 
+import { createPortal } from "react-dom";
+
+/* ========= Portal & body-scroll lock (UI only) ========= */
+function ModalPortal({ children }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(children, document.body);
+}
+
+function useBodyScrollLock(locked) {
+  useEffect(() => {
+    const { overflow, paddingRight } = document.body.style;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    if (locked) {
+      document.body.style.overflow = "hidden";
+      if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+    } else {
+      document.body.style.overflow = overflow || "";
+      document.body.style.paddingRight = paddingRight || "";
+    }
+    return () => {
+      document.body.style.overflow = overflow || "";
+      document.body.style.paddingRight = paddingRight || "";
+    };
+  }, [locked]);
+}
+/* ======================================================= */
+
 export const Explore = () => {
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
   const [isHost, setIsHost] = useState(localStorage.getItem("isHost") === "true");
+
+  // 🔔 Always gate with policies until they *actually* become a host
+  const [showPoliciesModal, setShowPoliciesModal] = useState(false);
   const [showHostModal, setShowHostModal] = useState(false);
+
   const [selectedCategory, setSelectedCategory] = useState("Homes");
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true); // UI-only
   const navigate = useNavigate();
 
+  // Lock body scroll when ANY modal is open
+  useBodyScrollLock(showHostModal || showPoliciesModal);
+
+  // Check host status
   useEffect(() => {
     const checkIfHost = async () => {
       const user = auth.currentUser;
       if (!user) return;
       const hostsRef = collection(database, "hosts");
-      const q = query(hostsRef, where("uid", "==", user.uid));
-      const snapshot = await getDocs(q);
+      const qh = query(hostsRef, where("uid", "==", user.uid));
+      const snapshot = await getDocs(qh);
       const hostStatus = !snapshot.empty;
       setIsHost(hostStatus);
       localStorage.setItem("isHost", hostStatus ? "true" : "false");
@@ -38,9 +76,26 @@ export const Explore = () => {
     checkIfHost();
   }, []);
 
+  const handleOpenHostModal = () => setShowHostModal(true);
+  const handleCloseHostModal = () => setShowHostModal(false);
+
+  const handleOpenPoliciesModal = () => setShowPoliciesModal(true);
+  const handleClosePoliciesModal = () => setShowPoliciesModal(false);
+
+  // ✅ After agreeing, immediately open category picker (no localStorage remember)
+  const handleAgreePolicies = () => {
+    setShowPoliciesModal(false);
+    setShowHostModal(true);
+  };
+
+  // ✅ Triggered by sidebar/nav button
   const handleHostClick = () => {
-    if (isHost) navigate("/hostpage");
-    else handleOpenHostModal();
+    if (isHost) {
+      navigate("/hostpage");
+    } else {
+      // Always show policies until they actually become a host
+      handleOpenPoliciesModal();
+    }
   };
 
   const fetchListings = async (category) => {
@@ -48,10 +103,7 @@ export const Explore = () => {
       setLoading(true);
       const listingsRef = collection(database, "listings");
       const snapshot = await getDocs(listingsRef);
-      const listingsData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const listingsData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       const filtered = listingsData.filter((item) => item.category === category);
       setListings(filtered);
     } catch (error) {
@@ -64,9 +116,6 @@ export const Explore = () => {
   useEffect(() => {
     fetchListings(selectedCategory);
   }, [selectedCategory]);
-
-  const handleOpenHostModal = () => setShowHostModal(true);
-  const handleCloseHostModal = () => setShowHostModal(false);
 
   // ----- Skeletons (UI only) -----
   const SearchSkeleton = () => (
@@ -123,9 +172,7 @@ export const Explore = () => {
     return (
       <nav
         aria-label="Category navigation"
-        className={`fixed bottom-0 left-0 right-0 z-[60] md:hidden ${
-          sidebarOpen ? "hidden" : ""
-        }`}
+        className={`fixed bottom-0 left-0 right-0 z-[40] md:hidden ${sidebarOpen ? "hidden" : ""}`}
       >
         <div className="px-4 pb-[calc(env(safe-area-inset-bottom)+12px)]">
           <div className="max-w-lg mx-auto rounded-2xl border border-gray-200 bg-white/95 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-white/80">
@@ -246,8 +293,8 @@ export const Explore = () => {
             Your browser does not support the video tag.
           </video>
 
-          {/* Search overlay (skeleton while loading) */}
-          <div className="relative z-20 flex items-center justify-center h-[400px] sm:h-[500px]">
+        {/* Search overlay (skeleton while loading) */}
+          <div className="relative z-10 flex items-center justify-center h-[400px] sm:h-[500px]">
             {loading ? <SearchSkeleton /> : <Search />}
           </div>
         </section>
@@ -277,12 +324,25 @@ export const Explore = () => {
       {/* Mobile bottom category bar */}
       <MobileCategoryBar />
 
-      {/* Host Category Modal */}
+      {/* Host Category Modal — render in a portal ABOVE everything */}
       {showHostModal && (
-        <HostCategModal
-          onClose={handleCloseHostModal}
-          onSelectCategory={handleCloseHostModal}
-        />
+        <ModalPortal>
+          <div className="fixed inset-0 z-[99999]">
+            <HostCategModal onClose={handleCloseHostModal} onSelectCategory={handleCloseHostModal} />
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* Hosting Policies (always show if user is not host and presses the button) */}
+      {showPoliciesModal && (
+        <ModalPortal>
+          <div className="fixed inset-0 z-[100000]">
+            <HostPoliciesModal
+              onClose={handleClosePoliciesModal}
+              onAgree={handleAgreePolicies}
+            />
+          </div>
+        </ModalPortal>
       )}
     </div>
   );
