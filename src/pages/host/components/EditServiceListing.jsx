@@ -20,6 +20,7 @@ import {
   Type,
   FileText,
   Package,
+  Percent,
 } from "lucide-react";
 
 // 👉 Cloudinary config
@@ -27,6 +28,23 @@ const CLOUD_NAME = "dijmlbysr";
 const UPLOAD_PRESET = "listing-uploads";
 
 const normalizeLocationType = (v) => (v || "").toLowerCase().trim();
+
+// ✅ Discount normalizer (keeps schema tidy)
+const normalizeDiscount = (type, value) => {
+  const t = type || "";
+  const v = Number(value || 0);
+  if (t === "percentage") {
+    const pct = Math.round(v);
+    if (pct >= 1 && pct <= 100) return { discountType: "percentage", discountValue: pct };
+    return { discountType: "", discountValue: 0 };
+  }
+  if (t === "fixed") {
+    const amt = Math.max(0, v);
+    if (Number.isFinite(amt)) return { discountType: "fixed", discountValue: amt };
+    return { discountType: "", discountValue: 0 };
+  }
+  return { discountType: "", discountValue: 0 };
+};
 
 function ServiceEditModalBase({
   open,
@@ -88,6 +106,9 @@ function ServiceEditModalBase({
             address: "",
             duration: "",
             recurrence: "",
+            // NEW: discount fields (default + hydrated)
+            discountType: "",
+            discountValue: 0,
             ...data,
             price,
             ageRestriction: { min: Number(age.min ?? 0), max: Number(age.max ?? 100) },
@@ -95,6 +116,8 @@ function ServiceEditModalBase({
             photos,
             schedule: schedule.map((s) => ({ date: s?.date || "", time: s?.time || "" })),
             locationType: normalizeLocationType(data.locationType),
+            discountType: (data.discountType || ""),
+            discountValue: Number(data.discountValue || 0),
           });
         }
       } catch (e) {
@@ -184,9 +207,13 @@ function ServiceEditModalBase({
       // Do not send local 'id' back into the doc
       const { id: _ignoreId, ...rest } = service;
 
+      // Merge normalized discount
+      const nd = normalizeDiscount(service.discountType, service.discountValue);
+
       // Base payload (without address/location; we add them after)
       const basePayload = {
         ...rest,
+        ...nd,
         maxParticipants: Number(service.maxParticipants || 1),
         price: service.price === "" ? null : Number(service.price || 0),
         ageRestriction: { min, max },
@@ -222,6 +249,18 @@ function ServiceEditModalBase({
   const minAge = Number(service?.ageRestriction?.min ?? 0);
   const maxAge = Number(service?.ageRestriction?.max ?? 100);
   const invalidAge = minAge > maxAge || minAge < 0 || maxAge < 0;
+
+  // ---------- Discount derived values for UI ----------
+  const dType = service?.discountType || "";
+  const dVal = Number(service?.discountValue || 0);
+  const isPct = dType === "percentage";
+  const isFixed = dType === "fixed";
+  const discountInvalid = isPct ? !(dVal >= 1 && dVal <= 100) : isFixed ? dVal < 0 : false;
+
+  const basePriceNum = Number(service?.price || 0) || 0;
+  const afterPct = isPct ? Math.max(0, basePriceNum * (1 - dVal / 100)) : basePriceNum;
+  const afterFixed = isFixed ? Math.max(0, basePriceNum - dVal) : basePriceNum;
+  const previewPrice = isPct ? afterPct : isFixed ? afterFixed : basePriceNum;
 
   if (!open) return null;
 
@@ -529,7 +568,7 @@ function ServiceEditModalBase({
                     )}
                   </section>
 
-                  {/* Pricing */}
+                  {/* Pricing & Discount */}
                   <section className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 shadow p-5 grid gap-3">
                     <div>
                       <label className="block text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
@@ -566,6 +605,117 @@ function ServiceEditModalBase({
                           </option>
                         ))}
                       </select>
+                    </div>
+
+                    {/* NEW: Discount editor */}
+                    <div className="grid gap-2">
+                      <label className="block text-sm font-semibold text-gray-900 mb-1 flex items-center gap-2">
+                        <Percent className="w-4.5 h-4.5" /> Discount (optional)
+                      </label>
+
+                      {/* Type segmented */}
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { key: "", label: "None" },
+                          { key: "percentage", label: "Percentage (%)" },
+                          { key: "fixed", label: "Fixed (₱)" },
+                        ].map(({ key, label }) => {
+                          const on = (service.discountType || "") === key;
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => setField("discountType", key)}
+                              className={`w-full rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
+                                on
+                                  ? "border-blue-500 bg-blue-50/80 text-blue-800 shadow"
+                                  : "border-gray-200 bg-white/70 hover:bg-gray-50 text-gray-800"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {(isPct || isFixed) && (
+                        <div className="grid gap-1.5">
+                          <div className="relative">
+                            {isPct ? (
+                              <>
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">%</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={100}
+                                  className="pl-10 pr-4 py-3 w-full rounded-2xl border border-gray-300 bg-white/90 text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                                  placeholder="e.g., 10"
+                                  value={service.discountValue}
+                                  onChange={(e) => setField("discountValue", Number(e.target.value || 0))}
+                                />
+                              </>
+                            ) : (
+                              <>
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">₱</span>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  className="pl-10 pr-4 py-3 w-full rounded-2xl border border-gray-300 bg-white/90 text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                                  placeholder="e.g., 200"
+                                  value={service.discountValue}
+                                  onChange={(e) => setField("discountValue", Number(e.target.value || 0))}
+                                />
+                              </>
+                            )}
+                          </div>
+
+                          {discountInvalid && (
+                            <p className="text-xs font-medium text-red-600">
+                              {isPct ? "Percentage must be between 1 and 100." : "Fixed amount cannot be negative."}
+                            </p>
+                          )}
+
+                          {/* Quick chips for % */}
+                          {isPct && (
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {[5, 10, 15, 20, 25, 30].map((n) => (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  onClick={() => setField("discountValue", n)}
+                                  className="px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                >
+                                  {n}%
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Preview */}
+                          <div className="mt-2 text-xs text-gray-700">
+                            {isPct && (
+                              <p>
+                                Preview (per unit): ₱{basePriceNum.toLocaleString()} → <b>₱{afterPct.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> after {dVal}% off.
+                              </p>
+                            )}
+                            {isFixed && (
+                              <p>
+                                Preview (per unit): ₱{basePriceNum.toLocaleString()} − ₱{dVal.toLocaleString()} = <b>₱{afterFixed.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>.
+                              </p>
+                            )}
+                            {!isPct && !isFixed && <p>No discount will be applied.</p>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Current preview card */}
+                      {Boolean(previewPrice) && (
+                        <div className="rounded-2xl border border-blue-100 bg-blue-50/60 p-3 text-xs">
+                          <p className="text-blue-900">
+                            Current preview price per unit: <b>₱{previewPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b>
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </section>
 
@@ -771,16 +921,16 @@ function ServiceEditModalBase({
               </button>
               <button
                 type="button"
-                disabled={saving || invalidAge}
+                disabled={saving || invalidAge || discountInvalid}
                 onClick={handleSave}
                 className={`inline-flex items-center justify-center rounded-full px-6 py-2.5 text-sm font-semibold text-white shadow-md ${
-                  saving || invalidAge
+                  saving || invalidAge || discountInvalid
                     ? "opacity-60 cursor-not-allowed bg-blue-500"
                     : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700"
                 }`}
               >
                 <Save className="w-4 h-4 mr-2" />
-                {saving ? "Saving…" : "Save changes"}
+                {saving ? "Saving…" : discountInvalid ? "Fix discount" : "Save changes"}
               </button>
             </div>
           </div>

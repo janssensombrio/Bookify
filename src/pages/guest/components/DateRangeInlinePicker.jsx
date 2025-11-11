@@ -22,6 +22,9 @@ export default function DateRangePickerInline({
   minDate = new Date(),
   monthsShown = 2,
   calendarClassName = "bookify-calendar",
+  excludeDateIntervals,           // array of {start: Date, end: Date}
+  selectsDisabledDaysInRange = false,
+  filterDate,                     // (date: Date) => boolean
   ...rest
 }) {
   const startDate = useMemo(() => toDate(value.start), [value.start]);
@@ -43,6 +46,9 @@ export default function DateRangePickerInline({
       monthsShown={monthsShown}
       shouldCloseOnSelect={false}
       calendarClassName={calendarClassName}
+      excludeDateIntervals={excludeDateIntervals}
+      selectsDisabledDaysInRange={selectsDisabledDaysInRange}
+      filterDate={filterDate}
       {...rest}
     />
   );

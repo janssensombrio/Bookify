@@ -32,7 +32,10 @@ import {
   Send,
 } from "lucide-react";
 
-/* ---------------- small utils ---------------- */
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
 const numberOr = (v, d = 0) => {
   const n = typeof v === "string" ? parseFloat(v) : v;
   return Number.isFinite(n) ? n : d;
@@ -48,7 +51,11 @@ const normalizeCategory = (rawCat) => {
 
 const peso = (n) =>
   typeof n === "number"
-    ? n.toLocaleString(undefined, { style: "currency", currency: "PHP", maximumFractionDigits: 0 })
+    ? n.toLocaleString(undefined, { 
+        style: "currency", 
+        currency: "PHP", 
+        maximumFractionDigits: 0 
+      })
     : "₱—";
 
 const fmtRange = (start, end) => {
@@ -80,6 +87,7 @@ const fmtDateStr = (isoLike) => {
     return isoLike;
   }
 };
+
 const fmtTimeStr = (hhmm) => {
   try {
     const [h, m] = (hhmm || "").split(":").map(Number);
@@ -121,33 +129,35 @@ const payBadge = (ps = "unpaid") => {
   return { text: "Unpaid", cls: "bg-amber-50 text-amber-700 border-amber-200" };
 };
 
-/* ---------------- profile + listing helpers ---------------- */
+// =============================================================================
+// DATA HELPERS
+// =============================================================================
+
 const __userCache = new Map();
+const __listingCache = new Map();
+
 async function fetchGuestProfile(uid) {
   if (!uid) return null;
   if (__userCache.has(uid)) return __userCache.get(uid);
+  
   try {
     const snap = await getDoc(doc(database, "users", uid));
     if (snap.exists()) {
       const d = snap.data();
-      const v = {
+      const profile = {
         firstName: d.firstName || "",
         lastName: d.lastName || "",
         displayName: d.displayName || [d.firstName, d.lastName].filter(Boolean).join(" ").trim(),
-        photoURL:
-          d.photoURL ||
-          d.photoUrl ||
-          d.avatarURL ||
-          d.avatar ||
-          d.profileImageUrl ||
-          null,
+        photoURL: d.photoURL || d.photoUrl || d.avatarURL || d.avatar || d.profileImageUrl || null,
         email: d.email || null,
         uid,
       };
-      __userCache.set(uid, v);
-      return v;
+      __userCache.set(uid, profile);
+      return profile;
     }
-  } catch {}
+  } catch (error) {
+    console.error("Error fetching guest profile:", error);
+  }
   return null;
 }
 
@@ -165,9 +175,9 @@ const fallbackFromBooking = (b) => ({
   category: (b?.listing?.category || b?.listingCategory || "Homes"),
 });
 
-const __listingCache = new Map();
 const normalizeListing = (raw = {}, booking = {}) => {
   const number = (v, d) => numberOr(v, d);
+  
   const pick = (...vals) => {
     for (const v of vals) {
       if (v == null) continue;
@@ -180,12 +190,14 @@ const normalizeListing = (raw = {}, booking = {}) => {
     }
     return undefined;
   };
+
   const cat = normalizeCategory(pick(raw.category, booking?.listingCategory, "homes"));
   const scheduleArr = Array.isArray(raw.schedule) ? raw.schedule : [];
   const schedule = scheduleArr
     .map((s) => ({ date: pick(s.date, s.startDate, s.day), time: pick(s.time, s.startTime) }))
     .filter((s) => s.date || s.time);
-  const out = {
+
+  const baseListing = {
     id: raw.id,
     title: pick(raw.title, booking?.listingTitle),
     photos: pick(raw.photos, booking?.listingPhotos, []),
@@ -198,33 +210,40 @@ const normalizeListing = (raw = {}, booking = {}) => {
     uid: pick(raw.uid, raw.ownerId, raw.hostId),
     schedule,
   };
+
+  // Category-specific fields
   if (cat.startsWith("service")) {
-    out.serviceType = raw.serviceType || raw.type;
-    out.pricingType = raw.pricingType || raw?.pricing?.type;
-    out.duration = raw.duration || raw?.service?.duration;
-    out.address = pick(raw.address, raw?.location?.address, raw?.addressLine);
+    baseListing.serviceType = raw.serviceType || raw.type;
+    baseListing.pricingType = raw.pricingType || raw?.pricing?.type;
+    baseListing.duration = raw.duration || raw?.service?.duration;
+    baseListing.address = pick(raw.address, raw?.location?.address, raw?.addressLine);
   }
+
   if (cat.startsWith("experience")) {
-    out.experienceType = raw.experienceType || raw.type;
-    out.duration = raw.duration;
-    out.languages = Array.isArray(raw.languages) ? raw.languages : [];
-    out.hostRequirements = raw.hostRequirements || raw.requirements;
+    baseListing.experienceType = raw.experienceType || raw.type;
+    baseListing.duration = raw.duration;
+    baseListing.languages = Array.isArray(raw.languages) ? raw.languages : [];
+    baseListing.hostRequirements = raw.hostRequirements || raw.requirements;
   }
+
   if (cat.startsWith("home")) {
-    out.propertyType = raw.propertyType || raw?.home?.propertyType || raw?.details?.propertyType;
-    out.bedrooms = number(raw.bedrooms ?? raw?.rooms?.bedrooms, undefined);
-    out.beds = number(raw.beds ?? raw?.rooms?.beds, undefined);
-    out.bathrooms = number(raw.bathrooms ?? raw?.rooms?.bathrooms, undefined);
-    out.maxGuests = number(raw.maxGuests ?? raw.capacity, undefined);
+    baseListing.propertyType = raw.propertyType || raw?.home?.propertyType || raw?.details?.propertyType;
+    baseListing.bedrooms = number(raw.bedrooms ?? raw?.rooms?.bedrooms, undefined);
+    baseListing.beds = number(raw.beds ?? raw?.rooms?.beds, undefined);
+    baseListing.bathrooms = number(raw.bathrooms ?? raw?.rooms?.bathrooms, undefined);
+    baseListing.maxGuests = number(raw.maxGuests ?? raw.capacity, undefined);
   }
-  return out;
+
+  return baseListing;
 };
 
 async function hydrateListingForBooking(booking) {
   const fallback = fallbackFromBooking(booking);
   const id = booking?.listingId || extractListingIdFromPath(booking?.listingRefPath);
+  
   if (!id) return fallback;
   if (__listingCache.has(id)) return { ...fallback, ...__listingCache.get(id) };
+  
   try {
     const snap = await getDoc(doc(database, "listings", id));
     if (snap.exists()) {
@@ -233,27 +252,37 @@ async function hydrateListingForBooking(booking) {
       __listingCache.set(id, normalized);
       return { ...fallback, ...normalized };
     }
-  } catch {}
+  } catch (error) {
+    console.error("Error hydrating listing:", error);
+  }
+  
   return fallback;
 }
 
 const isCancelable = (b) => {
   const s = (b.status || "").toLowerCase();
   if (s === "canceled" || s === "cancelled" || s === "completed") return false;
+  
   const cat = normalizeCategory(b.listing?.category || b.listingCategory || "");
   const now = new Date();
+  
   if (cat.startsWith("home")) {
     const ci = b.checkIn?.toDate?.() ?? null;
     return !ci || ci > now;
   }
+  
   if (b?.schedule?.date) {
     const dt = new Date(`${b.schedule.date}T${b.schedule.time || "00:00"}`);
     return dt > now;
   }
+  
   return true;
 };
 
-/* ---------------- Skeleton + Shell ---------------- */
+// =============================================================================
+// UI COMPONENTS
+// =============================================================================
+
 const CardSkeleton = () => (
   <div className="rounded-3xl bg-white/80 border border-white/50 shadow-[0_10px_30px_rgba(2,6,23,0.08)] overflow-hidden animate-pulse">
     <div className="h-40 bg-slate-200/80" />
@@ -265,68 +294,74 @@ const CardSkeleton = () => (
   </div>
 );
 
-const CardShell = ({ cover, chip, header, children, onClick }) => (
-  <div
-    onClick={onClick}
-    role={onClick ? "button" : undefined}
-    tabIndex={onClick ? 0 : undefined}
-    onKeyDown={(e) => {
-      if (!onClick) return;
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault(); onClick();
-      }
-    }}
-    className="
-      group rounded-3xl overflow-hidden cursor-pointer
-      bg-gradient-to-b from-white to-slate-50
-      border border-slate-200/70
-      shadow-[0_15px_40px_rgba(2,6,23,0.08)]
-      hover:shadow-[0_20px_60px_rgba(2,6,23,0.12)]
-      transition-all duration-300
-    "
-  >
-    <div className="relative h-40">
-      <img
-        src={
-          cover ||
-          "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=1200&auto=format&fit=crop"
-        }
-        alt=""
-        className="absolute inset-0 w-full h-full object-cover"
-        loading="lazy"
-      />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-white/10 mix-blend-overlay" />
-      {chip && (
-        <span className="absolute top-3 left-3 text-xs px-2 py-1 rounded-full bg-black/60 text-white">
-          {chip}
-        </span>
-      )}
-    </div>
-    <div className="p-5">
-      {header}
-      {children}
-    </div>
-  </div>
-);
+const CardShell = ({ cover, chip, header, children, onClick }) => {
+  const handleKeyDown = (e) => {
+    if (!onClick) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault(); 
+      onClick();
+    }
+  };
 
-/* ---------------- Guest avatar (card header) ---------------- */
+  return (
+    <div
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={handleKeyDown}
+      className="
+        group rounded-3xl overflow-hidden cursor-pointer
+        bg-gradient-to-b from-white to-slate-50
+        border border-slate-200/70
+        shadow-[0_15px_40px_rgba(2,6,23,0.08)]
+        hover:shadow-[0_20px_60px_rgba(2,6,23,0.12)]
+        transition-all duration-300
+      "
+    >
+      <div className="relative h-40">
+        <img
+          src={cover || "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=1200&auto=format&fit=crop"}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="lazy"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-transparent to-white/10 mix-blend-overlay" />
+        {chip && (
+          <span className="absolute top-3 left-3 text-xs px-2 py-1 rounded-full bg-black/60 text-white">
+            {chip}
+          </span>
+        )}
+      </div>
+      <div className="p-5">
+        {header}
+        {children}
+      </div>
+    </div>
+  );
+};
+
 const GuestPill = ({ booking }) => {
   const [guest, setGuest] = useState(null);
+
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      const prof = await fetchGuestProfile(booking?.uid);
-      if (alive) setGuest(prof);
-    })();
-    return () => { alive = false; };
+    let isActive = true;
+    
+    const loadGuest = async () => {
+      const profile = await fetchGuestProfile(booking?.uid);
+      if (isActive) setGuest(profile);
+    };
+
+    loadGuest();
+    
+    return () => { isActive = false; };
   }, [booking?.uid]);
 
-  const name =
-    booking?.guestName ||
+  const name = booking?.guestName ||
     guest?.displayName ||
     [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim() ||
     booking?.guestEmail ||
     "Guest";
+    
   const initial = name?.trim()?.[0]?.toUpperCase() || "G";
   const photo = guest?.photoURL;
 
@@ -346,7 +381,10 @@ const GuestPill = ({ booking }) => {
   );
 };
 
-/* ---------------- Cards (Homes / Experiences / Services) ---------------- */
+// =============================================================================
+// BOOKING CARDS BY CATEGORY
+// =============================================================================
+
 const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled listing";
   const loc = b.listing?.location || b.listingAddress || "";
@@ -355,6 +393,11 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const guests = (b.adults || 0) + (b.children || 0) + (b.infants || 0);
   const sBadge = statusBadge(b.status);
   const pBadge = payBadge(b.paymentStatus);
+
+  const handleCancelClick = (e) => {
+    e.stopPropagation();
+    onRequestCancel(b);
+  };
 
   return (
     <CardShell
@@ -426,9 +469,8 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
       <div className="mt-4">
         {isCancelable(b) && (
           <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow
-                        hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
+            onClick={handleCancelClick}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
           >
             Cancel Booking
           </button>
@@ -443,10 +485,14 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
   const pBadge = payBadge(b.paymentStatus);
-
   const dateStr = b?.schedule?.date ? fmtDateStr(b.schedule.date) : "";
   const timeStr = b?.schedule?.time ? fmtTimeStr(b.schedule.time) : "";
   const type = b.experienceType ? b.experienceType[0].toUpperCase() + b.experienceType.slice(1) : null;
+
+  const handleCancelClick = (e) => {
+    e.stopPropagation();
+    onRequestCancel(b);
+  };
 
   return (
     <CardShell
@@ -505,9 +551,8 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
       <div className="mt-4">
         {isCancelable(b) && (
           <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow
-                        hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
+            onClick={handleCancelClick}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
           >
             Cancel Booking
           </button>
@@ -524,6 +569,11 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const pBadge = payBadge(b.paymentStatus);
   const dateStr = b?.schedule?.date ? fmtDateStr(b.schedule.date) : "";
   const timeStr = b?.schedule?.time ? fmtTimeStr(b.schedule.time) : "";
+
+  const handleCancelClick = (e) => {
+    e.stopPropagation();
+    onRequestCancel(b);
+  };
 
   return (
     <CardShell
@@ -561,9 +611,8 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
       <div className="mt-4">
         {isCancelable(b) && (
           <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow
-                        hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
+            onClick={handleCancelClick}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-700 border border-rose-700/50 shadow hover:from-rose-500 hover:to-rose-700 active:translate-y-px transition"
           >
             Cancel Booking
           </button>
@@ -573,8 +622,11 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   );
 };
 
-/* ---------------- Overlay helpers (PORTAL FIX) ---------------- */
-function Overlay({ children, onBackdropClick }) {
+// =============================================================================
+// MODAL COMPONENTS
+// =============================================================================
+
+const Overlay = ({ children, onBackdropClick }) => {
   const content = (
     <div
       className="fixed inset-0 z-[2147483000] flex items-center justify-center p-0 sm:p-4
@@ -588,22 +640,22 @@ function Overlay({ children, onBackdropClick }) {
       {children}
     </div>
   );
+  
   if (typeof document === "undefined") return content;
   return createPortal(content, document.body);
-}
+};
 
-/* ---------------- Cancel Flow (portaled) ---------------- */
 const CancelReasonModal = ({ open, onClose, onNext }) => {
   const [selected, setSelected] = useState("");
   const [other, setOther] = useState("");
 
   useEffect(() => {
-    if (!open) { setSelected(""); setOther(""); }
+    if (!open) {
+      setSelected("");
+      setOther("");
+    }
   }, [open]);
 
-  if (!open) return null;
-
-  // Host-oriented copy & reasons
   const reasons = [
     "Calendar conflict / double-booked",
     "Urgent maintenance or repairs required",
@@ -612,14 +664,16 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
     "Severe weather / local restrictions",
     "Other",
   ];
-  const canContinue =
-    selected && (selected !== "Other" || (selected === "Other" && other.trim().length >= 4));
 
-  const submit = () => {
+  const canContinue = selected && (selected !== "Other" || (selected === "Other" && other.trim().length >= 4));
+
+  const handleSubmit = () => {
     const reasonText = selected === "Other" ? other.trim() : selected;
     if (!canContinue) return;
     onNext(reasonText);
   };
+
+  if (!open) return null;
 
   return (
     <Overlay onBackdropClick={onClose}>
@@ -629,30 +683,34 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
             <div>
               <h3 className="text-xl font-semibold tracking-tight text-slate-900">Cancel booking</h3>
               <p className="text-sm text-slate-600 mt-1">
-                Please tell the guest why you’re canceling as the host.
+                Please tell the guest why you're canceling as the host.
               </p>
             </div>
-            <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600" aria-label="Close">
+            <button 
+              onClick={onClose} 
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-600" 
+              aria-label="Close"
+            >
               <X size={18} />
             </button>
           </div>
 
           <div className="mt-4 space-y-2">
-            {reasons.map((r) => (
+            {reasons.map((reason) => (
               <label
-                key={r}
+                key={reason}
                 className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition
-                ${selected === r ? "border-blue-300 bg-blue-50/60" : "border-slate-200 hover:bg-slate-50"}`}
+                  ${selected === reason ? "border-blue-300 bg-blue-50/60" : "border-slate-200 hover:bg-slate-50"}`}
               >
                 <input
                   type="radio"
                   name="cancel-reason"
-                  value={r}
-                  checked={selected === r}
-                  onChange={() => setSelected(r)}
+                  value={reason}
+                  checked={selected === reason}
+                  onChange={() => setSelected(reason)}
                   className="accent-blue-600"
                 />
-                <span className="text-sm text-slate-800">{r}</span>
+                <span className="text-sm text-slate-800">{reason}</span>
               </label>
             ))}
 
@@ -678,7 +736,7 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
               Back
             </button>
             <button
-              onClick={submit}
+              onClick={handleSubmit}
               disabled={!canContinue}
               className="h-10 px-4 rounded-xl text-white bg-gradient-to-b from-blue-600 to-blue-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_16px_rgba(37,99,235,0.35)] hover:from-blue-500 hover:to-blue-700 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
             >
@@ -693,8 +751,10 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
 
 const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText, submitting }) => {
   if (!open) return null;
+  
   const title = listingTitle || "this booking";
   const policy = policyText?.trim() || "No specific cancellation policy was provided by the host.";
+
   return (
     <Overlay onBackdropClick={onBack}>
       <div className="relative z-10 w-full sm:w-[560px]">
@@ -705,7 +765,7 @@ const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText,
             </div>
             <div className="flex-1">
               <h3 className="text-xl font-semibold tracking-tight text-slate-900">Cancel {title}?</h3>
-              <p className="text-sm text-slate-600 mt-1">Before you proceed, review the host’s cancellation policy:</p>
+              <p className="text-sm text-slate-600 mt-1">Before you proceed, review the host's cancellation policy:</p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 max-h-44 overflow-auto text-sm text-slate-800">
                 {policy}
               </div>
@@ -737,7 +797,6 @@ const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText,
   );
 };
 
-/* ---------------- Booking Details Modal (portaled, with guest + inline chat) ---------------- */
 const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const [listing, setListing] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
@@ -749,34 +808,42 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const navigate = useNavigate();
 
   const currentSignedUid = auth.currentUser?.uid || null;
-  const otherUid = booking?.uid || guest?.uid || null; // guest/user you're chatting with
+  const otherUid = booking?.uid || guest?.uid || null;
 
-  // fetch data when open
+  // Data fetching effect
   useEffect(() => {
     if (!open || !booking) return;
-    let alive = true;
-    (async () => {
+    
+    let isActive = true;
+    
+    const loadData = async () => {
       const [freshListing, guestProfile] = await Promise.all([
         hydrateListingForBooking(booking),
         fetchGuestProfile(booking?.uid),
       ]);
-      if (!alive) return;
+      
+      if (!isActive) return;
       setListing(freshListing);
       setGuest(guestProfile);
       setCurrentPhoto(0);
-    })();
-    return () => { alive = false; };
+    };
+
+    loadData();
+    
+    return () => { isActive = false; };
   }, [open, booking?.id, booking?.uid]);
 
-  // lock body scroll WHILE OPEN
+  // Body scroll lock
   useEffect(() => {
     if (!open) return;
+    
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    
     return () => { document.body.style.overflow = prevOverflow || ""; };
   }, [open]);
 
-  // Reset chat when modal closes or booking changes
+  // Chat reset
   useEffect(() => {
     if (!open) {
       setChatOpen(false);
@@ -785,24 +852,26 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     }
   }, [open, booking?.id]);
 
-  // Subscribe to two-way messages when chat is open
+  // Chat subscription
   useEffect(() => {
     if (!open || !chatOpen || !currentSignedUid || !otherUid) return;
 
-    const msgs = [];
-    const qA = query(
+    const messages = [];
+    
+    const queryA = query(
       collection(database, "messages"),
       where("senderId", "==", currentSignedUid),
       where("receiverId", "==", otherUid)
     );
-    const qB = query(
+    
+    const queryB = query(
       collection(database, "messages"),
       where("senderId", "==", otherUid),
       where("receiverId", "==", currentSignedUid)
     );
 
-    const mergeAndSet = () => {
-      const sorted = msgs
+    const mergeAndSetMessages = () => {
+      const sorted = messages
         .slice()
         .sort((a, b) => {
           const sa = a?.timestamp?.seconds ?? 0;
@@ -811,42 +880,67 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
           const nb = b?.timestamp?.nanoseconds ?? 0;
           return sa === sb ? na - nb : sa - sb;
         });
+        
       setChatMsgs(sorted);
       requestAnimationFrame(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }));
     };
 
-    const unsubA = onSnapshot(qA, (snap) => {
-      for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]._dir === "A") msgs.splice(i, 1);
-      snap.forEach((d) => msgs.push({ ...d.data(), _dir: "A" }));
-      mergeAndSet();
+    const unsubscribeA = onSnapshot(queryA, (snapshot) => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]._dir === "A") messages.splice(i, 1);
+      }
+      snapshot.forEach((doc) => messages.push({ ...doc.data(), _dir: "A" }));
+      mergeAndSetMessages();
     });
 
-    const unsubB = onSnapshot(qB, (snap) => {
-      for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]._dir === "B") msgs.splice(i, 1);
-      snap.forEach((d) => msgs.push({ ...d.data(), _dir: "B" }));
-      mergeAndSet();
+    const unsubscribeB = onSnapshot(queryB, (snapshot) => {
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i]._dir === "B") messages.splice(i, 1);
+      }
+      snapshot.forEach((doc) => messages.push({ ...doc.data(), _dir: "B" }));
+      mergeAndSetMessages();
     });
 
-    return () => { unsubA(); unsubB(); };
+    return () => {
+      unsubscribeA();
+      unsubscribeB();
+    };
   }, [open, chatOpen, currentSignedUid, otherUid]);
 
   const sendInlineMessage = async () => {
     const text = chatText.trim();
     if (!text || !currentSignedUid || !otherUid) return;
 
-    // If you use per-user hide markers, unhide for current user when sending
     try {
       await deleteDoc(doc(database, "users", currentSignedUid, "deletedConversations", otherUid));
-    } catch {}
+    } catch (error) {
+      console.error("Error deleting conversation:", error);
+    }
 
-    await addDoc(collection(database, "messages"), {
-      uid: currentSignedUid,
-      senderId: currentSignedUid,
-      receiverId: otherUid,
-      message: text,
-      timestamp: serverTimestamp(),
-    });
-    setChatText("");
+    try {
+      await addDoc(collection(database, "messages"), {
+        uid: currentSignedUid,
+        senderId: currentSignedUid,
+        receiverId: otherUid,
+        message: text,
+        timestamp: serverTimestamp(),
+      });
+      setChatText("");
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+  };
+
+  const handleNextPhoto = (e) => {
+    e?.stopPropagation();
+    if (!hasPhotos) return;
+    setCurrentPhoto((prev) => (prev + 1) % photos.length);
+  };
+
+  const handlePrevPhoto = (e) => {
+    e?.stopPropagation();
+    if (!hasPhotos) return;
+    setCurrentPhoto((prev) => (prev - 1 + photos.length) % photos.length);
   };
 
   if (!open || !booking) return null;
@@ -857,26 +951,18 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const hasPhotos = photos.length > 0;
   const sBadge = statusBadge(booking.status);
   const pBadge = payBadge(booking.paymentStatus);
-
   const cat = normalizeCategory(listing?.category || booking?.listingCategory || "");
   const scheduleStr = booking?.schedule?.date
     ? `${fmtDateStr(booking.schedule.date)}${booking?.schedule?.time ? " • " + fmtTimeStr(booking.schedule.time) : ""}`
     : null;
-
   const nights = typeof booking.nights === "number" ? booking.nights : daysBetween(booking.checkIn, booking.checkOut);
-
   const subtotal = numberOr(booking.subtotal, NaN);
   const serviceFee = numberOr(booking.serviceFee, NaN);
   const cleaningFee = numberOr(booking.cleaningFee, NaN);
   const discountType = booking.discountType || "none";
   const discountValue = numberOr(booking.discountValue, 0);
   const totalPrice = numberOr(booking.totalPrice, NaN);
-
-  const nextPhoto = (e) => { e?.stopPropagation(); if (!hasPhotos) return; setCurrentPhoto((p) => (p + 1) % photos.length); };
-  const prevPhoto = (e) => { e?.stopPropagation(); if (!hasPhotos) return; setCurrentPhoto((p) => (p - 1 + photos.length) % photos.length); };
-
-  const guestName =
-    booking?.guestName ||
+  const guestName = booking?.guestName ||
     guest?.displayName ||
     [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim() ||
     booking?.guestEmail ||
@@ -897,7 +983,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Close */}
+        {/* Close Button */}
         <button
           onClick={onClose}
           aria-label="Close"
@@ -906,97 +992,105 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
           <X className="w-5 h-5 text-gray-700" />
         </button>
 
-        {/* LEFT: photos */}
-        <>
-          <div className="hidden md:block relative bg-gray-900/90">
-            {hasPhotos ? (
-              <>
-                <img
-                  src={photos[currentPhoto]}
-                  alt={`${title} photo ${currentPhoto + 1}`}
-                  className="w-full h-full object-cover"
-                />
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
-              </>
-            ) : (
-              <div className="w-full h-full grid place-items-center text-white/80 p-6">No photos available</div>
-            )}
+        {/* Photo Gallery - Desktop */}
+        <div className="hidden md:block relative bg-gray-900/90">
+          {hasPhotos ? (
+            <>
+              <img
+                src={photos[currentPhoto]}
+                alt={`${title} photo ${currentPhoto + 1}`}
+                className="w-full h-full object-cover"
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+            </>
+          ) : (
+            <div className="w-full h-full grid place-items-center text-white/80 p-6">
+              No photos available
+            </div>
+          )}
 
-            {hasPhotos && photos.length > 1 && (
-              <>
-                <button
-                  onClick={prevPhoto}
-                  aria-label="Previous photo"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={nextPhoto}
-                  aria-label="Next photo"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-                  {photos.map((_, i) => (
-                    <button
-                      key={i}
-                      onClick={(e) => { e.stopPropagation(); setCurrentPhoto(i); }}
-                      className={`h-2 w-2 rounded-full ${i === currentPhoto ? "bg-white" : "bg-white/60"}`}
-                      aria-label={`Go to photo ${i + 1}`}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+          {hasPhotos && photos.length > 1 && (
+            <>
+              <button
+                onClick={handlePrevPhoto}
+                aria-label="Previous photo"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleNextPhoto}
+                aria-label="Next photo"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                {photos.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={(e) => { e.stopPropagation(); setCurrentPhoto(index); }}
+                    className={`h-2 w-2 rounded-full ${index === currentPhoto ? "bg-white" : "bg-white/60"}`}
+                    aria-label={`Go to photo ${index + 1}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
-          <div className="md:hidden relative h-64 w-full bg-gray-900/90">
-            {hasPhotos ? (
-              <>
-                <img src={photos[currentPhoto]} alt={`${title} - photo ${currentPhoto + 1}`} className="w-full h-full object-cover" />
-                <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
-              </>
-            ) : (
-              <div className="w-full h-full grid place-items-center text-white/80 p-6">No photos available</div>
-            )}
-            {hasPhotos && photos.length > 1 && (
-              <>
-                <button
-                  onClick={prevPhoto}
-                  aria-label="Previous photo"
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={nextPhoto}
-                  aria-label="Next photo"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
-                  {photos.map((_, i) => (
-                    <button
-                      key={i}
-                      onClick={(e) => { e.stopPropagation(); setCurrentPhoto(i); }}
-                      className={`h-2.5 w-2.5 rounded-full ${i === currentPhoto ? "bg-white" : "bg-white/60"}`}
-                      aria-label={`Go to photo ${i + 1}`}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </>
+        {/* Photo Gallery - Mobile */}
+        <div className="md:hidden relative h-64 w-full bg-gray-900/90">
+          {hasPhotos ? (
+            <>
+              <img 
+                src={photos[currentPhoto]} 
+                alt={`${title} - photo ${currentPhoto + 1}`} 
+                className="w-full h-full object-cover" 
+              />
+              <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent" />
+            </>
+          ) : (
+            <div className="w-full h-full grid place-items-center text-white/80 p-6">
+              No photos available
+            </div>
+          )}
+          
+          {hasPhotos && photos.length > 1 && (
+            <>
+              <button
+                onClick={handlePrevPhoto}
+                aria-label="Previous photo"
+                className="absolute left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <button
+                onClick={handleNextPhoto}
+                aria-label="Next photo"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/90 hover:bg-white text-gray-800 grid place-items-center shadow"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </button>
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                {photos.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={(e) => { e.stopPropagation(); setCurrentPhoto(index); }}
+                    className={`h-2.5 w-2.5 rounded-full ${index === currentPhoto ? "bg-white" : "bg-white/60"}`}
+                    aria-label={`Go to photo ${index + 1}`}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
-        {/* RIGHT: content */}
+        {/* Content Panel */}
         <div className="relative h-full min-h-0 grid grid-rows-[1fr,auto] bg-gradient-to-br from-blue-50/35 via-white/55 to-indigo-50/35">
           <div className="min-h-0 overflow-y-auto">
             <div className="max-w-[720px] mx-auto px-5 sm:px-6 md:px-7 py-5 sm:py-6 md:py-7 space-y-6 sm:space-y-7">
-              {/* Header */}
+              {/* Header Section */}
               <section className="space-y-3">
                 <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">{title}</h2>
 
@@ -1016,7 +1110,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                 </p>
               </section>
 
-              {/* Guest block */}
+              {/* Guest Information Section */}
               <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
@@ -1051,7 +1145,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                   </button>
                 </div>
 
-                {/* Inline chat panel */}
+                {/* Inline Chat Panel */}
                 {chatOpen && (
                   <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90">
                     <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-800">
@@ -1063,21 +1157,21 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                           Say hello 👋
                         </div>
                       ) : (
-                        chatMsgs.map((m, i) => {
-                          const own = m.senderId === currentSignedUid;
+                        chatMsgs.map((message, index) => {
+                          const isOwnMessage = message.senderId === currentSignedUid;
                           return (
                             <div
-                              key={`${m.timestamp?.seconds || 0}-${i}`}
-                              className={`flex ${own ? "justify-end" : "justify-start"} mb-2`}
+                              key={`${message.timestamp?.seconds || 0}-${index}`}
+                              className={`flex ${isOwnMessage ? "justify-end" : "justify-start"} mb-2`}
                             >
                               <div
                                 className={`max-w-[75%] rounded-2xl px-3 py-2 shadow ${
-                                  own
+                                  isOwnMessage
                                     ? "bg-blue-600 text-white"
                                     : "bg-white text-gray-800 border border-gray-200"
                                 }`}
                               >
-                                <span className="text-[13.5px] leading-snug">{m.message}</span>
+                                <span className="text-[13.5px] leading-snug">{message.message}</span>
                               </div>
                             </div>
                           );
@@ -1110,7 +1204,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                 )}
               </section>
 
-              {/* Booking meta + payment */}
+              {/* Booking Details Section */}
               <section className="rounded-3xl bg-white/85 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-lg space-y-2">
                 {cat.startsWith("home") ? (
                   <>
@@ -1190,7 +1284,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             </div>
           </div>
 
-          {/* Footer actions */}
+          {/* Footer Actions */}
           <div
             className="w-full bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-t border-white/50 px-4 pt-4 pb-6 sm:pb-6"
             style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
@@ -1220,149 +1314,187 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   );
 };
 
-/* ---------------- Today Tab ---------------- */
+// =============================================================================
+// MAIN COMPONENT
+// =============================================================================
+
 export default function TodayTab() {
-  // auth
+  // Authentication state
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setAuthUser(u || null);
-      setAuthLoading(false);
-    });
-    return unsub;
-  }, []);
-  const uid = authUser?.uid || null;
-
-  // bookings
+  
+  // Bookings data
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // tabs
-  const [tab, setTab] = useState("today"); // today | upcoming | cancelled
-
-  // cancel flow
+  
+  // UI state
+  const [tab, setTab] = useState("today");
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
   const [reasonOpen, setReasonOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [policyText, setPolicyText] = useState("");
   const [submittingCancel, setSubmittingCancel] = useState(false);
-
-  // details
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState(null);
 
-  // subscribe (as host + as guest, then merge)
+  // Auth state listener
   useEffect(() => {
-    if (!uid) { setRows([]); setLoading(false); return; }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setAuthUser(user || null);
+      setAuthLoading(false);
+    });
+    
+    return unsubscribe;
+  }, []);
+
+  const uid = authUser?.uid || null;
+
+  // Bookings subscription
+  useEffect(() => {
+    if (!uid) {
+      setRows([]);
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
 
-    const qHost = query(collection(database, "bookings"), where("hostId", "==", uid));
-    const qGuest = query(collection(database, "bookings"), where("uid", "==", uid));
+    const hostQuery = query(collection(database, "bookings"), where("hostId", "==", uid));
+    const guestQuery = query(collection(database, "bookings"), where("uid", "==", uid));
 
-    const current = new Map();
+    const currentBookings = new Map();
 
-    const apply = (docs) => {
-      docs.forEach((d) => current.set(d.id, { id: d.id, ...d.data() }));
-      const merged = Array.from(current.values());
+    const applyBookings = (docs) => {
+      docs.forEach((doc) => currentBookings.set(doc.id, { id: doc.id, ...doc.data() }));
+      const merged = Array.from(currentBookings.values());
+      
       merged.sort((a, b) => {
-        const as = a?.createdAt?.seconds || 0;
-        const bs = b?.createdAt?.seconds || 0;
-        const an = a?.createdAt?.nanoseconds || 0;
-        const bn = b?.createdAt?.nanoseconds || 0;
-        return bs === as ? bn - an : bs - as;
+        const aSeconds = a?.createdAt?.seconds || 0;
+        const bSeconds = b?.createdAt?.seconds || 0;
+        const aNanos = a?.createdAt?.nanoseconds || 0;
+        const bNanos = b?.createdAt?.nanoseconds || 0;
+        return bSeconds === aSeconds ? bNanos - aNanos : bSeconds - aSeconds;
       });
+      
       setRows(merged);
       setLoading(false);
     };
 
-    const unsubHost = onSnapshot(qHost, (snap) => apply(snap.docs), () => setLoading(false));
-    const unsubGuest = onSnapshot(qGuest, (snap) => apply(snap.docs), () => setLoading(false));
+    const unsubscribeHost = onSnapshot(hostQuery, (snapshot) => applyBookings(snapshot.docs));
+    const unsubscribeGuest = onSnapshot(guestQuery, (snapshot) => applyBookings(snapshot.docs));
 
-    return () => { unsubHost(); unsubGuest(); };
+    return () => {
+      unsubscribeHost();
+      unsubscribeGuest();
+    };
   }, [uid]);
 
-  // grouping logic
+  // Date helpers for filtering
   const todayKey = (() => {
     const d = new Date();
-    return d.toISOString().slice(0, 10); // YYYY-MM-DD
+    return d.toISOString().slice(0, 10);
   })();
 
-  const isDateToday = (d) => {
+  const isDateToday = (date) => {
     try {
-      const k = new Date(`${d}T00:00:00`).toISOString().slice(0, 10);
-      return k === todayKey;
-    } catch { return false; }
+      const key = new Date(`${date}T00:00:00`).toISOString().slice(0, 10);
+      return key === todayKey;
+    } catch {
+      return false;
+    }
   };
 
   const isStayToday = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return false;
-    const s = checkIn?.toDate ? checkIn.toDate() : new Date(checkIn);
-    const e = checkOut?.toDate ? checkOut.toDate() : new Date(checkOut);
-    const t = new Date();
-    const a = new Date(s.getFullYear(), s.getMonth(), s.getDate());
-    const b = new Date(e.getFullYear(), e.getMonth(), e.getDate());
-    const x = new Date(t.getFullYear(), t.getMonth(), t.getDate());
-    return x >= a && x < b;
+    
+    const start = checkIn?.toDate ? checkIn.toDate() : new Date(checkIn);
+    const end = checkOut?.toDate ? checkOut.toDate() : new Date(checkOut);
+    const today = new Date();
+    
+    const startDate = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+    const endDate = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    
+    return todayDate >= startDate && todayDate < endDate;
   };
 
-  const cancelled = useMemo(
+  // Filtered bookings
+  const cancelledBookings = useMemo(
     () =>
       rows.filter(
-        (r) =>
-          ["cancelled", "canceled", "rejected"].includes((r.status || "").toLowerCase()) ||
-          ["refunded", "failed"].includes((r.paymentStatus || "").toLowerCase())
+        (booking) =>
+          ["cancelled", "canceled", "rejected"].includes((booking.status || "").toLowerCase()) ||
+          ["refunded", "failed"].includes((booking.paymentStatus || "").toLowerCase())
       ),
     [rows]
   );
 
-  const today = useMemo(
+  const todayBookings = useMemo(
     () =>
-      rows
-        .filter((r) => {
-          const cat = normalizeCategory(r.listing?.category || r.listingCategory || "");
-          if (["cancelled", "canceled", "rejected"].includes((r.status || "").toLowerCase())) return false;
-          if (cat.startsWith("home")) return isStayToday(r.checkIn, r.checkOut);
-          if (r?.schedule?.date) return isDateToday(r.schedule.date);
-          return false;
-        }),
-    [rows]
-  );
-
-  const upcoming = useMemo(
-    () =>
-      rows.filter((r) => {
-        if (["cancelled", "canceled", "rejected"].includes((r.status || "").toLowerCase())) return false;
-        const cat = normalizeCategory(r.listing?.category || r.listingCategory || "");
-        const now = new Date();
-        if (cat.startsWith("home")) {
-          const ci = r.checkIn?.toDate?.() ?? null;
-          return ci && ci > now && !isStayToday(r.checkIn, r.checkOut);
-        }
-        if (r?.schedule?.date) {
-          const dt = new Date(`${r.schedule.date}T${r.schedule.time || "00:00"}`);
-          return dt > now && !isDateToday(r.schedule.date);
-        }
+      rows.filter((booking) => {
+        const status = (booking.status || "").toLowerCase();
+        if (["cancelled", "canceled", "rejected"].includes(status)) return false;
+        
+        const category = normalizeCategory(booking.listing?.category || booking.listingCategory || "");
+        
+        if (category.startsWith("home")) return isStayToday(booking.checkIn, booking.checkOut);
+        if (booking?.schedule?.date) return isDateToday(booking.schedule.date);
+        
         return false;
       }),
     [rows]
   );
 
-  const tabbed = tab === "today" ? today : tab === "upcoming" ? upcoming : cancelled;
+  const upcomingBookings = useMemo(
+    () =>
+      rows.filter((booking) => {
+        const status = (booking.status || "").toLowerCase();
+        if (["cancelled", "canceled", "rejected"].includes(status)) return false;
+        
+        const category = normalizeCategory(booking.listing?.category || booking.listingCategory || "");
+        const now = new Date();
+        
+        if (category.startsWith("home")) {
+          const checkIn = booking.checkIn?.toDate?.() ?? null;
+          return checkIn && checkIn > now && !isStayToday(booking.checkIn, booking.checkOut);
+        }
+        
+        if (booking?.schedule?.date) {
+          const scheduleTime = new Date(`${booking.schedule.date}T${booking.schedule.time || "00:00"}`);
+          return scheduleTime > now && !isDateToday(booking.schedule.date);
+        }
+        
+        return false;
+      }),
+    [rows]
+  );
 
-  /* ---------- cancel flow handlers ---------- */
+  const tabbedBookings = tab === "today" ? todayBookings : 
+                        tab === "upcoming" ? upcomingBookings : 
+                        cancelledBookings;
+
+  // Cancel flow handlers
   const loadPolicyForBooking = async (booking) => {
-    if (booking?.listing?.cancellationPolicy) return String(booking.listing.cancellationPolicy);
+    if (booking?.listing?.cancellationPolicy) {
+      return String(booking.listing.cancellationPolicy);
+    }
+    
     if (booking?.listingId) {
       try {
-        const ld = await getDoc(doc(database, "listings", booking.listingId));
-        if (ld.exists()) {
-          const d = ld.data();
-          return d?.cancellationPolicy || d?.policy?.cancellation || d?.cancellation_policy || "";
+        const listingDoc = await getDoc(doc(database, "listings", booking.listingId));
+        if (listingDoc.exists()) {
+          const data = listingDoc.data();
+          return data?.cancellationPolicy || 
+                 data?.policy?.cancellation || 
+                 data?.cancellation_policy || 
+                 "";
         }
-      } catch (e) { console.error("Fetch policy failed:", e); }
+      } catch (error) {
+        console.error("Failed to fetch cancellation policy:", error);
+      }
     }
+    
     return "";
   };
 
@@ -1377,6 +1509,7 @@ export default function TodayTab() {
   const handleReasonNext = async (reasonText) => {
     setCancelReason(reasonText);
     setReasonOpen(false);
+    
     const policy = await loadPolicyForBooking(cancelTarget);
     setPolicyText(policy || "");
     setConfirmOpen(true);
@@ -1384,37 +1517,42 @@ export default function TodayTab() {
 
   const handleConfirmCancel = async () => {
     if (!cancelTarget || !cancelTarget.id) return;
+    
     setSubmittingCancel(true);
+    
     try {
-      const me = auth.currentUser;
-      if (!me) throw new Error("Not signed in");
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Not signed in");
+      
       await updateDoc(doc(database, "bookings", cancelTarget.id), {
         status: "cancelled",
         cancelReason: cancelReason,
         cancelledAt: serverTimestamp(),
-        uid: me.uid, // inject current user's uid to satisfy rules
+        uid: currentUser.uid,
         updatedAt: serverTimestamp(),
       });
+      
       setConfirmOpen(false);
       setCancelTarget(null);
       setCancelReason("");
       setPolicyText("");
-    } catch (e) {
-      console.error("Cancel booking failed:", e);
+    } catch (error) {
+      console.error("Cancel booking failed:", error);
       alert("Failed to cancel booking. Please try again.");
     } finally {
       setSubmittingCancel(false);
     }
   };
 
-  /* ---------- details modal handlers ---------- */
+  // Details modal handlers
   const startDetails = (booking) => {
     setDetailsTarget(booking);
     setDetailsOpen(true);
   };
+
   const closeDetails = () => setDetailsOpen(false);
 
-  /* ---------- UI ---------- */
+  // Render loading state
   if (authLoading) {
     return (
       <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center">
@@ -1423,9 +1561,15 @@ export default function TodayTab() {
     );
   }
 
+  const tabs = [
+    { key: "today", label: "Today" },
+    { key: "upcoming", label: "Upcoming" },
+    { key: "cancelled", label: "Cancelled" },
+  ];
+
   return (
     <div className="space-y-6">
-      {/* Section header + tabs */}
+      {/* Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold text-foreground">Today</h2>
@@ -1433,58 +1577,60 @@ export default function TodayTab() {
         </div>
 
         <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm self-start">
-          {[
-            { key: "today", label: "Today" },
-            { key: "upcoming", label: "Upcoming" },
-            { key: "cancelled", label: "Cancelled" },
-          ].map((t) => {
-            const active = tab === t.key;
+          {tabs.map((tabItem) => {
+            const isActive = tab === tabItem.key;
             return (
               <button
-                key={t.key}
-                onClick={() => setTab(t.key)}
+                key={tabItem.key}
+                onClick={() => setTab(tabItem.key)}
                 className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
-                  active
+                  isActive
                     ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow"
                     : "text-gray-700 hover:bg-gray-50"
                 }`}
               >
-                {t.label}
+                {tabItem.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Grid */}
+      {/* Bookings Grid */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <CardSkeleton key={i} />
+          {Array.from({ length: 6 }).map((_, index) => (
+            <CardSkeleton key={index} />
           ))}
         </div>
-      ) : tabbed.length === 0 ? (
+      ) : tabbedBookings.length === 0 ? (
         <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center">
           <p className="text-muted-foreground">No bookings found.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl-grid-cols-3 xl:grid-cols-3 gap-6">
-          {tabbed.map((b) => {
-            const cat = normalizeCategory(b.listing?.category || b.listingCategory || "");
-            const common = { b, onRequestCancel: startCancel, onRequestDetails: startDetails };
-            if (cat.startsWith("experience")) return <ExperienceCard key={b.id} {...common} />;
-            if (cat.startsWith("service")) return <ServiceCard key={b.id} {...common} />;
-            return <HomesCard key={b.id} {...common} />;
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+          {tabbedBookings.map((booking) => {
+            const category = normalizeCategory(booking.listing?.category || booking.listingCategory || "");
+            const commonProps = {
+              b: booking,
+              onRequestCancel: startCancel,
+              onRequestDetails: startDetails,
+            };
+
+            if (category.startsWith("experience")) return <ExperienceCard key={booking.id} {...commonProps} />;
+            if (category.startsWith("service")) return <ServiceCard key={booking.id} {...commonProps} />;
+            return <HomesCard key={booking.id} {...commonProps} />;
           })}
         </div>
       )}
 
-      {/* Cancel flow (portaled) */}
+      {/* Cancel Flow Modals */}
       <CancelReasonModal
         open={reasonOpen}
         onClose={() => setReasonOpen(false)}
         onNext={handleReasonNext}
       />
+      
       <CancelConfirmModal
         open={confirmOpen}
         onBack={() => {
@@ -1497,14 +1643,14 @@ export default function TodayTab() {
         submitting={submittingCancel}
       />
 
-      {/* Details modal (portaled) */}
+      {/* Details Modal */}
       <BookingDetailsModal
         open={detailsOpen}
         booking={detailsTarget}
         onClose={closeDetails}
-        onRequestCancel={(b) => {
+        onRequestCancel={(booking) => {
           closeDetails();
-          startCancel(b);
+          startCancel(booking);
         }}
       />
     </div>

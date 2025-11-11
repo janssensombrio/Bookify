@@ -16,6 +16,7 @@ import {
   Plus,
   Trash2,
   BadgeDollarSign,
+  BadgePercent,
   ShieldCheck,
   ShieldAlert,
   LocateFixed,
@@ -52,6 +53,9 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
           const langs = Array.isArray(data.languages) ? data.languages : [];
           const photos = Array.isArray(data.photos) ? data.photos : [];
           const schedule = Array.isArray(data.schedule) ? data.schedule : [];
+          // NEW: normalize discount fields
+          const discountType = data.discountType || ""; // "percentage" | "fixed" | ""
+          const discountValue = Number(data.discountValue || 0);
           setExperience({
             title: "",
             description: "",
@@ -67,11 +71,15 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
             photos: [],
             schedule: [],
             ageRestriction: { min: 0, max: 100 },
+            discountType: "",
+            discountValue: 0,
             ...data,
             ageRestriction: { min: Number(age.min ?? 0), max: Number(age.max ?? 100) },
             languages: langs,
             photos,
             schedule: schedule.map((s) => ({ date: s.date || "", time: s.time || "" })),
+            discountType,
+            discountValue,
           });
         }
       } catch (e) {
@@ -146,7 +154,17 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
         photos: [...existing, ...uploadedUrls],
         languages: (experience.languages || []).map((l) => String(l)),
         schedule: (experience.schedule || []).map((s) => ({ date: s.date || "", time: s.time || "" })),
+        // NEW: persist discount fields cleanly
+        discountType: (experience.discountType === "percentage" || experience.discountType === "fixed") ? experience.discountType : "",
+        discountValue: Number(experience.discountValue || 0),
       };
+
+      // If discount is invalid/empty, reset both fields
+      const hasDiscount = (payload.discountType && payload.discountValue > 0);
+      if (!hasDiscount) {
+        payload.discountType = "";
+        payload.discountValue = 0;
+      }
 
       // Persist
       const ref = doc(database, "listings", listingId);
@@ -176,6 +194,13 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
   const invalidAge = minAge > maxAge || minAge < 0 || maxAge < 0;
 
   const isOnline = (experience?.experienceType || "") === "online";
+
+  // Discount helpers
+  const discountType = experience?.discountType || ""; // '', 'percentage', 'fixed'
+  const discountValue = Number(experience?.discountValue || 0);
+  const price = Number(experience?.price || 0);
+  const pctInvalid = discountType === "percentage" && (discountValue <= 0 || discountValue > 100);
+  const fixedInvalid = discountType === "fixed" && discountValue < 0;
 
   // ---------- Render ----------
   if (!open) return null;
@@ -647,6 +672,78 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
                     />
                   </section>
 
+                  {/* NEW: Discount editor */}
+                  <section className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 shadow p-5">
+                    <label className="block text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                      <BadgePercent className="w-4.5 h-4.5" /> Discount (optional)
+                    </label>
+
+                    {/* Type selector */}
+                    <div className="grid grid-cols-3 gap-2" role="tablist" aria-label="Discount type">
+                      {[
+                        { key: "", label: "None" },
+                        { key: "percentage", label: "Percentage (%)" },
+                        { key: "fixed", label: "Fixed (₱)" },
+                      ].map(({ key, label }) => {
+                        const on = (discountType || "") === key;
+                        return (
+                          <button
+                            key={key || "none"}
+                            type="button"
+                            role="tab"
+                            aria-selected={on}
+                            onClick={() => setField("discountType", key)}
+                            className={`w-full rounded-2xl border px-4 py-2 text-sm font-semibold ${on ? "border-blue-500 bg-blue-50/80 shadow" : "border-gray-200 bg-white/70 hover:bg-gray-50"}`}
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Value input */}
+                    {discountType !== "" && (
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 mb-1">{discountType === "percentage" ? "Percent off" : "Amount off (₱)"}</label>
+                          <input
+                            type="number"
+                            min={discountType === "percentage" ? 1 : 0}
+                            max={discountType === "percentage" ? 100 : undefined}
+                            step={discountType === "percentage" ? 1 : 1}
+                            className={`w-full rounded-2xl border px-4 py-3 bg-white/90 ${pctInvalid || fixedInvalid ? "border-red-400" : "border-gray-300"}`}
+                            value={Number(discountValue)}
+                            onChange={(e) => setField("discountValue", Number(e.target.value || 0))}
+                            placeholder={discountType === "percentage" ? "e.g., 10" : "e.g., 200"}
+                          />
+                          {pctInvalid && (
+                            <p className="mt-1 text-xs text-red-600">Enter a value between 1 and 100.</p>
+                          )}
+                          {fixedInvalid && (
+                            <p className="mt-1 text-xs text-red-600">Amount cannot be negative.</p>
+                          )}
+                        </div>
+
+                        {/* Tiny preview/help */}
+                        <div className="text-xs text-gray-700 bg-white/70 border border-gray-200 rounded-2xl p-3">
+                          {discountType === "percentage" ? (
+                            <>
+                              <p className="font-semibold">How it applies</p>
+                              <p>Percentage discounts apply <span className="font-medium">per participant</span>.</p>
+                              <p className="mt-1">Price per person: ₱{price.toLocaleString()} → ₱{Math.max(0, Math.round(price * (1 - (discountValue || 0) / 100))).toLocaleString()}</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="font-semibold">How it applies</p>
+                              <p>Fixed discounts apply <span className="font-medium">once per booking</span>, not per person.</p>
+                              <p className="mt-1">Example: 2 people subtotal = ₱{(price * 2).toLocaleString()} − ₱{Number(discountValue || 0).toLocaleString()} = ₱{Math.max(0, price * 2 - Number(discountValue || 0)).toLocaleString()}</p>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
                   {/* Requirements & Cancellation */}
                   <section className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 shadow p-5 grid gap-4">
                     <div>
@@ -691,9 +788,9 @@ export default function ExperienceEditModal({ open, onClose, listingId, refreshL
               </button>
               <button
                 type="button"
-                disabled={saving || invalidAge}
+                disabled={saving || invalidAge || pctInvalid || fixedInvalid}
                 onClick={handleSave}
-                className={`inline-flex items-center justify-center rounded-full px-6 py-2.5 text-sm font-semibold text-white shadow-md ${saving || invalidAge ? "opacity-60 cursor-not-allowed bg-blue-500" : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700"}`}
+                className={`inline-flex items-center justify-center rounded-full px-6 py-2.5 text-sm font-semibold text-white shadow-md ${saving || invalidAge || pctInvalid || fixedInvalid ? "opacity-60 cursor-not-allowed bg-blue-500" : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700"}`}
               >
                 <Save className="w-4 h-4 mr-2" />
                 {saving ? "Saving…" : "Save changes"}

@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+// src/pages/.../components/sidebar.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import {
   Menu,
@@ -8,84 +9,58 @@ import {
   Calendar,
   Heart,
   Wallet,
-  Settings,
   LogOut,
   User,
-  MessageSquareText, // ← added
+  MessageSquareText,
 } from "lucide-react";
 import { auth } from "../../../config/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  where,
+} from "firebase/firestore";
+import { database } from "../../../config/firebase";
 import { useSidebar } from "../../../context/SidebarContext";
 import LogoutConfirmationModal from "../../host/components/logout-confirmation-modal";
 
-const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
+const tsToMs = (ts) => {
+  if (!ts) return 0;
+  const sec = ts.seconds ?? 0;
+  const ns = ts.nanoseconds ?? 0;
+  return sec * 1000 + Math.floor(ns / 1e6);
+};
+
+const Sidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
-  const user = auth.currentUser;
 
-  // Prefer prop (keeps in sync with Explore), otherwise read localStorage
-  const isHost =
-    typeof isHostProp === "boolean"
-      ? isHostProp
-      : (typeof window !== "undefined" &&
-          localStorage.getItem("isHost") === "true");
-
-  // ✅ Detect if we’re in the host area (e.g., /hostpage or /host/*)
-  const isOnHostArea =
-    location.pathname.toLowerCase() === "/hostpage" ||
-    location.pathname.toLowerCase().startsWith("/host");
-
-  // ✅ One label for all cases
-  const actionLabel = isOnHostArea
-    ? "Switch to Travelling"
-    : isHost
-    ? "Switch to Hosting"
-    : "Become a Host";
-
-  const navItems = [
-    { icon: Home, label: "Dashboard", path: "/dashboard" },
-    { icon: Compass, label: "Explore", path: "/explore" },
-    { icon: Calendar, label: "Bookings", path: "/bookings" },
-    { icon: MessageSquareText, label: "Messages", path: "/guest-messages" }, // ← new shortcut
-    { icon: Heart, label: "Favorites", path: "/favorites" },
-    { icon: Wallet, label: "E-Wallet", path: "/wallet" },
-    { icon: Settings, label: "Settings", path: "/settings" },
-  ];
+  // Auth
+  const [currentUid, setCurrentUid] = useState(null);
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => setCurrentUid(u?.uid || null));
+    return () => unsub();
+  }, []);
 
   const handleNavClick = (path) => {
     navigate(path);
-    setSidebarOpen(false); // close drawer on mobile
+    // close drawer on mobile
+    const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
+    if (isMobile) setSidebarOpen(false);
   };
 
   // Prevent background scroll when sidebar is open on mobile
   useEffect(() => {
     const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
-    if (sidebarOpen && isMobile) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
+    document.body.style.overflow = sidebarOpen && isMobile ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
     };
   }, [sidebarOpen]);
-
-  // ✅ Host/Travel action handler
-  const triggerHostAction = () => {
-    if (isOnHostArea) {
-      // On host pages → go to traveller mode
-      navigate("/explore");
-    } else if (onHostClick) {
-      // Use parent-provided logic (modal/navigate)
-      onHostClick();
-    } else {
-      // Fallback
-      if (isHost) navigate("/hostpage");
-      else navigate("/host-setup");
-    }
-    setSidebarOpen(false);
-  };
 
   const handleLogout = async () => {
     try {
@@ -98,6 +73,139 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
     }
   };
 
+  const onMessagesPage = location.pathname.startsWith("/guest-messages");
+
+  // ---------------- Unread indicator data ----------------
+  const [lastSeenAtMs, setLastSeenAtMs] = useState(0);
+  const [lastSeenLoaded, setLastSeenLoaded] = useState(false);
+
+  const [latestInboundMs, setLatestInboundMs] = useState(0);
+  const [inboundLoaded, setInboundLoaded] = useState(false);
+
+  // Watch user's lastSeenAt from users/{uid}.messagesLastSeenAt
+  useEffect(() => {
+    setLastSeenLoaded(false);
+    setLastSeenAtMs(0);
+    if (!currentUid) {
+      setLastSeenLoaded(true);
+      return;
+    }
+    const userRef = doc(database, "users", currentUid);
+    const unsub = onSnapshot(
+      userRef,
+      (snap) => {
+        const data = snap.data() || {};
+        setLastSeenAtMs(tsToMs(data.messagesLastSeenAt));
+        setLastSeenLoaded(true);
+      },
+      (err) => {
+        console.error("lastSeen snapshot error:", err);
+        setLastSeenLoaded(true);
+      }
+    );
+    return () => unsub();
+  }, [currentUid]);
+
+  // Watch inbound messages (receiverId == uid) and compute latest inbound ms
+  useEffect(() => {
+    setInboundLoaded(false);
+    setLatestInboundMs(0);
+    if (!currentUid) {
+      setInboundLoaded(true);
+      return;
+    }
+    const col = collection(database, "messages");
+    const q = query(col, where("receiverId", "==", currentUid));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        let maxMs = 0;
+        snap.forEach((d) => {
+          const m = d.data();
+          const ms = tsToMs(m.timestamp);
+          if (ms > maxMs) maxMs = ms;
+        });
+        setLatestInboundMs(maxMs);
+        setInboundLoaded(true);
+      },
+      (err) => {
+        console.error("inbound snapshot error:", err);
+        setInboundLoaded(true);
+      }
+    );
+    return () => unsub();
+  }, [currentUid]);
+
+  // ---------------- Optimistic "seen" grace window (anti-flicker) ----------------
+  const optimisticSeenRef = useRef(0);                  // max seen ms we trust locally
+  const [optimisticUntil, setOptimisticUntil] = useState(0); // epoch ms until trust ends
+  const prevOnMessagesRef = useRef(false);
+
+  // Listen for optimistic pings from Messages page
+  useEffect(() => {
+    const handler = (e) => {
+      const ms = e?.detail?.ms || Date.now();
+      optimisticSeenRef.current = Math.max(optimisticSeenRef.current, ms);
+      setOptimisticUntil(Date.now() + 2500); // 2.5s grace
+    };
+    window.addEventListener("messages:optimistic-seen", handler);
+    return () => window.removeEventListener("messages:optimistic-seen", handler);
+  }, []);
+
+  // When leaving the Messages page, begin short optimistic window
+  useEffect(() => {
+    const wasOn = prevOnMessagesRef.current;
+    if (wasOn && !onMessagesPage) {
+      optimisticSeenRef.current = Math.max(
+        optimisticSeenRef.current,
+        latestInboundMs || Date.now()
+      );
+      setOptimisticUntil(Date.now() + 2500);
+    }
+    prevOnMessagesRef.current = onMessagesPage;
+  }, [onMessagesPage, latestInboundMs]);
+
+  // Clear the optimistic window after TTL
+  useEffect(() => {
+    if (!optimisticUntil) return;
+    const delay = Math.max(0, optimisticUntil - Date.now());
+    const t = setTimeout(() => setOptimisticUntil(0), delay + 20);
+    return () => clearTimeout(t);
+  }, [optimisticUntil]);
+
+  const activeOptimistic =
+    optimisticUntil && Date.now() < optimisticUntil
+      ? optimisticSeenRef.current
+      : 0;
+
+  const effectiveLastSeenMs = Math.max(lastSeenAtMs || 0, activeOptimistic || 0);
+
+  const hasUnread = useMemo(() => {
+    if (!currentUid) return false;
+    if (onMessagesPage) return false; // never show while viewing Messages
+    if (!inboundLoaded || !lastSeenLoaded) return false; // wait for data
+    if (latestInboundMs === 0) return false; // no inbound messages ever
+    return latestInboundMs > effectiveLastSeenMs;
+  }, [
+    currentUid,
+    onMessagesPage,
+    inboundLoaded,
+    lastSeenLoaded,
+    latestInboundMs,
+    effectiveLastSeenMs,
+  ]);
+
+  // ✅ Profile is now a normal nav item
+  const navItems = [
+    { icon: Home, label: "Dashboard", path: "/dashboard" },
+    { icon: Compass, label: "Explore", path: "/explore" },
+    { icon: Calendar, label: "Bookings", path: "/bookings" },
+    { icon: MessageSquareText, label: "Messages", path: "/guest-messages" },
+    { icon: Heart, label: "Favorites", path: "/favorites" },
+    { icon: User, label: "Profile", path: "/profile" }, // ← added
+    { icon: Wallet, label: "E-Wallet", path: "/wallet" },
+  ];
+
   return (
     <>
       <aside
@@ -108,36 +216,19 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
           flex flex-col overflow-hidden
           transition-[transform,width] duration-300 will-change-transform
           w-72
-
-          /* Background + borders by breakpoint */
-          bg-white md:bg-transparent md:glass-dark
-          border-r border-gray-200 md:border-white/10
+          bg-white md:bg-white
+          border-r border-gray-200
           shadow-lg md:shadow-none
-
-          /* Mobile: off-canvas; Desktop: always mounted */
           ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}
           md:translate-x-0
-
-          /* Desktop width toggle */
           ${sidebarOpen ? "md:w-72" : "md:w-20"}
         `}
       >
-        {/* Mobile close button */}
-        <div className="flex justify-end p-3 border-b border-white/10 md:hidden">
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-            aria-label="Close menu"
-          >
-            <X size={22} />
-          </button>
-        </div>
-
-        {/* Desktop toggle button */}
-        <div className="hidden md:flex justify-end p-3 border-b border-white/10">
+        {/* Top bar with toggle (works for mobile + desktop) */}
+        <div className="flex justify-end p-3 border-b border-gray-200">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-expanded={sidebarOpen}
             aria-controls="app-sidebar"
@@ -146,52 +237,24 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
           </button>
         </div>
 
-        {/* Profile (only when expanded) */}
-        {sidebarOpen && (
-          <div className="p-5 border-b border-white/10">
-            <div className="glass rounded-3xl p-4 mb-4 flex flex-col items-center text-center">
-              {user?.photoURL ? (
-                <img
-                  src={user.photoURL}
-                  alt="User avatar"
-                  className="w-16 h-16 rounded-full object-cover shadow-md mb-3"
-                />
-              ) : (
-                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center mb-3 shadow-md">
-                  <User className="text-white w-7 h-7" />
-                </div>
-              )}
-
-              <h3 className="font-semibold text-foreground">
-                {user?.displayName || "Guest User"}
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                {user?.email || "guest@example.com"}
-              </p>
-
-              <button
-                onClick={() => navigate("/profile")}
-                className="w-full mt-4 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-2xl h-9 transition"
-              >
-                View Profile
-              </button>
-
-              {/* 👉 Mobile-only action under View Profile */}
-              <button
-                onClick={triggerHostAction}
-                className="w-full mt-3 md:hidden bg-blue-600 hover:bg-blue-700 text-white rounded-2xl h-9 transition"
-                aria-label={actionLabel}
-              >
-                {actionLabel}
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path;
+
+            const iconNode = (
+              <div className="relative inline-flex">
+                <item.icon size={20} />
+                {/* Red dot for Messages only */}
+                {item.path === "/guest-messages" && hasUnread && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-1 -right-1 inline-block w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-white"
+                  />
+                )}
+              </div>
+            );
+
             return (
               <button
                 key={item.path}
@@ -199,12 +262,12 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 ${
                   isActive
                     ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
-                    : "text-foreground hover:bg-white/10"
+                    : "text-foreground hover:bg-gray-100"
                 }`}
                 title={item.label}
                 aria-current={isActive ? "page" : undefined}
               >
-                <item.icon size={20} />
+                {iconNode}
                 {sidebarOpen && <span className="font-medium">{item.label}</span>}
               </button>
             );
@@ -212,10 +275,10 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
         </nav>
 
         {/* Logout */}
-        <div className="p-4 border-t border-white/10">
+        <div className="p-4 border-t border-gray-200">
           <button
             onClick={() => setIsLogoutModalOpen(true)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-foreground hover:bg-white/10 transition-all duration-200"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-foreground hover:bg-gray-100 transition-all duration-200"
           >
             <LogOut size={20} />
             {sidebarOpen && <span className="font-medium">Log Out</span>}
@@ -232,7 +295,6 @@ const Sidebar = ({ onHostClick, isHost: isHostProp } = {}) => {
         />
       )}
 
-      {/* Logout Modal */}
       <LogoutConfirmationModal
         open={isLogoutModalOpen}
         onClose={() => setIsLogoutModalOpen(false)}

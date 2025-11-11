@@ -27,18 +27,21 @@ function ModalPortal({ children }) {
 
 function useBodyScrollLock(locked) {
   useEffect(() => {
-    const { overflow, paddingRight } = document.body.style;
+    const prevOverflow = document.body.style.overflow;
+    const prevPaddingRight = document.body.style.paddingRight;
     const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+
     if (locked) {
       document.body.style.overflow = "hidden";
       if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
     } else {
-      document.body.style.overflow = overflow || "";
-      document.body.style.paddingRight = paddingRight || "";
+      document.body.style.overflow = prevOverflow || "";
+      document.body.style.paddingRight = prevPaddingRight || "";
     }
+
     return () => {
-      document.body.style.overflow = overflow || "";
-      document.body.style.paddingRight = paddingRight || "";
+      document.body.style.overflow = prevOverflow || "";
+      document.body.style.paddingRight = prevPaddingRight || "";
     };
   }, [locked]);
 }
@@ -49,19 +52,16 @@ export const Explore = () => {
 
   const [isHost, setIsHost] = useState(localStorage.getItem("isHost") === "true");
 
-  // 🔔 Always gate with policies until they *actually* become a host
   const [showPoliciesModal, setShowPoliciesModal] = useState(false);
   const [showHostModal, setShowHostModal] = useState(false);
 
   const [selectedCategory, setSelectedCategory] = useState("Homes");
   const [listings, setListings] = useState([]);
-  const [loading, setLoading] = useState(true); // UI-only
+  const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Lock body scroll when ANY modal is open
   useBodyScrollLock(showHostModal || showPoliciesModal);
 
-  // Check host status
   useEffect(() => {
     const checkIfHost = async () => {
       const user = auth.currentUser;
@@ -82,18 +82,15 @@ export const Explore = () => {
   const handleOpenPoliciesModal = () => setShowPoliciesModal(true);
   const handleClosePoliciesModal = () => setShowPoliciesModal(false);
 
-  // ✅ After agreeing, immediately open category picker (no localStorage remember)
   const handleAgreePolicies = () => {
     setShowPoliciesModal(false);
     setShowHostModal(true);
   };
 
-  // ✅ Triggered by sidebar/nav button
   const handleHostClick = () => {
     if (isHost) {
       navigate("/hostpage");
     } else {
-      // Always show policies until they actually become a host
       handleOpenPoliciesModal();
     }
   };
@@ -117,7 +114,6 @@ export const Explore = () => {
     fetchListings(selectedCategory);
   }, [selectedCategory]);
 
-  // ----- Skeletons (UI only) -----
   const SearchSkeleton = () => (
     <div className="
       w-full max-w-4xl mx-auto
@@ -162,7 +158,6 @@ export const Explore = () => {
     </div>
   );
 
-  // ----- Mobile bottom nav (category switcher) -----
   const MobileCategoryBar = () => {
     const items = [
       { key: "Homes", icon: MapPin, label: "Homes" },
@@ -205,16 +200,13 @@ export const Explore = () => {
 
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
-      {/* Sidebar */}
       <Sidebar onHostClick={handleHostClick} isHost={isHost} />
 
-      {/* Right content area */}
       <div
         className={`flex-1 flex flex-col transition-[margin] duration-300
           ml-0 ${sidebarOpen ? "md:ml-72" : "md:ml-20"}
         `}
       >
-        {/* 🧭 Navbar */}
         <header
           className={`
             fixed top-0 right-0 z-30
@@ -224,7 +216,6 @@ export const Explore = () => {
           `}
         >
           <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
-            {/* Left: hamburger + logo */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -232,9 +223,7 @@ export const Explore = () => {
                 aria-controls="app-sidebar"
                 aria-expanded={sidebarOpen}
                 onClick={() => setSidebarOpen(true)}
-                className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${
-                  sidebarOpen ? "hidden" : ""
-                }`}
+                className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${sidebarOpen ? "hidden" : ""}`}
               >
                 <Menu size={20} />
               </button>
@@ -246,7 +235,6 @@ export const Explore = () => {
               </div>
             </div>
 
-            {/* Desktop category tabs */}
             <nav className="hidden md:flex space-x-6">
               {["Homes", "Experiences", "Services"].map((cat, index) => (
                 <button
@@ -266,7 +254,6 @@ export const Explore = () => {
               ))}
             </nav>
 
-            {/* Desktop host action */}
             <button
               onClick={handleHostClick}
               className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
@@ -277,10 +264,8 @@ export const Explore = () => {
           </div>
         </header>
 
-        {/* Spacer below fixed header */}
         <div className="h-[56px] md:h-[56px]" />
 
-        {/* 🏖 Hero */}
         <section className="relative w-full">
           <video
             className="absolute inset-0 w-full h-full object-cover pointer-events-none"
@@ -293,14 +278,12 @@ export const Explore = () => {
             Your browser does not support the video tag.
           </video>
 
-        {/* Search overlay (skeleton while loading) */}
-          <div className="relative z-10 flex items-center justify-center h-[400px] sm:h-[500px]">
+          <div className="relative z-[10] flex items-center justify-center h-[400px] sm:h-[500px]">
             {loading ? <SearchSkeleton /> : <Search />}
           </div>
         </section>
 
-        {/* 🏘 Main */}
-        <main className="relative z-[10] px-6 md:px-12 flex-1 pb-28 md:pb-16">
+        <main className="relative px-6 md:px-12 flex-1 pb-28 md:pb-16">
           {loading ? (
             <>
               <HeadingSkeleton />
@@ -315,32 +298,25 @@ export const Explore = () => {
           )}
         </main>
 
-        {/* Footer */}
         <footer className="bg-white border-t border-gray-200 py-8 text-center text-sm text-gray-500">
           © {new Date().getFullYear()} Bookify · Designed with ✨ Glassmorphism
         </footer>
       </div>
 
-      {/* Mobile bottom category bar */}
       <MobileCategoryBar />
 
-      {/* Host Category Modal — render in a portal ABOVE everything */}
       {showHostModal && (
         <ModalPortal>
-          <div className="fixed inset-0 z-[99999]">
+          <div className="fixed inset-0 z-[1000]">
             <HostCategModal onClose={handleCloseHostModal} onSelectCategory={handleCloseHostModal} />
           </div>
         </ModalPortal>
       )}
 
-      {/* Hosting Policies (always show if user is not host and presses the button) */}
       {showPoliciesModal && (
         <ModalPortal>
-          <div className="fixed inset-0 z-[100000]">
-            <HostPoliciesModal
-              onClose={handleClosePoliciesModal}
-              onAgree={handleAgreePolicies}
-            />
+          <div className="fixed inset-0 z-[1000]">
+            <HostPoliciesModal onClose={handleClosePoliciesModal} onAgree={handleAgreePolicies} />
           </div>
         </ModalPortal>
       )}

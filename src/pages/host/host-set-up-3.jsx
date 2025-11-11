@@ -69,6 +69,10 @@ export const HostSetUpServices = () => {
     recurrence: "",
     price: "",
     pricingType: "",
+    // ↓↓↓ Added discount fields ↓↓↓
+    discountType: "",      // "", "percentage", "fixed"
+    discountValue: 0,      // number
+    // ↑↑↑ Added discount fields ↑↑↑
     cancellationPolicy: "",
     qualifications: "",
     clientRequirements: "",
@@ -106,6 +110,7 @@ export const HostSetUpServices = () => {
       let firstName = fromAuth.firstName || "";
       let lastName  = fromAuth.lastName  || "";
       let photoURL  = user.photoURL || "";
+      const isVerified = true;
   
       // Optional: if you keep a users/{uid} profile doc, prefer its values
       try {
@@ -131,6 +136,7 @@ export const HostSetUpServices = () => {
         lastName,
         photoURL,
         displayName: `${firstName} ${lastName}`.trim() || (user.displayName || ""),
+        isVerified,
         updatedAt: serverTimestamp(),
       };
   
@@ -788,7 +794,7 @@ if (step === 3) {
                 <Plus className="w-5 h-5" />
               </span>
               <div>
-                <h4 className="text-base font-semibold text-gray-900">Add a new slot</h4>
+                <h4 className="text.base font-semibold text-gray-900">Add a new slot</h4>
                 <p className="text-sm text-gray-600">Pick date & time, then save.</p>
               </div>
             </div>
@@ -948,7 +954,7 @@ if (step === 3) {
 }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // STEP 4 — Pricing & Policy (redesigned, responsive, same logic)
+  // STEP 4 — Pricing & Policy (redesigned, responsive, same logic) + Discount
 if (step === 4) {
   const priceChips = [500, 800, 1000, 1500, 2500, 5000];
   const pricingTypes = ["per session", "per hour", "per package"];
@@ -961,6 +967,21 @@ if (step === 4) {
     strict:
       "50% refund up to 7 days before start. No refund within 7 days of the start time.",
   };
+
+  // ── Discount helpers (local to Step 4) ────────────────────────────────────
+  const priceNum = Number(formData.price || 0);
+  const dType = formData.discountType || "";
+  const dVal = Number(formData.discountValue || 0);
+  const discountInvalid =
+    (dType === "percentage" && !(dVal > 0 && dVal <= 100)) ||
+    (dType === "fixed" && !(dVal >= 0 && dVal <= priceNum));
+
+  const effectiveUnitPrice =
+    dType === "percentage"
+      ? Math.max(0, priceNum * (1 - dVal / 100))
+      : dType === "fixed"
+      ? Math.max(0, priceNum - dVal)
+      : priceNum;
 
   return (
     <section
@@ -1039,6 +1060,114 @@ if (step === 4) {
                 );
               })}
             </div>
+          </div>
+
+          {/* Discount (optional) */}
+          <div className="grid gap-2">
+            <label className="text-sm font-semibold text-gray-900">Discount (optional)</label>
+
+            {/* Segmented: None / % / ₱ */}
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { key: "", label: "None" },
+                { key: "percentage", label: "Percentage (%)" },
+                { key: "fixed", label: "Fixed (₱)" },
+              ].map(({ key, label }) => {
+                const on = (formData.discountType || "") === key;
+                return (
+                  <button
+                    key={key || "none"}
+                    type="button"
+                    onClick={() => {
+                      handleChange("discountType", key);
+                      if (!key) handleChange("discountValue", 0);
+                    }}
+                    className={[
+                      "w-full rounded-xl border px-3 py-2.5 text-sm font-semibold transition",
+                      on
+                        ? "border-blue-500 bg-blue-50/80 text-blue-800 shadow"
+                        : "border-gray-200 bg-white/70 hover:bg-gray-50 text-gray-800",
+                    ].join(" ")}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Value input */}
+            {formData.discountType && (
+              <div className="grid gap-2">
+                <div className="relative">
+                  <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 grid place-items-center w-10 h-10 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                    {formData.discountType === "percentage" ? (
+                      <Percent className="w-5 h-5" />
+                    ) : (
+                      <BadgeDollarSign className="w-5 h-5" />
+                    )}
+                  </div>
+                  {formData.discountType === "fixed" && (
+                    <span className="absolute left-14 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">₱</span>
+                  )}
+                  <input
+                    type="number"
+                    min={formData.discountType === "percentage" ? 1 : 0}
+                    max={formData.discountType === "percentage" ? 100 : undefined}
+                    className={`${
+                      formData.discountType === "fixed" ? "pl-20" : "pl-16"
+                    } pr-4 py-3 w-full rounded-2xl border border-gray-300 bg-white/90 text-gray-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500`}
+                    placeholder={formData.discountType === "percentage" ? "e.g., 10" : "e.g., 200"}
+                    value={formData.discountValue}
+                    onChange={(e) => handleChange("discountValue", Number(e.target.value || 0))}
+                  />
+                  {formData.discountType === "percentage" && (
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 font-semibold">%</span>
+                  )}
+                </div>
+
+                {/* Quick chips */}
+                <div className="flex flex-wrap gap-2">
+                  {(formData.discountType === "percentage" ? [5, 10, 15, 20, 25, 30] : [50, 100, 200, 500, 1000]).map((n) => {
+                    const on = Number(formData.discountValue) === n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => handleChange("discountValue", n)}
+                        className={[
+                          "px-3 py-1.5 rounded-full text-xs font-semibold transition",
+                          on
+                            ? "bg-blue-600 text-white shadow shadow-blue-600/30"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200",
+                        ].join(" ")}
+                      >
+                        {formData.discountType === "percentage" ? `${n}%` : `₱${n.toLocaleString()}`}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Validation + preview */}
+                {discountInvalid ? (
+                  <p className="text-xs font-semibold text-red-600">
+                    {formData.discountType === "percentage"
+                      ? "Percentage must be between 1 and 100."
+                      : "Fixed discount cannot exceed the price."}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100 font-semibold">
+                      Effective unit price: ₱{Number.isFinite(effectiveUnitPrice) ? effectiveUnitPrice.toLocaleString() : "0"}
+                    </span>
+                    <span>
+                      {formData.discountType === "percentage"
+                        ? "applied per unit of your chosen pricing type."
+                        : "fixed amount deducted per unit of your chosen pricing type."}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Pricing Type */}
@@ -1189,7 +1318,7 @@ if (step === 4) {
         <button
           type="button"
           onClick={nextStep}
-          disabled={!formData.price || !formData.pricingType || !formData.cancellationPolicy}
+          disabled={!formData.price || !formData.pricingType || !formData.cancellationPolicy || discountInvalid}
           className="
             inline-flex items-center justify-center rounded-full
             bg-gradient-to-r from-blue-500 to-blue-600

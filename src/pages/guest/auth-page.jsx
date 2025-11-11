@@ -1,29 +1,29 @@
 // src/pages/auth/AuthPage.jsx
-import { useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   createUserWithEmailAndPassword,
   updateProfile,
   signOut,
-  getAdditionalUserInfo, // 👈 needed to read Google profile
+  getAdditionalUserInfo,
+  GoogleAuthProvider,
 } from "firebase/auth";
-import {
-  auth,
-  database,
-  googleProvider
-} from "../../config/firebase";
+import { auth, database } from "../../config/firebase";
 import {
   collection,
   getDoc,
   getDocs,
   query,
   where,
-  updateDoc,
   doc,
   setDoc,
   serverTimestamp,
+  updateDoc,
+  increment,
 } from "firebase/firestore";
 
 import BookifyIcon from "../../media/favorite.png";
@@ -39,6 +39,48 @@ const EMAILJS_VERIFY_TEMPLATE_ID =
 const EMAILJS_PUBLIC_KEY =
   process.env.REACT_APP_EMAILJS_PUBLIC_KEY || "hHgssQum5iOFlnJRD";
 const VERIFY_PAGE_PATH = "/verify";
+
+/* ---------------- Signup bonus (NEW) ---------------- */
+const SIGNUP_BONUS_POINTS = 150;
+
+// Persist which Google flow we started, so redirect results can enforce the rule.
+const GOOGLE_FLOW_KEY = "bookify_google_flow"; // "login" | "signup"
+
+// Award 150 pts exactly once per user.
+const awardSignupPointsIfNeeded = async (db, uid, bonus = SIGNUP_BONUS_POINTS) => {
+  try {
+    const pRef = doc(db, "points", uid);
+    const snap = await getDoc(pRef);
+
+    if (!snap.exists()) {
+      await setDoc(pRef, {
+        uid,
+        balance: bonus,
+        updatedAt: serverTimestamp(),
+        signupBonusAt: serverTimestamp(),
+        awarded: { signup150: true },
+      });
+      return true;
+    }
+
+    const data = snap.data() || {};
+    const already = !!data?.awarded?.signup150;
+
+    if (!already) {
+      await updateDoc(pRef, {
+        uid,
+        balance: increment(bonus),
+        updatedAt: serverTimestamp(),
+        signupBonusAt: serverTimestamp(),
+        "awarded.signup150": true,
+      });
+      return true;
+    }
+  } catch (e) {
+    console.error("Signup bonus points failed:", e);
+  }
+  return false;
+};
 
 /* ---------------- small utils ---------------- */
 const genToken = () =>
@@ -64,6 +106,10 @@ const mapFirebaseCodeToMessage = (code) => {
       return "Verification failed (reCAPTCHA). Check Authorized Domains or reCAPTCHA config.";
     case "auth/too-many-requests":
       return "Too many attempts. Please try again later.";
+    case "auth/missing-or-invalid-nonce":
+      return "That sign-in was started twice. Please try again once (don’t double-click).";
+    case "auth/account-exists-with-different-credential":
+      return "An account exists with a different sign-in method. Try email/password or reset password.";
     default:
       return "Something went wrong. See console for details.";
   }
@@ -72,7 +118,7 @@ const mapFirebaseCodeToMessage = (code) => {
 const reportAuthError = (err) => {
   const code = err?.code || err?.error?.message || "unknown";
   const msg = mapFirebaseCodeToMessage(code);
-  console.error("Signup error →", { code, message: err?.message, err });
+  console.error("Signup/Login error →", { code, message: err?.message, err });
   alert(`${msg}\n\n(dev: ${code})`);
 };
 
@@ -109,11 +155,14 @@ const requiredShapeFromUser = (user, extras = {}) => ({
   lastName: extras.lastName ?? "",
   photoURL: user.photoURL || "",
   updatedAt: serverTimestamp(),
-  ...extras.mergeFields, // any optional flags like verified/verifiedAt
+  ...extras.mergeFields,
 });
 
+// Only used for SIGNUP flow. DO NOT call this for LOGIN flow.
 const upsertGoogleUser = async (db, user, result) => {
   const { displayName, firstName, lastName } = deriveNamesFromGoogle(user, result);
+  const info = getAdditionalUserInfo(result);
+  const isNew = !!info?.isNewUser;
 
   const base = requiredShapeFromUser(user, {
     displayName,
@@ -128,14 +177,13 @@ const upsertGoogleUser = async (db, user, result) => {
   const snap = await getDoc(uRef);
 
   if (snap.exists()) {
-    // keep existing createdAt, update the rest + updatedAt
     await setDoc(uRef, base, { merge: true });
   } else {
-    await setDoc(
-      uRef,
-      { ...base, createdAt: serverTimestamp() },
-      { merge: true }
-    );
+    await setDoc(uRef, { ...base, createdAt: serverTimestamp() }, { merge: true });
+  }
+
+  if (isNew) {
+    await awardSignupPointsIfNeeded(db, user.uid, SIGNUP_BONUS_POINTS);
   }
 };
 
@@ -144,36 +192,39 @@ const ensureUserInFirestore = async (db, user) => {
   const snap = await getDoc(uRef);
 
   if (!snap.exists()) {
-    // Create minimal doc on first login (email/password path)
     await setDoc(uRef, {
       uid: user.uid,
       email: user.email || "",
       displayName: user.displayName || (user.email || "").split("@")[0] || "",
-      firstName: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0] || "",
+      firstName:
+        (user.displayName || "").split(" ")[0] ||
+        (user.email || "").split("@")[0] ||
+        "",
       lastName: (user.displayName || "").split(" ").slice(1).join(" "),
       photoURL: user.photoURL || "",
-      verified: false, // your app logic for email/password
+      verified: false,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   } else {
-    // Backfill any missing fields; always bump updatedAt
     const existing = snap.data() || {};
     const patch = {};
-
     const wantKeys = ["uid", "email", "displayName", "firstName", "lastName", "photoURL"];
     const fallback = {
       uid: user.uid,
       email: user.email || "",
-      displayName: existing.displayName || user.displayName || (user.email || "").split("@")[0] || "",
+      displayName:
+        existing.displayName ||
+        user.displayName ||
+        (user.email || "").split("@")[0] ||
+        "",
       firstName:
         existing.firstName ||
         (user.displayName || "").split(" ")[0] ||
         (user.email || "").split("@")[0] ||
         "",
       lastName:
-        existing.lastName ||
-        (user.displayName || "").split(" ").slice(1).join(" "),
+        existing.lastName || (user.displayName || "").split(" ").slice(1).join(" "),
       photoURL: existing.photoURL || user.photoURL || "",
     };
 
@@ -182,10 +233,18 @@ const ensureUserInFirestore = async (db, user) => {
     }
     patch.updatedAt = serverTimestamp();
 
-    if (Object.keys(patch).length) {
-      await setDoc(uRef, patch, { merge: true });
-    }
+    if (Object.keys(patch).length) await setDoc(uRef, patch, { merge: true });
   }
+};
+
+// Helper to check if /users has a record for a given email (case-insensitive)
+const userExistsByEmail = async (db, email) => {
+  const safe = (email || "").trim().toLowerCase();
+  if (!safe) return false;
+  const col = collection(db, "users");
+  const qUsers = query(col, where("email", "==", safe));
+  const snap = await getDocs(qUsers);
+  return !snap.empty;
 };
 
 /* ============================== Component ============================== */
@@ -208,9 +267,56 @@ export const AuthPage = () => {
 
   const [pendingGoogleAuth, setPendingGoogleAuth] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [banner, setBanner] = useState(null); // { kind: 'warning'|'error'|'success'|'info', text: string }
 
-  const handleChange = (e) =>
-    setForm({ ...form, [e.target.name]: e.target.value });
+  // Refs to avoid double-handling
+  const handledRedirectRef = useRef(false);
+  const googleBusyRef = useRef(false);
+
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
+
+  // Handle Google Redirect results (enforce flow rule)
+  useEffect(() => {
+    (async () => {
+      try {
+        if (handledRedirectRef.current) return;
+        handledRedirectRef.current = true;
+        const result = await getRedirectResult(auth);
+        if (result && result.user) {
+          const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
+          sessionStorage.removeItem(GOOGLE_FLOW_KEY);
+
+          if (flow === "signup") {
+            await upsertGoogleUser(database, result.user, result);
+            await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
+            alert(
+              `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
+            );
+            navigate("/dashboard");
+          } else {
+            // LOGIN flow → allow only if account exists in /users
+            const exists = await userExistsByEmail(database, result.user.email);
+            if (!exists) {
+              setBanner({
+                kind: "warning",
+                text:
+                  "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
+              });
+              await signOut(auth);
+              return;
+            }
+            alert(
+              `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
+            );
+            navigate("/dashboard");
+          }
+        }
+      } catch (err) {
+        reportAuthError(err);
+      }
+    })();
+  }, [navigate]);
 
   /* ---------------- Email/Password: Login ---------------- */
   const handleLogin = async () => {
@@ -222,10 +328,8 @@ export const AuthPage = () => {
       );
       const user = userCredential.user;
 
-      // Make sure we have a user doc with the required shape
       await ensureUserInFirestore(database, user);
 
-      // Check verified flag per your app
       const uq = query(usersCollectionRef, where("uid", "==", user.uid));
       const usnap = await getDocs(uq);
 
@@ -245,7 +349,7 @@ export const AuthPage = () => {
       alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
       navigate("/dashboard");
     } catch (err) {
-      alert(err.message);
+      reportAuthError(err);
     }
   };
 
@@ -267,20 +371,23 @@ export const AuthPage = () => {
         displayName: `${form.firstName} ${form.lastName}`.trim(),
       });
 
-      // Create user doc with EXACT requested fields + your app flags
+      // Create /users doc
       await setDoc(doc(database, "users", user.uid), {
         uid: user.uid,
-        email: user.email,
+        email: (user.email || "").toLowerCase(),
         displayName: `${form.firstName} ${form.lastName}`.trim(),
         firstName: form.firstName,
         lastName: form.lastName,
-        photoURL: "", // none on email signup unless you add later
-        verified: false, // your app logic
+        photoURL: "",
+        verified: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
 
-      // Issue verification token (your existing flow)
+      // Award signup bonus
+      await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
+
+      // Email verification token flow
       const token = genToken();
       await setDoc(doc(database, "email_verifications", token), {
         uid: user.uid,
@@ -306,25 +413,72 @@ export const AuthPage = () => {
         EMAILJS_PUBLIC_KEY
       );
 
-      alert("We sent you a verification link. Please check your inbox.");
+      alert(`We sent you a verification link. Also credited ${SIGNUP_BONUS_POINTS} points 🎉`);
     } catch (err) {
       reportAuthError(err);
     }
   };
 
-  /* ---------------- Google: Login/Signup ---------------- */
-  const handleGoogleAuth = async () => {
+  /* ---------------- Google: Login/Signup with guards ---------------- */
+  const handleGoogleAuth = async (flow = "login") => {
+    if (googleBusyRef.current) return; // block re-entrancy
+    googleBusyRef.current = true;
+    setGoogleBusy(true);
+    setBanner(null);
+
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+
     try {
-      const result = await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, provider);
       const user = result.user;
 
-      // 🔐 Upsert the exact fields (and mark verified for Google)
-      await upsertGoogleUser(database, user, result);
+      if (flow === "signup") {
+        await upsertGoogleUser(database, user, result);
+        await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
+        alert(`Welcome ${user.displayName || (user.email || "").split("@")[0]}!`);
+        navigate("/dashboard");
+        return;
+      }
+
+      // LOGIN flow → allow only if account exists in /users
+      const exists = await userExistsByEmail(database, user.email);
+      if (!exists) {
+        setBanner({
+          kind: "warning",
+          text: "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
+        });
+        await signOut(auth);
+        return;
+      }
 
       alert(`Welcome ${user.displayName || (user.email || "").split("@")[0]}!`);
       navigate("/dashboard");
     } catch (err) {
-      reportAuthError(err);
+      const popupErrors = [
+        "auth/popup-closed-by-user",
+        "auth/popup-blocked",
+        "auth/cancelled-popup-request",
+      ];
+      if (popupErrors.includes(err?.code)) {
+        // Fall back to redirect; persist flow so we can enforce after redirect
+        sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: "select_account" });
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+      if (
+        err?.code === "auth/missing-or-invalid-nonce" ||
+        /Duplicate credential/i.test(err?.message || "")
+      ) {
+        alert("Sign-in restarted. Please try again once (don’t double-click).");
+      } else {
+        reportAuthError(err);
+      }
+    } finally {
+      googleBusyRef.current = false;
+      setGoogleBusy(false);
     }
   };
 
@@ -334,7 +488,7 @@ export const AuthPage = () => {
   );
 
   const GoogleG = () => (
-    <svg className="w-5 h-5" viewBox="0 0 48 48">
+    <svg className="w-5 h-5" viewBox="0 0 48 48" aria-hidden="true">
       <path
         fill="#000000ff"
         d="M43.611 20.083H42V20H24v8h11.303C33.94 31.91 29.358 35 24 35c-6.627 
@@ -347,16 +501,54 @@ export const AuthPage = () => {
     </svg>
   );
 
-  const handleGoogleClick = () => {
-    if (mode === "login") {
-      handleGoogleAuth();
-    } else {
-      setPendingGoogleAuth(true);
-      setShowTerms(true);
-    }
+  const InlineBanner = ({ kind = "info", children, onClose }) => {
+    const styles =
+      kind === "success"
+        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+        : kind === "warning"
+        ? "bg-amber-50 text-amber-800 border-amber-300"
+        : kind === "error"
+        ? "bg-rose-50 text-rose-700 border-rose-200"
+        : "bg-blue-50 text-blue-700 border-blue-200";
+    return (
+      <div className={`w-full rounded-xl border px-3 py-2 text-sm flex items-start gap-2 ${styles}`}>
+        <span className="mt-0.5">{children}</span>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto text-inherit/70 hover:text-inherit"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        )}
+      </div>
+    );
   };
 
-  /* ---------------- JSX ---------------- */
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+  const handleGoogleClick = () => {
+    setBanner(null);
+    if (mode === "login") {
+      if (isSafari || isIOS) {
+        sessionStorage.setItem(GOOGLE_FLOW_KEY, "login");
+        const provider = new GoogleAuthProvider();
+        provider.setCustomParameters({ prompt: "select_account" });
+        signInWithRedirect(auth, provider);
+      } else {
+        handleGoogleAuth("login");
+      }
+      return;
+    }
+
+    // signup → show terms first, then continue
+    setPendingGoogleAuth(true);
+    setShowTerms(true);
+  };
+
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden">
       {/* Background Video */}
@@ -393,6 +585,7 @@ export const AuthPage = () => {
           <div className="w-full max-w-xs mb-6">
             <div className="flex items-center bg-gray-100 rounded-full p-1">
               <button
+                type="button"
                 className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
                   mode === "login"
                     ? "bg-blue-600 text-white shadow"
@@ -403,6 +596,7 @@ export const AuthPage = () => {
                 Log In
               </button>
               <button
+                type="button"
                 className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
                   mode === "signup"
                     ? "bg-blue-600 text-white shadow"
@@ -415,40 +609,51 @@ export const AuthPage = () => {
             </div>
           </div>
 
-          {/* Animated Form */}
-          <AnimatePresence mode="wait">
-            {mode === "login" ? (
-              <motion.div
-                key="login"
-                initial={{ opacity: 0, x: 30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -30 }}
-                transition={{ duration: 0.4 }}
-                className="space-y-4"
-              >
-                <input
-                  name="email"
-                  type="email"
-                  placeholder="Email"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  value={form.email}
-                  onChange={handleChange}
-                />
-                <div className="relative">
+          {/* Form (wraps both login & signup variants) */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (mode === "login") handleLogin();
+              else handleSignup();
+            }}
+            autoComplete="on"
+            noValidate
+          >
+            <AnimatePresence mode="wait">
+              {mode === "login" ? (
+                <motion.div
+                  key="login"
+                  initial={{ opacity: 0, x: 30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -30 }}
+                  transition={{ duration: 0.4 }}
+                  className="space-y-4"
+                >
                   <input
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Password"
-                    className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                    value={form.password}
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="Email"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                    value={form.email}
                     onChange={handleChange}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((p) => !p)}
-                    className="absolute right-4 inset-y-0 flex items-center text-gray-400"
-                  >
-                    {showPassword ? (
+                  <div className="relative">
+                    <input
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      placeholder="Password"
+                      className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                      value={form.password}
+                      onChange={handleChange}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((p) => !p)}
+                      className="absolute right-4 inset-y-0 flex items-center text-gray-400"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
                         strokeWidth="1.5" stroke="currentColor" className="size-6">
                         <path strokeLinecap="round" strokeLinejoin="round"
@@ -456,137 +661,101 @@ export const AuthPage = () => {
                         <path strokeLinecap="round" strokeLinejoin="round"
                           d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                       </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                        viewBox="0 0 24 24" strokeWidth={1.5}
-                        stroke="currentColor" className="size-6">
-                        <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-                <button
-                  onClick={handleLogin}
-                  className="w-full py-3 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 transition"
-                >
-                  Log In
-                </button>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="signup"
-                initial={{ opacity: 0, x: -30 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 30 }}
-                transition={{ duration: 0.4 }}
-                className="space-y-4"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <input
-                    name="firstName"
-                    placeholder="First Name"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                    value={form.firstName}
-                    onChange={handleChange}
-                  />
-                  <input
-                    name="lastName"
-                    placeholder="Last Name"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                    value={form.lastName}
-                    onChange={handleChange}
-                  />
-                </div>
-                <input
-                  name="email"
-                  type="email"
-                  placeholder="Email"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                  value={form.email}
-                  onChange={handleChange}
-                />
-
-                {/* Password */}
-                <div className="relative">
-                  <input
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Password"
-                    className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                    value={form.password}
-                    onChange={handleChange}
-                  />
+                    </button>
+                  </div>
                   <button
-                    type="button"
-                    onClick={() => setShowPassword((p) => !p)}
-                    className="absolute right-4 inset-y-0 flex items-center text-gray-400"
+                    type="submit"
+                    className="w-full py-3 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 transition"
                   >
-                    {showPassword ? (
+                    Log In
+                  </button>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="signup"
+                  initial={{ opacity: 0, x: -30 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 30 }}
+                  transition={{ duration: 0.4 }}
+                  className="space-y-4"
+                >
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input
+                      name="firstName"
+                      autoComplete="given-name"
+                      placeholder="First Name"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                      value={form.firstName}
+                      onChange={handleChange}
+                    />
+                    <input
+                      name="lastName"
+                      autoComplete="family-name"
+                      placeholder="Last Name"
+                      className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                      value={form.lastName}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <input
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="Email"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                    value={form.email}
+                    onChange={handleChange}
+                  />
+
+                  {/* Password */}
+                  <div className="relative">
+                    <input
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder="Password"
+                      className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                      value={form.password}
+                      onChange={handleChange}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((p) => !p)}
+                      className="absolute right-4 inset-y-0 flex items-center text-gray-400"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
                         strokeWidth="1.5" stroke="currentColor" className="w-5 h-5">
                         <path strokeLinecap="round" strokeLinejoin="round"
                           d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 
-                          4.5 12 4.5c4.638 0 8.573 3.007 9.963 
-                          7.178.07.207.07.431 0 
-                          .639C20.577 16.49 16.64 19.5 12 
-                          19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                          4.5 12 4.5c4.638 0 8.573 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774" />
                         <path strokeLinecap="round" strokeLinejoin="round"
                           d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
                       </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                        viewBox="0 0 24 24" strokeWidth={1.5}
-                        stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M3.98 8.223A10.477 10.477 0 0 0 
-                          1.934 12C3.226 16.338 7.244 19.5 
-                          12 19.5c.993 0 1.953-.138 2.863-.395M6.228 
-                          6.228A10.451 10.451 0 0 1 12 
-                          4.5c4.756 0 8.773 3.162 10.065 
-                          7.498a10.522 10.522 0 0 1-4.293 
-                          5.774M6.228 6.228 3 3m3.228 3.228 
-                          3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 
-                          0a3 3 0 1 0-4.243-4.243m4.242 
-                          4.242L9.88 9.88" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
+                    </button>
+                  </div>
 
-                {/* Confirm */}
-                <div className="relative">
-                  <input
-                    name="confirmPassword"
-                    type={showConfirmPassword ? "text" : "password"}
-                    placeholder="Confirm Password"
-                    className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
-                    value={form.confirmPassword}
-                    onChange={handleChange}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword((p) => !p)}
-                    className="absolute right-4 inset-y-0 flex items-center text-gray-400"
-                  >
-                    {showConfirmPassword ? (
+                  {/* Confirm */}
+                  <div className="relative">
+                    <input
+                      name="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      placeholder="Confirm Password"
+                      className="w-full px-4 pr-12 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-blue-400 focus:outline-none"
+                      value={form.confirmPassword}
+                      onChange={handleChange}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmPassword((p) => !p)}
+                      className="absolute right-4 inset-y-0 flex items-center text-gray-400"
+                      aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                    >
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none"
                         viewBox="0 0 24 24" strokeWidth="1.5"
                         stroke="currentColor" className="w-5 h-5">
                         <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 
-                          4.5 12 4.5c4.638 0 8.573 3.007 9.963 
-                          7.178.07.207.07.431 0 
-                          .639C20.577 16.49 16.64 19.5 12 
-                          19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                        <path strokeLinecap="round" strokeLinejoin="round"
-                          d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                      </svg>
-                    ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none"
-                        viewBox="0 0 24 24" strokeWidth={1.5}
-                        stroke="currentColor" className="w-5 h-5">
-                        <path strokeLinecap="round" strokeLinejoin="round"
                           d="M3.98 8.223A10.477 10.477 0 0 0 
                           1.934 12C3.226 16.338 7.244 19.5 
                           12 19.5c.993 0 1.953-.138 2.863-.395M6.228 
@@ -598,45 +767,45 @@ export const AuthPage = () => {
                           0a3 3 0 1 0-4.243-4.243m4.242 
                           4.242L9.88 9.88" />
                       </svg>
-                    )}
-                  </button>
-                </div>
-
-                {/* Terms */}
-                <div className="flex items-center mb-4">
-                  <input
-                    id="terms"
-                    type="checkbox"
-                    checked={agreed}
-                    onChange={(e) => setAgreed(e.target.checked)}
-                    className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                  />
-                  <label htmlFor="terms" className="ml-2 text-sm text-gray-700 select-none">
-                    I agree to the{" "}
-                    <button
-                      type="button"
-                      onClick={() => setShowTerms(true)}
-                      className="text-blue-600 hover:underline"
-                    >
-                      Terms and Conditions
                     </button>
-                  </label>
-                </div>
+                  </div>
 
-                <button
-                  onClick={handleSignup}
-                  disabled={!agreed}
-                  className={`w-full py-3 font-semibold rounded-full transition ${
-                    agreed
-                      ? "bg-blue-600 text-white hover:bg-blue-700"
-                      : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                  }`}
-                >
-                  Sign Up
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+                  {/* Terms */}
+                  <div className="flex items-center mb-4">
+                    <input
+                      id="terms"
+                      type="checkbox"
+                      checked={agreed}
+                      onChange={(e) => setAgreed(e.target.checked)}
+                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                    />
+                    <label htmlFor="terms" className="ml-2 text-sm text-gray-700 select-none">
+                      I agree to the{" "}
+                      <button
+                        type="button"
+                        onClick={() => setShowTerms(true)}
+                        className="text-blue-600 hover:underline"
+                      >
+                        Terms and Conditions
+                      </button>
+                    </label>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!agreed}
+                    className={`w-full py-3 font-semibold rounded-full transition ${
+                      agreed
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    }`}
+                  >
+                    Sign Up
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </form>
 
           <div className="flex items-center my-6">
             <div className="flex-grow border-t border-gray-200"></div>
@@ -644,9 +813,22 @@ export const AuthPage = () => {
             <div className="flex-grow border-t border-gray-200"></div>
           </div>
 
+          {/* Small banner for Google login rule */}
+          {banner && (
+            <div className="mb-3">
+              <InlineBanner kind={banner.kind} onClose={() => setBanner(null)}>
+                {banner.text}
+              </InlineBanner>
+            </div>
+          )}
+
           <button
+            type="button"
             onClick={handleGoogleClick}
-            className="w-full py-3 border border-gray-300 rounded-full bg-white text-gray-700 hover:bg-gray-50 font-medium flex items-center justify-center space-x-2 transition"
+            disabled={googleBusy}
+            className={`w-full py-3 border border-gray-300 rounded-full ${
+              googleBusy ? "bg-gray-100 text-gray-400 cursor-wait" : "bg-white text-gray-700 hover:bg-gray-50"
+            } font-medium flex items-center justify-center space-x-2 transition`}
           >
             <GoogleG />
             <span>{mode === "login" ? "Log In" : "Sign Up"} with Google</span>
@@ -694,6 +876,7 @@ export const AuthPage = () => {
 
             <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row sm:justify-end sm:space-x-3 space-y-3 sm:space-y-0">
               <button
+                type="button"
                 onClick={() => {
                   setShowTerms(false);
                   setPendingGoogleAuth(false);
@@ -704,11 +887,21 @@ export const AuthPage = () => {
               </button>
 
               <button
+                type="button"
                 onClick={() => {
                   setShowTerms(false);
                   setAgreed(true);
                   if (pendingGoogleAuth) {
-                    handleGoogleAuth(); // trigger Google popup after agreeing
+                    if (!googleBusyRef.current) {
+                      if (isSafari || isIOS) {
+                        sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
+                        const provider = new GoogleAuthProvider();
+                        provider.setCustomParameters({ prompt: "select_account" });
+                        signInWithRedirect(auth, provider);
+                      } else {
+                        handleGoogleAuth("signup"); // popup with fallback
+                      }
+                    }
                     setPendingGoogleAuth(false);
                   }
                 }}
@@ -723,3 +916,5 @@ export const AuthPage = () => {
     </div>
   );
 };
+
+export default AuthPage;

@@ -10,9 +10,12 @@ import {
   getDoc,
   doc,
   updateDoc,
+  setDoc,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
+import { getApp } from "firebase/app";
 import { database, auth } from "../../config/firebase";
 
 import Sidebar from "./components/sidebar.jsx";
@@ -38,6 +41,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Hash,
+  Star,
 } from "lucide-react";
 
 /* ---------------- small utils ---------------- */
@@ -57,7 +61,6 @@ const fmtRange = (start, end) => {
   return `${sStr} – ${eStr}, ${yStr}`;
 };
 
-// --- Listing hydration helpers (fresh from Firestore with safe fallback) ---
 const extractListingIdFromPath = (path) => {
   if (!path) return null;
   const parts = String(path).split("/").filter(Boolean);
@@ -65,14 +68,13 @@ const extractListingIdFromPath = (path) => {
   return idx >= 0 && parts[idx + 1] ? parts[idx + 1] : null;
 };
 
-// small cache to avoid re-fetching the same listing repeatedly
 const __listingCache = new Map();
 
 const fallbackFromBooking = (b) => ({
   title: b?.listing?.title || b?.listingTitle || "Untitled",
-  photos: Array.isArray(b?.listing?.photos) ? b.listing.photos : (b?.listingPhotos || []),
+  photos: Array.isArray(b?.listing?.photos) ? b.listing.photos : b?.listingPhotos || [],
   location: b?.listing?.location || b?.listingAddress || "",
-  category: (b?.listing?.category || b?.listingCategory || "Homes"),
+  category: b?.listing?.category || b?.listingCategory || "Homes",
 });
 
 // ---------- Normalizers ----------
@@ -94,7 +96,7 @@ const normalizeCategory = (rawCat) => {
   if (c.startsWith("home")) return "homes";
   if (c.startsWith("service")) return "services";
   if (c.startsWith("experience")) return "experiences";
-  return c; // unknown; leave as is
+  return c;
 };
 
 const numberOr = (v, d = 0) => {
@@ -107,7 +109,6 @@ const normalizeListing = (docData = {}, booking = {}) => {
     pick(docData.category, booking?.listing?.category, booking?.listingCategory, "homes")
   );
 
-  // guests block may be nested or flat
   const guestsTotal = pick(
     docData?.guests?.total,
     docData?.maxGuests,
@@ -115,7 +116,6 @@ const normalizeListing = (docData = {}, booking = {}) => {
     docData?.guestsTotal
   );
 
-  // schedule can be array of {date,time} or objects with different keys
   const scheduleArr = Array.isArray(docData.schedule) ? docData.schedule : [];
   const schedule = scheduleArr
     .map((s) => ({
@@ -124,7 +124,6 @@ const normalizeListing = (docData = {}, booking = {}) => {
     }))
     .filter((s) => s.date || s.time);
 
-  // amenities could be under different keys
   const amenities =
     pick(
       Array.isArray(docData.amenities) ? docData.amenities : undefined,
@@ -140,17 +139,11 @@ const normalizeListing = (docData = {}, booking = {}) => {
     category: cat,
     description: pick(docData.description, docData.longDescription, docData.uniqueDescription),
     uniqueDescription: pick(docData.uniqueDescription),
-
-    // price & fees
     price: numberOr(pick(docData.price, docData.pricePerNight, docData.basePrice, docData?.pricing?.base), undefined),
     cleaningFee: numberOr(pick(docData.cleaningFee, docData?.fees?.cleaning, docData?.fees?.cleaningFee), undefined),
     discountType: pick(docData.discountType, docData?.discount?.type),
     discountValue: numberOr(pick(docData.discountValue, docData?.discount?.value), 0),
-
-    // host-ish
     uid: pick(docData.uid, docData.ownerId, docData.hostId),
-
-    // amenities
     amenities,
   };
 
@@ -204,7 +197,7 @@ const hydrateListingForBooking = async (booking) => {
 
   if (__listingCache.has(id)) {
     const cached = __listingCache.get(id);
-    return { ...fallback, ...cached }; // cached already normalized
+    return { ...fallback, ...cached };
   }
   try {
     const snap = await getDoc(doc(database, "listings", id));
@@ -212,7 +205,7 @@ const hydrateListingForBooking = async (booking) => {
       const raw = { id: snap.id, ...snap.data() };
       const normalized = normalizeListing(raw, booking);
       __listingCache.set(id, normalized);
-      return { ...fallback, ...normalized }; // live normalized data wins
+      return { ...fallback, ...normalized };
     }
   } catch (e) {
     console.error("hydrateListingForBooking error:", e);
@@ -292,14 +285,43 @@ const isCancelable = (b) => {
     return !ci || ci > now;
   }
 
-  // Experiences/Services use schedule date/time
   if (b?.schedule?.date) {
     const dt = new Date(`${b.schedule.date}T${b.schedule.time || "00:00"}`);
     return dt > now;
   }
 
-  // If in doubt, allow (backend rules should still enforce policy)
   return true;
+};
+
+/* ---------------- NEW: review helpers ---------------- */
+const getListingId = (b) =>
+  b?.listingId ||
+  extractListingIdFromPath(b?.listingRefPath) ||
+  b?.listing?.id ||
+  null;
+
+const isPastBooking = (b) => {
+  const now = new Date();
+  const cat = normalizeCategory(b?.listing?.category || b?.listingCategory || "");
+  const status = (b?.status || "").toLowerCase();
+  if (status === "completed") return true;
+
+  if (cat.startsWith("home")) {
+    const co = b?.checkOut?.toDate?.() ?? null;
+    return co ? co < now : false;
+  }
+
+  if (b?.schedule?.date) {
+    const dt = new Date(`${b.schedule.date}T${b.schedule.time || "00:00"}`);
+    return dt < now;
+  }
+
+  return false;
+};
+
+const canReview = (b) => {
+  const s = (b?.status || "").toLowerCase();
+  return isPastBooking(b) && s !== "canceled" && s !== "cancelled";
 };
 
 /* ---------------- skeletons ---------------- */
@@ -361,8 +383,155 @@ const CardShell = ({ cover, chip, children, onClick }) => (
   </div>
 );
 
+/* ---------------- rating UI ---------------- */
+function StarRating({ value = 0, onChange, readOnly = false, size = 20, id }) {
+  const [hover, setHover] = useState(0);
+  const current = hover || value;
+
+  const StarBtn = ({ i }) => {
+    const active = i <= current;
+    return (
+      <button
+        type="button"
+        aria-label={`${i} ${i === 1 ? "star" : "stars"}`}
+        disabled={readOnly}
+        onMouseEnter={() => !readOnly && setHover(i)}
+        onMouseLeave={() => !readOnly && setHover(0)}
+        onClick={() => !readOnly && onChange?.(i)}
+        className={`p-0.5 ${readOnly ? "cursor-default" : "cursor-pointer"} focus:outline-none`}
+      >
+        <Star
+          width={size}
+          height={size}
+          className={active ? "text-amber-500" : "text-slate-300"}
+          stroke="currentColor"
+          fill={active ? "currentColor" : "none"}
+        />
+      </button>
+    );
+  };
+
+  return (
+    <div role={readOnly ? "img" : "radiogroup"} aria-label={id ? `${id}-rating` : "rating"} className="inline-flex">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <StarBtn key={i} i={i} />
+      ))}
+    </div>
+  );
+}
+
+function ReviewBadge({ rating, label }) {
+  if (!rating) return null;
+  return (
+    <div className="inline-flex items-center gap-1.5">
+      <StarRating value={rating} readOnly size={16} />
+      <span className="text-xs text-slate-600">{label || `${rating}/5`}</span>
+    </div>
+  );
+}
+
+/* ---------------- Toast ---------------- */
+function Toast({ toast, onClose }) {
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => onClose?.(), 2800);
+    return () => clearTimeout(t);
+  }, [toast, onClose]);
+
+  if (!toast) return null;
+  return createPortal(
+    <div className="fixed inset-x-0 bottom-4 z-[2147483600] grid place-items-center px-4">
+      <div
+        className={`rounded-xl px-4 py-2 shadow-lg border ${
+          toast.type === "success"
+            ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+            : toast.type === "error"
+            ? "bg-rose-50 border-rose-200 text-rose-800"
+            : "bg-white border-slate-200 text-slate-800"
+        }`}
+      >
+        <span className="text-sm">{toast.text}</span>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ---------------- NEW: Review Modal ---------------- */
+const ReviewModal = ({ open, booking, existingReview, onClose, onSubmit, submitting }) => {
+  const [rating, setRating] = useState(existingReview?.rating || 0);
+  const [text, setText] = useState(existingReview?.text || "");
+
+  useEffect(() => {
+    if (!open) return;
+    setRating(existingReview?.rating || 0);
+    setText(existingReview?.text || "");
+  }, [open, existingReview?.rating, existingReview?.text]);
+
+  if (!open || !booking) return null;
+
+  const title = booking?.listing?.title || booking?.listingTitle || "This booking";
+  const valid = rating > 0 && text.trim().length >= 10;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[2147483200] flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative z-10 w-full sm:w-[560px]">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/70 shadow-xl p-6">
+          <div className="flex items-start justify-between">
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900">Rate & review</h3>
+              <p className="text-sm text-slate-600 mt-1">How was <span className="font-medium">{title}</span>?</p>
+            </div>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100 text-slate-600" aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-slate-700">Your rating:</span>
+              <StarRating value={rating} onChange={setRating} />
+              {!!rating && <span className="text-xs text-slate-500">{rating}/5</span>}
+            </div>
+
+            <div>
+              <textarea
+                rows={5}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Share details that would help other guests (min 10 chars)…"
+                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+              />
+              <div className="mt-1 text-xs text-slate-500 text-right">{text.trim().length} / 1000</div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 transition"
+              disabled={submitting}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onSubmit?.({ rating, text })}
+              disabled={!valid || submitting}
+              className="h-10 px-4 rounded-xl text-white bg-gradient-to-b from-blue-600 to-blue-800 shadow hover:from-blue-500 hover:to-blue-700 transition disabled:opacity-60"
+            >
+              {submitting ? "Saving…" : existingReview ? "Update review" : "Publish review"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 /* ---------------- category cards ---------------- */
-const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const HomesCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled listing";
   const loc = b.listing?.location || b.listingAddress || "";
   const dates = fmtRange(b.checkIn, b.checkOut);
@@ -414,7 +583,7 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
         )}
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${sBadge.cls}`}>
           {sBadge.text}
         </span>
@@ -423,6 +592,24 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
           {pBadge.text}
         </span>
       </div>
+
+      {canReview(b) && (
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            {review?.rating ? (
+              <ReviewBadge rating={review.rating} label="You rated this" />
+            ) : (
+              <span className="text-sm text-slate-600">How was your booking?</span>
+            )}
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+          >
+            {review?.rating ? "Edit review" : "Rate & review"}
+          </button>
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between">
         <div className="text-sm text-slate-600">Total</div>
@@ -438,7 +625,6 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
             Cancel
           </button>
         )}
-        {/* View opens modal now */}
         <button
           onClick={(e) => { e.stopPropagation(); onRequestDetails(b); }}
           className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
@@ -450,7 +636,7 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
   );
 };
 
-const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const ExperienceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled experience";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -500,6 +686,24 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
         </span>
       </div>
 
+      {canReview(b) && (
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            {review?.rating ? (
+              <ReviewBadge rating={review.rating} label="You rated this" />
+            ) : (
+              <span className="text-sm text-slate-600">How was your booking?</span>
+            )}
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+          >
+            {review?.rating ? "Edit review" : "Rate & review"}
+          </button>
+        </div>
+      )}
+
       <div className="mt-4 flex items-center justify-between">
         <div className="text-sm text-slate-600">Total</div>
         <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
@@ -525,7 +729,7 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   );
 };
 
-const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const ServiceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled service";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -562,6 +766,24 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
         </span>
       </div>
 
+      {canReview(b) && (
+        <div className="mt-4 flex items-center justify-between">
+          <div>
+            {review?.rating ? (
+              <ReviewBadge rating={review.rating} label="You rated this" />
+            ) : (
+              <span className="text-sm text-slate-600">How was your booking?</span>
+            )}
+          </div>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+          >
+            {review?.rating ? "Edit review" : "Rate & review"}
+          </button>
+        </div>
+      )}
+
       <div className="mt-4 flex items-center justify-between">
         <div className="text-sm text-slate-600">Total</div>
         <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
@@ -588,8 +810,6 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
 };
 
 /* ---------------- Cancel Flow Modals ---------------- */
-
-/** Step 1: Reason picker */
 const CancelReasonModal = ({ open, onClose, onNext }) => {
   const [selected, setSelected] = useState("");
   const [other, setOther] = useState("");
@@ -694,7 +914,6 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
   );
 };
 
-/** Step 2: Confirm with cancellation policy */
 const CancelConfirmModal = ({
   open,
   onBack,
@@ -755,7 +974,7 @@ const CancelConfirmModal = ({
   );
 };
 
-/* --- Host avatar with resilient loading (used in details modal) --- */
+/* --- Host avatar --- */
 function HostAvatar({ host }) {
   const [imgOk, setImgOk] = useState(true);
   const initial = (([host.firstName, host.lastName].filter(Boolean).join(" ")) || host.displayName || host.email || "H")[0].toUpperCase();
@@ -779,13 +998,12 @@ function HostAvatar({ host }) {
   );
 }
 
-/* ---------------- NEW: Booking Details Modal (read-only) ---------------- */
-const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
+/* ---------------- Booking Details Modal ---------------- */
+const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview, onRequestReview }) => {
   const [listing, setListing] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
   const [host, setHost] = useState(null);
 
-  // lock body scroll
   useEffect(() => {
     if (!open) return;
     const prevOverflow = document.body.style.overflow;
@@ -799,7 +1017,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     };
   }, [open]);
 
-  // hydrate listing (prefer fresh from Firestore if listingId exists)
   useEffect(() => {
     if (!open || !booking) return;
     let alive = true;
@@ -808,12 +1025,12 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
       if (!alive) return;
       setListing(fresh);
       setCurrentPhoto(0);
-      // console.debug("Listing (normalized):", fresh);
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [open, booking?.id]);
 
-  // fetch host profile (best-effort) when listing available
   useEffect(() => {
     if (!listing) return;
     let cancelled = false;
@@ -842,12 +1059,10 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
       try {
         const uid = listing?.uid || listing?.ownerId || listing?.hostId;
         if (!uid) { if (!cancelled) setHost(null); return; }
-        // Try hosts/{uid}
         try {
           const h1 = await getDoc(doc(database, "hosts", uid));
           if (h1.exists()) { if (!cancelled) setHost(normalizeHost(h1, uid)); return; }
         } catch {}
-        // Try users/{uid}
         try {
           const u1 = await getDoc(doc(database, "users", uid));
           if (u1.exists()) { if (!cancelled) setHost(normalizeHost(u1, uid)); return; }
@@ -866,13 +1081,12 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const cat = normalizeCategory(listing?.category || booking?.listingCategory || "");
   const title = listing?.title || booking?.listingTitle || "Untitled";
   const location = listing?.location || booking?.listingAddress || "—";
-  const photos = Array.isArray(listing?.photos) ? listing.photos : (booking?.listingPhotos || []);
+  const photos = Array.isArray(listing?.photos) ? listing.photos : booking?.listingPhotos || [];
   const hasPhotos = photos.length > 0;
 
   const nextPhoto = (e) => { e?.stopPropagation(); if (!hasPhotos) return; setCurrentPhoto((p) => (p + 1) % photos.length); };
   const prevPhoto = (e) => { e?.stopPropagation(); if (!hasPhotos) return; setCurrentPhoto((p) => (p - 1 + photos.length) % photos.length); };
 
-  // booking-specific fields
   const nights = typeof booking.nights === "number" ? booking.nights : daysBetween(booking.checkIn, booking.checkOut);
   const guests = (booking.adults || 0) + (booking.children || 0) + (booking.infants || 0);
   const sBadge = statusBadge(booking.status);
@@ -882,12 +1096,10 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     booking?.createdAt?.toDate?.() ? booking.createdAt.toDate() :
     (booking?.createdAt instanceof Date ? booking.createdAt : null);
 
-  // schedule for experiences/services
   const scheduleStr = booking?.schedule?.date
     ? `${fmtDateStr(booking.schedule.date)}${booking?.schedule?.time ? " • " + fmtTimeStr(booking.schedule.time) : ""}`
     : "—";
 
-  // payment breakdown (best-effort)
   const subtotal = numberOr(booking.subtotal, NaN);
   const serviceFee = numberOr(booking.serviceFee, NaN);
   const cleaningFee = numberOr(booking.cleaningFee, NaN);
@@ -901,7 +1113,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     listing?.cancellation_policy ||
     "";
 
-  // chips
   const chips = [];
   if (listing?.listingType) chips.push(listing.listingType);
   if (cat) chips.push((cat[0]?.toUpperCase() || "") + cat.slice(1));
@@ -909,7 +1120,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   if (listing?.serviceType) chips.push(listing.serviceType);
   if (listing?.pricingType) chips.push(listing.pricingType);
 
-  // helpers to render definition rows safely
   const Field = ({ label, children }) => (
     <div className="flex items-start justify-between gap-4 py-2">
       <span className="text-[12px] sm:text-xs text-gray-600 shrink-0">{label}</span>
@@ -927,12 +1137,10 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     </div>
   );
 
-  // dynamic full-details blocks (best-effort across Homes/Experiences/Services)
   const FullDetails = () => (
     <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm space-y-2">
       <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Full Listing Details</h3>
 
-      {/* Common */}
       {listing?.propertyType && <Field label="Property Type">{listing.propertyType}</Field>}
       {typeof listing?.price !== "undefined" && (
         <Field label={cat.startsWith("experience") ? "Price / person" : cat.startsWith("service") ? "Base Price" : "Price / night"}>
@@ -950,7 +1158,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         </Field>
       )}
 
-      {/* Homes-specific */}
       {cat.startsWith("home") && (
         <>
           {(typeof listing?.bedrooms !== "undefined" || typeof listing?.beds !== "undefined" || typeof listing?.bathrooms !== "undefined") && (
@@ -987,7 +1194,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         </>
       )}
 
-      {/* Experiences-specific */}
       {cat.startsWith("experience") && (
         <>
           {listing?.experienceType && <Field label="Experience Type">{listing.experienceType === "online" ? "Online" : "In-Person"}</Field>}
@@ -1018,12 +1224,11 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             </div>
           )}
           {listing?.ageRestriction && (
-            <Field label="Age Requirements">{`${listing.ageRestriction.min ?? 0} – ${listing.ageRestriction.max ?? 100} years`}</Field>
+            <Field label="Age Requirements">{`${listing.ageRestriction?.min ?? 0} – ${listing.ageRestriction?.max ?? 100} years`}</Field>
           )}
         </>
       )}
 
-      {/* Services-specific */}
       {cat.startsWith("service") && (
         <>
           {listing?.serviceType && <Field label="Service Type">{listing.serviceType}</Field>}
@@ -1054,7 +1259,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         </>
       )}
 
-      {/* Amenities */}
       {Array.isArray(listing?.amenities) && listing.amenities.length > 0 && (
         <div className="pt-1">
           <span className="text-[12px] sm:text-xs text-gray-600">Amenities</span>
@@ -1062,7 +1266,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         </div>
       )}
 
-      {/* Optional long-form sections shared */}
       {listing?.includes && (
         <div className="pt-1">
           <span className="text-[12px] sm:text-xs text-gray-600">What’s Included</span>
@@ -1106,7 +1309,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
 
   const leftCol = (
     <>
-      {/* DESKTOP photos */}
       <div className="hidden md:block relative bg-gray-900/90">
         {hasPhotos ? (
           <>
@@ -1151,7 +1353,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         )}
       </div>
 
-      {/* MOBILE photos */}
       <div className="md:hidden relative h-64 w-full bg-gray-900/90">
         {hasPhotos ? (
           <>
@@ -1205,14 +1406,12 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         </span>
       </div>
 
-      {/* ID + Created */}
       <div className="flex items-center gap-2 text-[12.5px] text-slate-600">
         <Hash size={14} />
         <span className="truncate">Booking ID: <span className="font-mono">{booking.id}</span></span>
         {createdAt && <span className="ml-auto">Created {createdAt.toLocaleString()}</span>}
       </div>
 
-      {/* Time/Schedule */}
       <div className="grid gap-2 text-sm">
         {cat.startsWith("home") ? (
           <>
@@ -1255,7 +1454,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         )}
       </div>
 
-      {/* Payment breakdown */}
       <div className="mt-2 space-y-1 text-[13.5px]">
         {!Number.isNaN(subtotal) && (
           <div className="flex items-center justify-between">
@@ -1301,7 +1499,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
       <div className="min-h-0 overflow-y-auto">
         <div className="max-w-[720px] mx-auto px-5 sm:px-6 md:px-7 py-5 sm:py-6 md:py-7 space-y-6 sm:space-y-7">
 
-          {/* Header */}
           <section className="space-y-3">
             <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">{title}</h2>
 
@@ -1322,7 +1519,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             </p>
           </section>
 
-          {/* Host */}
           {host && (
             <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 flex items-center gap-4 shadow-sm">
               <HostAvatar host={host} />
@@ -1336,7 +1532,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             </section>
           )}
 
-          {/* Description */}
           {(listing?.description || listing?.uniqueDescription) && (
             <section className="space-y-2">
               {listing?.description && (
@@ -1348,25 +1543,54 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             </section>
           )}
 
-          {/* Full listing details */}
-          <FullDetails />
+          {canReview(booking) && (
+            <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
+              <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-2">
+                Your review
+              </h3>
+              {myReview?.rating ? (
+                <div className="space-y-2">
+                  <ReviewBadge rating={myReview.rating} />
+                  {myReview.text && (
+                    <p className="text-sm text-gray-800 whitespace-pre-wrap">{myReview.text}</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRequestReview?.(booking)}
+                    className="mt-1 inline-flex items-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                  >
+                    Edit review
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-600">How was your stay/experience?</span>
+                  <button
+                    type="button"
+                    onClick={() => onRequestReview?.(booking)}
+                    className="inline-flex items-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                  >
+                    Rate & review
+                  </button>
+                </div>
+              )}
+            </section>
+          )}
 
-          {/* Booking meta + payment */}
+          <FullDetails />
           {bookingMeta}
 
-          {/* Cancellation Policy */}
           <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
             <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-1">
               Cancellation Policy
             </h3>
-            <p className="text-[14px] sm:text-[15px] text-gray-800">
+            <p className="text-[14px] sm:text[15px] text-gray-800">
               {policyText || "No specific cancellation policy was provided by the host."}
             </p>
           </section>
         </div>
       </div>
 
-      {/* Footer actions */}
       <div
         className="w-full bg-white/70 backdrop-blur supports-[backdrop-filter]:bg-white/60 border-t border-white/50 px-4 pt-4 pb-6 sm:pb-6"
         style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
@@ -1417,7 +1641,6 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Close */}
         <button
           onClick={onClose}
           aria-label="Close"
@@ -1426,10 +1649,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
           <X className="w-5 h-5 text-gray-700" />
         </button>
 
-        {/* LEFT: photos */}
         {leftCol}
-
-        {/* RIGHT: content */}
         {rightContent}
       </div>
     </div>,
@@ -1473,9 +1693,18 @@ export default function BookingsPage() {
   const [policyText, setPolicyText] = useState("");
   const [submittingCancel, setSubmittingCancel] = useState(false);
 
-  // NEW: details modal state
+  // Details modal
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState(null);
+
+  // Reviews
+  const [reviewsMap, setReviewsMap] = useState({});
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewTarget, setReviewTarget] = useState(null);
+  const [savingReview, setSavingReview] = useState(false);
+
+  // Toast
+  const [toast, setToast] = useState(null);
 
   // read host flag from localStorage after login
   useEffect(() => {
@@ -1483,7 +1712,7 @@ export default function BookingsPage() {
     setIsHost(localStorage.getItem("isHost") === "true");
   }, [uid]);
 
-  // Subscribe bookings for this user (filter by uid)
+  // Subscribe bookings for this user
   useEffect(() => {
     if (!uid) {
       setRows([]);
@@ -1498,7 +1727,6 @@ export default function BookingsPage() {
       async (snap) => {
         const base = snap.docs.map((d) => ({ id: d.id, ...d.data() })) || [];
 
-        // Hydrate each booking with the freshest listing data available
         const hydrated = await Promise.all(
           base.map(async (b) => ({
             ...b,
@@ -1526,6 +1754,28 @@ export default function BookingsPage() {
 
     return () => unsub();
   }, [uid]);
+
+  // Load user's review for each booking when rows change
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!uid || rows.length === 0) { setReviewsMap({}); return; }
+      const pairs = await Promise.all(
+        rows.map(async (b) => {
+          const listingId = getListingId(b);
+          if (!listingId) return [b.id, null];
+          try {
+            const rSnap = await getDoc(doc(database, "listings", listingId, "reviews", b.id));
+            return [b.id, rSnap.exists() ? { id: rSnap.id, ...rSnap.data() } : null];
+          } catch {
+            return [b.id, null];
+          }
+        })
+      );
+      if (!cancelled) setReviewsMap(Object.fromEntries(pairs));
+    })();
+    return () => { cancelled = true; };
+  }, [uid, rows]);
 
   const upcoming = useMemo(() => {
     const now = Date.now();
@@ -1616,7 +1866,9 @@ export default function BookingsPage() {
         status: "cancelled",
         cancelReason: cancelReason,
         cancelledAt: serverTimestamp(),
+        uid, // include uid to satisfy rules on update
       });
+      setToast({ type: "success", text: "Booking cancelled ✅" });
       setConfirmOpen(false);
       setCancelTarget(null);
       setCancelReason("");
@@ -1636,6 +1888,95 @@ export default function BookingsPage() {
   };
   const closeDetails = () => {
     setDetailsOpen(false);
+  };
+
+  /* ---------- review handlers (rules-compliant) ---------- */
+  const startReview = (booking) => {
+    setReviewTarget(booking);
+    setReviewOpen(true);
+  };
+
+  const closeReview = () => {
+    setReviewOpen(false);
+    setReviewTarget(null);
+  };
+
+  const saveReview = async ({ rating, text }) => {
+    if (!uid) { alert("Please sign in again."); return; }
+    if (!reviewTarget) return;
+
+    const listingId = getListingId(reviewTarget);
+    if (!listingId) {
+      alert("Listing ID missing for this booking. Please contact support.");
+      return;
+    }
+
+    setSavingReview(true);
+    try {
+      const existed = !!reviewsMap[reviewTarget.id];
+
+      const base = {
+        uid, // REQUIRED by your rules: request.resource.data.uid == request.auth.uid
+        rating: Number(rating),
+        text: String(text || "").trim().slice(0, 1000),
+        updatedAt: serverTimestamp(),
+        ...(existed ? {} : { createdAt: serverTimestamp() }),
+
+        // helpful metadata
+        bookingId: reviewTarget.id,
+        listingId,
+        guestUid: uid,
+        guestName: authUser?.displayName || authUser?.email || "",
+        category: normalizeCategory(
+          reviewTarget?.listing?.category || reviewTarget?.listingCategory || ""
+        ),
+      };
+
+      // 3 targets
+      const reviewRef = doc(database, "listings", listingId, "reviews", reviewTarget.id);
+      const globalRef = doc(database, "reviews", `${listingId}_${reviewTarget.id}_${uid}`);
+      const userRef   = doc(database, "users", uid, "reviews", reviewTarget.id);
+
+      // Atomic commit
+      const batch = writeBatch(database);
+      batch.set(reviewRef, base, { merge: true });
+      batch.set(globalRef, { ...base, id: globalRef.id }, { merge: true });
+      batch.set(userRef, base, { merge: true });
+      await batch.commit();
+
+      // Verify (read back) + console breadcrumbs
+      const [s1, s2, s3] = await Promise.all([reviewRef, globalRef, userRef].map(getDoc));
+      const exists1 = s1.exists(), exists2 = s2.exists(), exists3 = s3.exists();
+      const projectId = getApp()?.options?.projectId;
+
+      console.info(
+        "[reviews] written",
+        { projectId, reviewRef: reviewRef.path, exists1, globalRef: globalRef.path, exists2, userRef: userRef.path, exists3 }
+      );
+
+      // Optimistic UI map (drives “Edit review” UI)
+      setReviewsMap((m) => ({
+        ...m,
+        [reviewTarget.id]: {
+          ...(m[reviewTarget.id] || {}),
+          uid,
+          rating: Number(rating),
+          text: String(text || "").trim().slice(0, 1000),
+          bookingId: reviewTarget.id,
+          listingId,
+          guestUid: uid,
+          guestName: authUser?.displayName || authUser?.email || "",
+        },
+      }));
+
+      setToast({ type: "success", text: "Review published ✅" });
+      closeReview();
+    } catch (e) {
+      console.error("Save review failed:", e);
+      alert("Failed to save review. Please try again.");
+    } finally {
+      setSavingReview(false);
+    }
   };
 
   /* ---------- auth gates ---------- */
@@ -1679,7 +2020,6 @@ export default function BookingsPage() {
         `}
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
-          {/* Left: burger + logo */}
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -1703,7 +2043,6 @@ export default function BookingsPage() {
             </div>
           </div>
 
-          {/* Right: Host action */}
           <button
             onClick={handleHostClick}
             className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
@@ -1726,13 +2065,11 @@ export default function BookingsPage() {
         `}
       >
         <div className="max-w-7xl mx-auto">
-          {/* Page header */}
           <div className="mb-6">
             <h1 className="text-3xl font-bold text-foreground">Your Bookings</h1>
             <p className="text-muted-foreground">All reservations associated with your account.</p>
           </div>
 
-          {/* Tabs */}
           <div className="mb-5">
             <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
               {[
@@ -1758,7 +2095,6 @@ export default function BookingsPage() {
             </div>
           </div>
 
-          {/* Grid */}
           {loading ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -1773,7 +2109,13 @@ export default function BookingsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
               {visible.map((b) => {
                 const cat = normalizeCategory(b.listing?.category || b.listingCategory || "");
-                const commonProps = { b, onRequestCancel: startCancel, onRequestDetails: startDetails };
+                const commonProps = {
+                  b,
+                  onRequestCancel: startCancel,
+                  onRequestDetails: startDetails,
+                  onRequestReview: startReview,
+                  review: reviewsMap[b.id],
+                };
                 if (cat.startsWith("experience")) {
                   return <ExperienceCard key={b.id} {...commonProps} />;
                 }
@@ -1824,7 +2166,7 @@ export default function BookingsPage() {
         submitting={submittingCancel}
       />
 
-      {/* Booking Details modal (View button + card click opens this) */}
+      {/* Booking Details modal */}
       <BookingDetailsModal
         open={detailsOpen}
         booking={detailsTarget}
@@ -1833,7 +2175,25 @@ export default function BookingsPage() {
           closeDetails();
           startCancel(b);
         }}
+        myReview={detailsTarget ? reviewsMap[detailsTarget.id] : null}
+        onRequestReview={(b) => {
+          setDetailsOpen(false);
+          startReview(b);
+        }}
       />
+
+      {/* Review Modal */}
+      <ReviewModal
+        open={reviewOpen}
+        booking={reviewTarget}
+        existingReview={reviewTarget ? reviewsMap[reviewTarget.id] : null}
+        onClose={closeReview}
+        onSubmit={saveReview}
+        submitting={savingReview}
+      />
+
+      {/* Toast */}
+      <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
 }

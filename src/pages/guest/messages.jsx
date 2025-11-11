@@ -1,5 +1,11 @@
 // src/pages/guest/messages.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   collection,
@@ -23,7 +29,14 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
 
-import { Menu, Compass, MessageSquare, Send, ArrowLeft, Trash2 } from "lucide-react";
+import {
+  Menu,
+  Compass,
+  MessageSquare,
+  Send,
+  ArrowLeft,
+  Trash2,
+} from "lucide-react";
 
 /* ---------------- helpers ---------------- */
 const pick = (...vals) => {
@@ -42,8 +55,19 @@ const pick = (...vals) => {
 const normalizeUserDoc = (d = {}, fallbackUid) => {
   const first = pick(d.firstName, d.givenName, d.first_name);
   const last = pick(d.lastName, d.familyName, d.last_name);
-  const displayName = pick(d.displayName, d.name, [first, last].filter(Boolean).join(" "));
-  const photoURL = pick(d.photoURL, d.photoUrl, d.avatarURL, d.photo, d.avatar, d.profileImageUrl);
+  const displayName = pick(
+    d.displayName,
+    d.name,
+    [first, last].filter(Boolean).join(" ")
+  );
+  const photoURL = pick(
+    d.photoURL,
+    d.photoUrl,
+    d.avatarURL,
+    d.photo,
+    d.avatar,
+    d.profileImageUrl
+  );
   return {
     uid: pick(d.uid, fallbackUid),
     displayName: (displayName || fallbackUid || "User").trim(),
@@ -81,13 +105,60 @@ const tsToMs = (ts) => {
   return sec * 1000 + Math.floor(ns / 1e6);
 };
 
-/* ---------------- page ---------------- */
+// Unified getter for message time (server first, then client fallback)
+const getMsgMs = (m) => tsToMs(m?.timestamp) || m?.clientMs || 0;
+
+// dd-mm-yy key to detect day changes
+const dayKey = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+};
+
+// Friendly date labels: Today / Yesterday / Month Day
+const formatDateLabel = (ms) => {
+  const d = new Date(ms);
+  const today = new Date();
+  const oneDay = 24 * 60 * 60 * 1000;
+  const diff = Math.floor(
+    (new Date(today.getFullYear(), today.getMonth(), today.getDate()) -
+      new Date(d.getFullYear(), d.getMonth(), d.getDate())) /
+      oneDay
+  );
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: d.getFullYear() !== today.getFullYear() ? "numeric" : undefined,
+  });
+};
+
+// 12-hour clock with lowercase am/pm
+const formatTime12 = (ms) => {
+  const d = new Date(ms);
+  const h = d.getHours();
+  const hour12 = ((h + 11) % 12) + 1; // 1–12
+  const m = d.getMinutes().toString().padStart(2, "0");
+  const ampm = h >= 12 ? "pm" : "am";
+  return `${hour12}:${m} ${ampm}`;
+};
+
+// Broadcast "optimistic seen" (used by other UI parts such as nav badges)
+const emitOptimisticSeen = (ms = Date.now()) => {
+  try {
+    window.dispatchEvent(
+      new CustomEvent("messages:optimistic-seen", { detail: { ms } })
+    );
+  } catch {}
+};
+
+/* ---------------- main page ---------------- */
 const GuestMessagesPage = () => {
   const navigate = useNavigate();
   const [search] = useSearchParams();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
-  // Auth state
+  // Auth
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   useEffect(() => {
@@ -106,12 +177,14 @@ const GuestMessagesPage = () => {
   const [showHostModal, setShowHostModal] = useState(false);
   const [showPoliciesModal, setShowPoliciesModal] = useState(false);
 
-  // Check host status when signed in
+  // Host status
   useEffect(() => {
     const run = async () => {
       try {
         if (!currentUid) return;
-        const qs = await getDocs(query(collection(database, "hosts"), where("uid", "==", currentUid)));
+        const qs = await getDocs(
+          query(collection(database, "hosts"), where("uid", "==", currentUid))
+        );
         const hostStatus = !qs.empty;
         setIsHost(hostStatus);
         localStorage.setItem("isHost", hostStatus ? "true" : "false");
@@ -128,15 +201,27 @@ const GuestMessagesPage = () => {
   const [selectedChatUid, setSelectedChatUid] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
-  const msgEndRef = useRef(null);
+  const [sending, setSending] = useState(false);
 
-  // Soft-delete state (with deletedAt)
+  // Soft-delete state & recency
   const [hiddenAtMap, setHiddenAtMap] = useState({}); // { [otherUid]: ms }
+  const [lastActivityMs, setLastActivityMs] = useState({}); // { [otherUid]: ms }
+
+  // UI states
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  // Track last activity per counterpart
-  const [lastActivityMs, setLastActivityMs] = useState({}); // { [otherUid]: ms }
+  // Scroll refs
+  const msgEndRef = useRef(null);
+  const scrollBoxRef = useRef(null);
+
+  // One-shot "force scroll after my send is rendered"
+  const forceScrollNextRef = useRef(false);
+
+  // When opening a chat, wait until both initial snapshots arrive, then scroll
+  const initARef = useRef(false); // me → them
+  const initBRef = useRef(false); // them → me
+  const openedChatPendingScrollRef = useRef(false);
 
   // Preselect chat via URL ?with=<uid>
   useEffect(() => {
@@ -150,7 +235,12 @@ const GuestMessagesPage = () => {
       setHiddenAtMap({});
       return;
     }
-    const colRef = collection(database, "users", currentUid, "deletedConversations");
+    const colRef = collection(
+      database,
+      "users",
+      currentUid,
+      "deletedConversations"
+    );
     return onSnapshot(
       colRef,
       (snap) => {
@@ -247,12 +337,16 @@ const GuestMessagesPage = () => {
         conversationUserIds.map(async (uid) => {
           if (userMap[uid]) return;
           try {
-            const hostQs = await getDocs(query(collection(database, "hosts"), where("uid", "==", uid)));
+            const hostQs = await getDocs(
+              query(collection(database, "hosts"), where("uid", "==", uid))
+            );
             if (!hostQs.empty) {
               updates[uid] = normalizeUserDoc(hostQs.docs[0].data(), uid);
               return;
             }
-            const userQs = await getDocs(query(collection(database, "users"), where("uid", "==", uid)));
+            const userQs = await getDocs(
+              query(collection(database, "users"), where("uid", "==", uid))
+            );
             if (!userQs.empty) {
               updates[uid] = normalizeUserDoc(userQs.docs[0].data(), uid);
               return;
@@ -270,30 +364,47 @@ const GuestMessagesPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationUserIds]);
 
-  /* ---------- open chat (live, index-free) ---------- */
+  /* ---------- open chat (live, index-free, merged + sorted) ---------- */
   useEffect(() => {
     if (!currentUid || !selectedChatUid) {
       setMessages([]);
       return;
     }
 
+    // Reset initial-load flags whenever we open/switch a chat
+    initARef.current = false;
+    initBRef.current = false;
+    openedChatPendingScrollRef.current = true;
+
     const msgs = [];
     const col = collection(database, "messages");
-    const qA = query(col, where("senderId", "==", currentUid));        // me → others
-    const qB = query(col, where("senderId", "==", selectedChatUid));    // them → others
+    const qA = query(col, where("senderId", "==", currentUid)); // me → others
+    const qB = query(col, where("senderId", "==", selectedChatUid)); // them → others
 
     const mergeAndSet = () => {
       const map = new Map();
       for (const m of msgs) map.set(m.__id, m);
       const merged = Array.from(map.values()).sort((a, b) => {
-        const sa = a?.timestamp?.seconds ?? 0;
-        const sb = b?.timestamp?.seconds ?? 0;
-        const na = a?.timestamp?.nanoseconds ?? 0;
-        const nb = b?.timestamp?.nanoseconds ?? 0;
-        return sa === sb ? na - nb : sa - sb;
+        const ta = getMsgMs(a);
+        const tb = getMsgMs(b);
+        if (ta !== tb) return ta - tb;
+        // stable tiebreaker to avoid jitter
+        return a.__id > b.__id ? 1 : -1;
       });
       setMessages(merged);
-      requestAnimationFrame(() => msgEndRef.current?.scrollIntoView({ behavior: "smooth" }));
+    };
+
+    const scrollToBottomAfterFirstLoad = () => {
+      if (
+        openedChatPendingScrollRef.current &&
+        initARef.current &&
+        initBRef.current
+      ) {
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => scrollToBottom(true))
+        );
+        openedChatPendingScrollRef.current = false;
+      }
     };
 
     const unsubA = onSnapshot(
@@ -302,11 +413,20 @@ const GuestMessagesPage = () => {
         const filtered = [];
         snap.forEach((d) => {
           const m = d.data();
-          if (m.receiverId === selectedChatUid) filtered.push({ __id: d.id, ...m, _dir: "A" });
+          if (m.receiverId === selectedChatUid)
+            filtered.push({
+              __id: d.id,
+              ...m,
+              _dir: "A",
+              _pending: d.metadata?.hasPendingWrites === true,
+            });
         });
-        for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]?._dir === "A") msgs.splice(i, 1);
+        for (let i = msgs.length - 1; i >= 0; i--)
+          if (msgs[i]?._dir === "A") msgs.splice(i, 1);
         msgs.push(...filtered);
         mergeAndSet();
+        initARef.current = true;
+        scrollToBottomAfterFirstLoad();
       },
       (err) => console.error("messages qA error:", err)
     );
@@ -317,11 +437,20 @@ const GuestMessagesPage = () => {
         const filtered = [];
         snap.forEach((d) => {
           const m = d.data();
-          if (m.receiverId === currentUid) filtered.push({ __id: d.id, ...m, _dir: "B" });
+          if (m.receiverId === currentUid)
+            filtered.push({
+              __id: d.id,
+              ...m,
+              _dir: "B",
+              _pending: d.metadata?.hasPendingWrites === true,
+            });
         });
-        for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]?._dir === "B") msgs.splice(i, 1);
+        for (let i = msgs.length - 1; i >= 0; i--)
+          if (msgs[i]?._dir === "B") msgs.splice(i, 1);
         msgs.push(...filtered);
         mergeAndSet();
+        initBRef.current = true;
+        scrollToBottomAfterFirstLoad();
       },
       (err) => console.error("messages qB error:", err)
     );
@@ -332,64 +461,34 @@ const GuestMessagesPage = () => {
     };
   }, [currentUid, selectedChatUid]);
 
-  /* ---------- soft-delete compliant delete (index-free) ---------- */
-  const deleteConversation = async () => {
-    if (!currentUid || !selectedChatUid) return;
-    try {
-      setDeleting(true);
+  /* ---------- scroll helpers ---------- */
+  const scrollToBottom = useCallback((force = true) => {
+    const el = scrollBoxRef.current;
+    const end = msgEndRef.current;
+    if (!el || !end) return;
 
-      // Delete only your outgoing docs; client-filter the receiver.
-      const colRef = collection(database, "messages");
-      const myOutSnap = await getDocs(query(colRef, where("senderId", "==", currentUid)));
-      const targets = myOutSnap.docs.filter((d) => d.data()?.receiverId === selectedChatUid);
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    if (!force && !nearBottom) return;
 
-      const CHUNK = 450;
-      for (let i = 0; i < targets.length; i += CHUNK) {
-        const slice = targets.slice(i, i + CHUNK);
-        const batch = writeBatch(database);
-        slice.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-      }
-
-      // Mark hidden for YOU (with deletedAt)
-      await setDoc(
-        doc(database, "users", currentUid, "deletedConversations", selectedChatUid),
-        { uid: currentUid, otherUserId: selectedChatUid, deletedAt: serverTimestamp() }
-      );
-
-      setSelectedChatUid(null);
-      setMessages([]);
-      setConfirmOpen(false);
-    } catch (e) {
-      console.error("Failed to delete conversation:", e);
-      alert("You can only delete the messages you sent. The rest will be hidden from your view.");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  /* ---------- send message ---------- */
-  const sendMessage = async () => {
-    const text = newMessage.trim();
-    if (!currentUid || !selectedChatUid || !text) return;
-
-    // If previously hidden, unhide for current user
-    try {
-      await deleteDoc(doc(database, "users", currentUid, "deletedConversations", selectedChatUid));
-    } catch {
-      /* marker may not exist; ignore */
-    }
-
-    await addDoc(collection(database, "messages"), {
-      uid: currentUid, // matches your delete rule
-      senderId: currentUid,
-      receiverId: selectedChatUid,
-      message: text,
-      timestamp: serverTimestamp(),
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+        end.scrollIntoView({ behavior: "auto", block: "end", inline: "nearest" });
+      });
     });
+  }, []);
 
-    setNewMessage("");
-  };
+  // After messages render:
+  // - If we just sent one, force-scroll (one-shot).
+  // - Otherwise, keep the "only if near bottom" behavior.
+  useEffect(() => {
+    if (forceScrollNextRef.current) {
+      forceScrollNextRef.current = false;
+      scrollToBottom(true);
+    } else {
+      scrollToBottom(false);
+    }
+  }, [messages.length, scrollToBottom]);
 
   /* ---------- derived lists (auto-unhide if new messages exist) ---------- */
   const visibleConversations = useMemo(() => {
@@ -404,7 +503,11 @@ const GuestMessagesPage = () => {
   // Keep selected chat visible even if hidden (e.g., deep link)
   const finalConversations = useMemo(() => {
     const arr = visibleConversations.slice();
-    if (selectedChatUid && !arr.includes(selectedChatUid) && conversationUserIds.includes(selectedChatUid)) {
+    if (
+      selectedChatUid &&
+      !arr.includes(selectedChatUid) &&
+      conversationUserIds.includes(selectedChatUid)
+    ) {
       arr.push(selectedChatUid);
     }
     return arr;
@@ -414,9 +517,239 @@ const GuestMessagesPage = () => {
     () =>
       finalConversations
         .slice()
-        .sort((a, b) => (userMap[a]?.displayName || a).localeCompare(userMap[b]?.displayName || b)),
+        .sort((a, b) =>
+          (userMap[a]?.displayName || a).localeCompare(
+            userMap[b]?.displayName || b
+          )
+        ),
     [finalConversations, userMap]
   );
+
+  /* ---------- Update last seen (server) + emit optimistic (client) ---------- */
+  const writeSeenRef = useRef(0);
+  const updateLastSeenServer = useCallback(async () => {
+    if (!currentUid) return;
+    // De-bounce rapid writes (avoid spamming Firestore)
+    const now = Date.now();
+    if (now - writeSeenRef.current < 1500) {
+      emitOptimisticSeen(now);
+      return;
+    }
+    writeSeenRef.current = now;
+    try {
+      await setDoc(
+        doc(database, "users", currentUid),
+        { messagesLastSeenAt: serverTimestamp(), uid: currentUid },
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn("Failed to update messagesLastSeenAt:", e);
+    } finally {
+      emitOptimisticSeen(now);
+    }
+  }, [currentUid]);
+
+  // On mount & unmount
+  useEffect(() => {
+    updateLastSeenServer();
+    return () => {
+      emitOptimisticSeen(Date.now());
+    };
+  }, [updateLastSeenServer]);
+
+  // When switching chats, mark seen
+  useEffect(() => {
+    if (!selectedChatUid) return;
+    updateLastSeenServer();
+  }, [selectedChatUid, updateLastSeenServer]);
+
+  // When message list changes, mark seen for newest inbound in open thread
+  useEffect(() => {
+    if (!currentUid || !selectedChatUid) return;
+    const latestInbound = messages.reduce((acc, m) => {
+      if (m.senderId !== currentUid) {
+        const ms = tsToMs(m.timestamp);
+        return ms > acc ? ms : acc;
+      }
+      return acc;
+    }, 0);
+    emitOptimisticSeen(latestInbound || Date.now());
+  }, [messages.length, selectedChatUid, currentUid, messages]);
+
+  // Visibility changes (tab focus)
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === "visible") {
+        updateLastSeenServer();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [updateLastSeenServer]);
+
+  /* ---------- delete conversation (soft-delete compliant) ---------- */
+  const deleteConversation = async () => {
+    if (!currentUid || !selectedChatUid) return;
+    try {
+      setDeleting(true);
+
+      // Delete only your outgoing docs; client-filter the receiver.
+      const colRef = collection(database, "messages");
+      const myOutSnap = await getDocs(
+        query(colRef, where("senderId", "==", currentUid))
+      );
+      const targets = myOutSnap.docs.filter(
+        (d) => d.data()?.receiverId === selectedChatUid
+      );
+
+      const CHUNK = 450;
+      for (let i = 0; i < targets.length; i += CHUNK) {
+        const slice = targets.slice(i, i + CHUNK);
+        const batch = writeBatch(database);
+        slice.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      // Mark hidden for YOU (with deletedAt)
+      await deleteDoc(
+        doc(
+          database,
+          "users",
+          currentUid,
+          "deletedConversations",
+          selectedChatUid
+        )
+      ).catch(() => {});
+      await addDoc(
+        collection(database, "users", currentUid, "deletedConversations"),
+        {}
+      ); // noop write to warm cache
+
+      await setDoc(
+        doc(
+          database,
+          "users",
+          currentUid,
+          "deletedConversations",
+          selectedChatUid
+        ),
+        { uid: currentUid, otherUserId: selectedChatUid, deletedAt: serverTimestamp() }
+      );
+
+      setSelectedChatUid(null);
+      setMessages([]);
+      setConfirmOpen(false);
+    } catch (e) {
+      console.error("Failed to delete conversation:", e);
+      alert(
+        "You can only delete the messages you sent. The rest will be hidden from your view."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /* ---------- send message (optimistic time + one-shot scroll) ---------- */
+  const sendMessage = async () => {
+    const text = newMessage.trim();
+    if (!currentUid || !selectedChatUid || !text || sending) return;
+
+    setSending(true);
+    setNewMessage(""); // clear immediately for snappy UX
+
+    try {
+      // If previously hidden, unhide for current user
+      try {
+        await deleteDoc(
+          doc(
+            database,
+            "users",
+            currentUid,
+            "deletedConversations",
+            selectedChatUid
+          )
+        );
+      } catch {
+        /* ignore */
+      }
+
+      const nowMs = Date.now(); // local fallback time
+      forceScrollNextRef.current = true; // scroll after snapshot paints the bubble
+
+      await addDoc(collection(database, "messages"), {
+        uid: currentUid, // matches your delete rule
+        senderId: currentUid,
+        receiverId: selectedChatUid,
+        message: text,
+        timestamp: serverTimestamp(),
+        clientMs: nowMs, // fallback while server timestamp isn't ready
+      });
+
+      // no immediate scroll here; handled after render via effect
+    } catch (e) {
+      // Restore the text if send fails
+      console.error("Send failed:", e);
+      setNewMessage(text);
+      alert("Failed to send. Please try again.");
+      forceScrollNextRef.current = false;
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /* ---------- render messages (with date separators & pending dim) ---------- */
+  const renderMessages = (list, uid) => {
+    const nodes = [];
+    let lastDay = null;
+
+    list.forEach((m, idx) => {
+      const own = m.senderId === uid;
+      const ms = getMsgMs(m);
+      const dk = dayKey(ms);
+      const dim = m._pending && !m.timestamp?.seconds;
+
+      if (dk !== lastDay) {
+        nodes.push(
+          <div key={`date-${dk}-${idx}`} className="my-3 flex items-center gap-3">
+            <div className="flex-1 h-px bg-gray-200" />
+            <span className="text-xs text-gray-500">{formatDateLabel(ms)}</span>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
+        );
+        lastDay = dk;
+      }
+
+      nodes.push(
+        <div
+          key={m.__id}
+          className={`flex ${own ? "justify-end" : "justify-start"} mb-2 ${
+            dim ? "opacity-70 transition-opacity" : "opacity-100"
+          }`}
+        >
+          <div
+            className={`max-w-[72%] flex flex-col ${
+              own ? "items-end" : "items-start"
+            }`}
+          >
+            <div
+              className={`w-fit rounded-2xl px-3 py-2 shadow ${
+                own
+                  ? "bg-blue-600 text-white"
+                  : "bg-white text-gray-800 border border-gray-200"
+              }`}
+            >
+              <span className="text-sm block">{m.message}</span>
+            </div>
+            <span className="mt-1 text-[10px] leading-none text-gray-500 select-none">
+              {formatTime12(ms)}
+            </span>
+          </div>
+        </div>
+      );
+    });
+
+    return nodes;
+  };
 
   /* ---------- host CTA ---------- */
   const handleHostClick = () => {
@@ -426,7 +759,6 @@ const GuestMessagesPage = () => {
       setShowPoliciesModal(true);
     }
   };
-
   const handleAgreePolicies = () => {
     setShowPoliciesModal(false);
     setShowHostModal(true);
@@ -493,7 +825,9 @@ const GuestMessagesPage = () => {
               onClick={() => navigate("/dashboard")}
             >
               <BookifyLogo />
-              <span className="hidden sm:inline font-semibold text-gray-800">Messages</span>
+              <span className="hidden sm:inline font-semibold text-gray-800">
+                Messages
+              </span>
             </div>
           </div>
 
@@ -540,14 +874,17 @@ const GuestMessagesPage = () => {
                 </div>
                 <p className="text-muted-foreground mb-4">Select a chat to view messages.</p>
 
-                <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-2 max-h=[60vh] max-h-[60vh] overflow-y-auto pr-1">
                   {sortedConversations.length === 0 ? (
                     <div className="text-sm text-muted-foreground text-center py-6">
                       No conversations yet
                     </div>
                   ) : (
                     sortedConversations.map((uid) => {
-                      const data = userMap[uid] || { displayName: uid, photoURL: null };
+                      const data = userMap[uid] || {
+                        displayName: uid,
+                        photoURL: null,
+                      };
                       const active = selectedChatUid === uid;
                       return (
                         <button
@@ -560,7 +897,11 @@ const GuestMessagesPage = () => {
                           }`}
                           title={data.displayName}
                         >
-                          <Avatar url={data.photoURL} name={data.displayName} size={40} />
+                          <Avatar
+                            url={data.photoURL}
+                            name={data.displayName}
+                            size={40}
+                          />
                           <div className="text-left min-w-0">
                             <p className="font-medium text-foreground truncate">
                               {data.displayName}
@@ -595,15 +936,21 @@ const GuestMessagesPage = () => {
 
                       <Avatar
                         url={userMap[selectedChatUid]?.photoURL}
-                        name={userMap[selectedChatUid]?.displayName || selectedChatUid}
+                        name={
+                          userMap[selectedChatUid]?.displayName ||
+                          selectedChatUid
+                        }
                         size={36}
                       />
 
                       <div className="min-w-0">
                         <div className="font-semibold truncate">
-                          {userMap[selectedChatUid]?.displayName || selectedChatUid}
+                          {userMap[selectedChatUid]?.displayName ||
+                            selectedChatUid}
                         </div>
-                        <div className="text-xs text-muted-foreground">Conversation</div>
+                        <div className="text-xs text-muted-foreground">
+                          Conversation
+                        </div>
                       </div>
                     </div>
 
@@ -626,33 +973,18 @@ const GuestMessagesPage = () => {
 
                 {selectedChatUid ? (
                   <>
-                    <div className="h-[48vh] md:h-[54vh] overflow-y-auto p-4 bg-gray-50">
+                    <div
+                      ref={scrollBoxRef}
+                      className="h-[48vh] md:h-[54vh] overflow-y-auto p-4 bg-gray-50"
+                    >
                       {messages.length === 0 ? (
                         <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
                           Say hello 👋
                         </div>
                       ) : (
-                        messages.map((m) => {
-                          const own = m.senderId === currentUid;
-                          return (
-                            <div
-                              key={m.__id}
-                              className={`flex ${own ? "justify-end" : "justify-start"} mb-2`}
-                            >
-                              <div
-                                className={`max-w-[72%] rounded-2xl px-3 py-2 shadow ${
-                                  own
-                                    ? "bg-blue-600 text-white"
-                                    : "bg-white text-gray-800 border border-gray-200"
-                                }`}
-                              >
-                                <span className="text-sm">{m.message}</span>
-                              </div>
-                            </div>
-                          );
-                        })
+                        renderMessages(messages, currentUid)
                       )}
-                      <div ref={msgEndRef} />
+                      <div ref={msgEndRef} aria-hidden="true" />
                     </div>
 
                     <div className="border-t border-gray-200 bg-white/80 p-3">
@@ -664,10 +996,11 @@ const GuestMessagesPage = () => {
                           onChange={(e) => setNewMessage(e.target.value)}
                           onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                           className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                          disabled={sending}
                         />
                         <button
                           onClick={sendMessage}
-                          disabled={!newMessage.trim()}
+                          disabled={!newMessage.trim() || sending}
                           className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 shadow disabled:opacity-50 disabled:pointer-events-none"
                           aria-label="Send"
                         >
@@ -678,7 +1011,9 @@ const GuestMessagesPage = () => {
                   </>
                 ) : (
                   <div className="h-[48vh] md:h-[60vh] flex items-center justify-center text-muted-foreground">
-                    <p className="text-base">Select a conversation to start chatting</p>
+                    <p className="text-base">
+                      Select a conversation to start chatting
+                    </p>
                   </div>
                 )}
               </div>

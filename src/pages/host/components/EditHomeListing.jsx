@@ -118,12 +118,14 @@ export default function EditHomeModal({
     discountType: "none",
     discountValue: 0,
     availability: { start: "", end: "" },
+    cancellationPolicy: "",           // ✅ added
     agreeToTerms: false,
   });
 
   const [newAmenity, setNewAmenity] = useState("");
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [showFullPolicy, setShowFullPolicy] = useState(false); // ✅ for read-more/less
 
   /** Hydrate from incoming listing */
   useEffect(() => {
@@ -151,12 +153,16 @@ export default function EditHomeModal({
       end: listing?.availability?.end || "",
     };
 
+    // cancellation policy hydrate
+    safe.cancellationPolicy = listing?.cancellationPolicy || "";
+
     // default category if missing
     if (!safe.category) safe.category = "Homes";
 
     setFormData(safe);
     setCurrentPhotoIndex(0);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    setShowFullPolicy(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, listing]);
 
   const handleChange = (key, value) =>
@@ -253,7 +259,7 @@ export default function EditHomeModal({
 
     const g = formData.guests || {};
     const normalized = {
-      ...formData,
+      ...formData, // includes cancellationPolicy
       price: Number(formData.price || 0),
       cleaningFee: Number(formData.cleaningFee || 0),
       discountValue: Number(formData.discountValue || 0),
@@ -500,7 +506,7 @@ export default function EditHomeModal({
                 })}
               </div>
 
-              <div className="rounded-2xl sm:rounded-3xl overflow-hidden bg-white/80 backdrop-blur-md border border-white/60 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)] p-4 sm:p-6">
+              <div className="rounded-2xl sm:rounded-3xl overflow-hidden bg-white/80 backdrop-blur-md border border-white/60 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)] p-4 sm:p-6">
                 <label className="block text-sm font-semibold text-gray-900 mb-2">
                   What makes your place unique? <span className="text-gray-500">(optional)</span>
                 </label>
@@ -1089,6 +1095,86 @@ export default function EditHomeModal({
                       Clear
                     </button>
                   </div>
+                </div>
+              </div>
+            </section>
+
+            {/* 🛡️ Cancellation Policy (edit + preview) */}
+            <section className="space-y-4">
+              <h3 className="text-base sm:text-lg font-semibold text-gray-900">
+                Cancellation Policy
+              </h3>
+
+              <div className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
+                <div className="flex items-center gap-3">
+                  <span className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                    <ShieldCheck className="w-6 h-6" />
+                  </span>
+                  <div>
+                    <h4 className="text-lg font-semibold text-gray-900">Your policy</h4>
+                    <p className="text-sm text-gray-600">Be precise about time windows and refunds.</p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-2">
+                  <label className="text-sm font-semibold text-gray-900">Cancellation Policy</label>
+                  <textarea
+                    rows={6}
+                    value={formData.cancellationPolicy}
+                    onChange={(e) => handleChange("cancellationPolicy", e.target.value)}
+                    placeholder="e.g., Full refund up to 48 hours before the start time. 50% refund for 24–48 hours. No refund within 24 hours."
+                    className="w-full rounded-2xl border border-gray-300 bg-white/90 px-4 py-3 text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                  />
+                  <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                    <span>Tip: Include a clear time cutoff and what refund applies.</span>
+                    <span>{(formData.cancellationPolicy || "").length} chars</span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-indigo-600"
+                      style={{
+                        width: `${Math.min(100, ((formData.cancellationPolicy?.length || 0) / 600) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Preview with read-more/less */}
+                <div className="mt-6 rounded-2xl border border-gray-200 bg-white/70 p-4">
+                  <span className="text-sm font-semibold text-gray-900">Preview</span>
+                  {formData.cancellationPolicy ? (
+                    <>
+                      <p
+                        className={[
+                          "mt-1 text-sm text-gray-800 whitespace-pre-line transition-all",
+                          showFullPolicy ? "" : "max-h-24 overflow-hidden",
+                        ].join(" ")}
+                      >
+                        {formData.cancellationPolicy}
+                      </p>
+                      {formData.cancellationPolicy.length > 200 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowFullPolicy((v) => !v)}
+                          className="mt-1 text-sm font-medium text-blue-600 hover:text-blue-700"
+                        >
+                          {showFullPolicy ? "Show less" : "Show more"}
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-sm text-gray-500">Add your policy above to preview it here.</p>
+                  )}
+                </div>
+
+                {/* Example helper */}
+                <div className="mt-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-4 flex items-start gap-3">
+                  <span className="grid place-items-center w-9 h-9 rounded-lg bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                    <Info className="w-5 h-5" />
+                  </span>
+                  <p className="text-sm text-blue-900">
+                    <span className="font-medium">Example:</span> “Full refund up to 48 hours before the start time. 50% refund for cancellations 24–48 hours prior. No refund within 24 hours.”
+                  </p>
                 </div>
               </div>
             </section>

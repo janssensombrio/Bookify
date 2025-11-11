@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    /* File Layout */
+    "rootDir": "src",
+    "outDir": "lib",
+
+    /* Environment */
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2020",
+    "lib": ["ES2020"],
+    "types": ["node"],
+
+    /* Outputs */
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+
+    /* Type Safety */
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+
+    /* Important: allow TS to transform ESM imports to CJS */
+    "verbatimModuleSyntax": false,
+
+    /* Keep this simple for Node backends */
+    "moduleDetection": "auto"
+  },
+  "include": ["src"]
+}

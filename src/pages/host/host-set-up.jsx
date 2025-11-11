@@ -6,8 +6,11 @@ import "react-datepicker/dist/react-datepicker.css";
 import { auth, database } from "../../config/firebase";
 import "./styles/host-set-up.css";
 import PolicyComplianceModal from "./components/PolicyComplianceModal";
-import { Home, BedDouble, Users, Building2, Crown, Mountain, Tent, Wifi, Coffee, Tv, Car, Dumbbell, PawPrint, Snowflake, Waves,
-  ShowerHead, KeyRound, Utensils, Wind, Lock, X, UploadCloud, Image as ImageIcon, Heading1, AlignLeft, Sparkles, BadgeDollarSign, Brush, Percent, Tag, Info, Calculator, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Home, BedDouble, Users, Building2, Crown, Mountain, Tent, Wifi, Coffee, Tv, Car, Dumbbell, PawPrint, Snowflake, Waves,
+  ShowerHead, KeyRound, Utensils, Wind, Lock, X, UploadCloud, Image as ImageIcon, Heading1, AlignLeft, Sparkles,
+  BadgeDollarSign, Brush, Percent, Tag, Info, Calculator, ChevronLeft, ChevronRight, ShieldAlert, CalendarClock
+} from "lucide-react";
 import LocationPickerMapString from "./components/LocationPickerMap";
 
 const CLOUD_NAME = "dijmlbysr"; // From Cloudinary dashboard
@@ -30,9 +33,15 @@ const nightsBetween = (s, e) => {
   return Math.max(0, Math.ceil((endMs - startMs) / msPerDay));
 };
 
+// Pretty date for previews
+const prettyDate = (ymd) => {
+  if (!ymd) return "";
+  const d = new Date(ymd + "T00:00:00");
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+};
+
 export const HostSetUp = () => {
   const location = useLocation();
-  
   const navigate = useNavigate();
 
   const [step, setStep] = useState(1);
@@ -42,10 +51,11 @@ export const HostSetUp = () => {
   const [municipalities, setMunicipalities] = useState([]);
   const [barangays, setBarangays] = useState([]);
 
-  const [newAmenity, setNewAmenity] = useState("");  // Add this line
+  const [newAmenity, setNewAmenity] = useState("");
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
 
   const [openPolicyModal, setOpenPolicyModal] = useState(false);
+  const [showFullPolicy, setShowFullPolicy] = useState(false); // for preview toggle
 
   const [formData, setFormData] = useState({
     category: "Homes",
@@ -66,6 +76,7 @@ export const HostSetUp = () => {
     discountType: "none",
     discountValue: 0,
     availability: { start: "", end: "" },
+    cancellationPolicy: "",            // ✅ added to initial state
     agreeToTerms: false,
   });
 
@@ -73,8 +84,8 @@ export const HostSetUp = () => {
   const prevStep = () => setStep(step - 1);
 
   const handleChange = (key, value) => {
-  setFormData(prev => ({ ...prev, [key]: value }));
-};
+    setFormData(prev => ({ ...prev, [key]: value }));
+  };
 
   const [draftId, setDraftId] = useState(null);
 
@@ -117,9 +128,7 @@ export const HostSetUp = () => {
       }
 
       alert("Draft saved successfully!");
-
       navigate("/hostpage", { state: { activePage: "listings", showDrafts: true } });
-      
     } catch (error) {
       console.error("Error saving draft:", error);
       alert("Failed to save draft.");
@@ -148,63 +157,65 @@ export const HostSetUp = () => {
   };
 
   const saveHost = async () => {
-  try {
-    const user = auth.currentUser;
-    if (!user) {
-      alert("You must be logged in first.");
-      return;
-    }
-
-    // --- Gather profile fields with safe fallbacks ---
-    const fromAuth = parseName(user.displayName || "");
-    let firstName = fromAuth.firstName || "";
-    let lastName  = fromAuth.lastName  || "";
-    let photoURL  = user.photoURL || "";
-
-    // Optional: if you keep a users/{uid} profile doc, prefer its values
     try {
-      const profSnap = await getDoc(doc(database, "users", user.uid));
-      if (profSnap.exists()) {
-        const p = profSnap.data() || {};
-        firstName = p.firstName ?? firstName;
-        lastName  = p.lastName  ?? lastName;
-        photoURL  = p.photoURL  ?? photoURL;
+      const user = auth.currentUser;
+      if (!user) {
+        alert("You must be logged in first.");
+        return;
       }
-    } catch (e) {
-      console.warn("Profile lookup failed (non-fatal):", e);
+
+      // --- Gather profile fields with safe fallbacks ---
+      const fromAuth = parseName(user.displayName || "");
+      let firstName = fromAuth.firstName || "";
+      let lastName  = fromAuth.lastName  || "";
+      let photoURL  = user.photoURL || "";
+      const isVerified = true;
+
+      // Optional: if you keep a users/{uid} profile doc, prefer its values
+      try {
+        const profSnap = await getDoc(doc(database, "users", user.uid));
+        if (profSnap.exists()) {
+          const p = profSnap.data() || {};
+          firstName = p.firstName ?? firstName;
+          lastName  = p.lastName  ?? lastName;
+          photoURL  = p.photoURL  ?? photoURL;
+        }
+      } catch (e) {
+        console.warn("Profile lookup failed (non-fatal):", e);
+      }
+
+      const hostsRef = collection(database, "hosts");
+      const q = query(hostsRef, where("uid", "==", user.uid));
+      const snapshot = await getDocs(q);
+
+      const base = {
+        uid: user.uid,
+        email: user.email || "",
+        firstName,
+        lastName,
+        photoURL,
+        displayName: `${firstName} ${lastName}`.trim() || (user.displayName || ""),
+        isVerified,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (snapshot.empty) {
+        await addDoc(hostsRef, {
+          ...base,
+          createdAt: serverTimestamp(),
+        });
+        console.log("Host added successfully!");
+      } else {
+        // Update the first matching host doc (you only ever create one per uid)
+        const existing = snapshot.docs[0].ref;
+        await updateDoc(existing, base);
+        console.log("Host already exists, updated profile fields.");
+      }
+    } catch (err) {
+      console.error("Error adding host:", err);
+      alert("Something went wrong saving host.");
     }
-
-    const hostsRef = collection(database, "hosts");
-    const q = query(hostsRef, where("uid", "==", user.uid));
-    const snapshot = await getDocs(q);
-
-    const base = {
-      uid: user.uid,
-      email: user.email || "",
-      firstName,
-      lastName,
-      photoURL,
-      displayName: `${firstName} ${lastName}`.trim() || (user.displayName || ""),
-      updatedAt: serverTimestamp(),
-    };
-
-    if (snapshot.empty) {
-      await addDoc(hostsRef, {
-        ...base,
-        createdAt: serverTimestamp(),
-      });
-      console.log("Host added successfully!");
-    } else {
-      // Update the first matching host doc (you only ever create one per uid)
-      const existing = snapshot.docs[0].ref;
-      await updateDoc(existing, base);
-      console.log("Host already exists, updated profile fields.");
-    }
-  } catch (err) {
-    console.error("Error adding host:", err);
-    alert("Something went wrong saving host.");
-  }
-};
+  };
 
   const handleSubmit = async () => {
     try {
@@ -235,7 +246,6 @@ export const HostSetUp = () => {
         publishedAt: serverTimestamp(),
       };
 
-
       if (draftId) {
         // ✅ Update existing draft
         const draftRef = doc(database, "listings", draftId);
@@ -246,7 +256,6 @@ export const HostSetUp = () => {
       }
 
       alert("Your listing has been published!");
-      
       navigate("/hostpage");
     } catch (error) {
       console.error("Error publishing listing:", error);
@@ -294,18 +303,17 @@ export const HostSetUp = () => {
     (formData.guests?.children ?? 0) +
     (formData.guests?.infants ?? 0);
 
-    // --- Screen 9 helpers ---
-    const start = formData?.availability?.start || "";
-    const end   = formData?.availability?.end || "";
+  // --- Screen 9 helpers ---
+  const start = formData?.availability?.start || "";
+  const end   = formData?.availability?.end || "";
 
-    const invalidRange =
-      start && end
-        ? new Date(`${start}T00:00:00`).setHours(12) >
-          new Date(`${end}T00:00:00`).setHours(12)
-        : false;
+  const invalidRange =
+    start && end
+      ? new Date(`${start}T00:00:00`).setHours(12) >
+        new Date(`${end}T00:00:00`).setHours(12)
+      : false;
 
-    const nights = nightsBetween(start, end);
-
+  const nights = nightsBetween(start, end);
 
   // convert Date -> "YYYY-MM-DD" (no timezone surprises)
   const formatYMD = (d) => {
@@ -335,7 +343,17 @@ export const HostSetUp = () => {
     }));
   };
 
-
+  // ✅ Clamp photo index if photos change (avoid out-of-bounds)
+  useEffect(() => {
+    const len = formData.photos?.length || 0;
+    if (len === 0) {
+      if (currentPhotoIndex !== 0) setCurrentPhotoIndex(0);
+      return;
+    }
+    if ((currentPhotoIndex || 0) > len - 1) {
+      setCurrentPhotoIndex(len - 1);
+    }
+  }, [formData.photos, currentPhotoIndex]);
 
   return (
     <div className="host-setup-page">
@@ -412,7 +430,7 @@ export const HostSetUp = () => {
                 {/* Sheen / highlight for 3D feel */}
                 <div className="pointer-events-none absolute inset-0 rounded-3xl bg-gradient-to-b from-white/50 to-transparent" />
 
-                {/* Icon + text (centered, stacked) */}
+                {/* Icon + text */}
                 <div className="relative flex-1 p-6 sm:p-8 flex flex-col items-center justify-center text-center">
                   <div
                     className={[
@@ -440,7 +458,7 @@ export const HostSetUp = () => {
                   </p>
                 </div>
 
-                {/* Bottom bar with state */}
+                {/* Bottom bar */}
                 <div
                   className={[
                     "relative px-6 sm:px-7 py-4 border-t",
@@ -463,7 +481,7 @@ export const HostSetUp = () => {
                   </span>
                 </div>
 
-                {/* Soft drop shadow “cast” for more depth */}
+                {/* Soft drop shadow cast */}
                 <div className="pointer-events-none absolute -bottom-3 left-6 right-6 h-6 rounded-[2rem] bg-gradient-to-b from-blue-500/10 to-transparent blur-md" />
               </button>
             );
@@ -676,7 +694,7 @@ export const HostSetUp = () => {
             </button>
           );
 
-          // After rendering the "Cabin" card, inject the Unique Description as a grid item
+          // After "Cabin", inject Unique Description as a grid item
           if (value === "Cabin") {
             return [
               Card,
@@ -747,7 +765,6 @@ export const HostSetUp = () => {
   </section>
 )}
 
-
       {/* 🛏️ Screen 4 */}
       {step === 4 && (
       <section
@@ -778,7 +795,7 @@ export const HostSetUp = () => {
             <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-5 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]">
               <div className="flex items-center gap-3">
                 <div className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
-                  {/* Users icon looks good for adults */}
+                  {/* Users icon */}
                   <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2"/></svg>
                 </div>
                 <div>
@@ -981,7 +998,7 @@ export const HostSetUp = () => {
 
         {/* Content */}
         <div className="w-full max-w-7xl mx-auto space-y-6">
-          {/* Selected amenities (pills with remove) */}
+          {/* Selected amenities */}
           <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Selected amenities</h3>
 
@@ -1016,7 +1033,7 @@ export const HostSetUp = () => {
             )}
           </div>
 
-          {/* Suggested amenities grid (toggle cards) */}
+          {/* Suggested amenities grid */}
           <div className="rounded-2xl sm:rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
             <h3 className="text-sm font-semibold text-gray-900 mb-4">Popular amenities</h3>
 
@@ -1166,7 +1183,7 @@ export const HostSetUp = () => {
 
         {/* Uploader + Grid */}
         <div className="w-full max-w-5xl mx-auto space-y-6">
-          {/* Upload Dropzone (click-to-upload) */}
+          {/* Upload Dropzone */}
           <div
             className="
               rounded-3xl border-2 border-dashed border-blue-300
@@ -1238,7 +1255,7 @@ export const HostSetUp = () => {
                     photos: [...prev.photos, ...uploadedUrls],
                   }));
                 }
-                // optional: e.target.value = ""; // reset file input
+                // optional: e.target.value = "";
               }}
             />
           </div>
@@ -1534,7 +1551,7 @@ export const HostSetUp = () => {
 
     {/* Content: Form + Summary */}
     <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
-      {/* Left: Form (2 columns on large) */}
+      {/* Left: Form */}
       <div className="lg:col-span-2 space-y-4 sm:space-y-6">
         {/* Nightly Price */}
         <div className="rounded-3xl bg-white/80 backdrop-blur-md border border-white/60 p-4 sm:p-6 shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]">
@@ -1616,7 +1633,6 @@ export const HostSetUp = () => {
             Discounts <span className="text-gray-500">(optional)</span>
           </label>
 
-          {/* Discount Type - segmented */}
           <div className="grid grid-cols-3 gap-2 sm:gap-3">
             {[
               { key: "none", label: "None", Icon: Tag },
@@ -1646,13 +1662,11 @@ export const HostSetUp = () => {
             })}
           </div>
 
-          {/* Discount Value */}
           <div>
             <label className="block text-sm font-semibold text-gray-900 mb-2">
               Discount value
             </label>
             <div className="relative">
-              {/* left badge shows unit depending on type */}
               <div className="
                 pointer-events-none absolute left-3 top-1/2 -translate-y-1/2
                 grid place-items-center w-10 h-10 rounded-xl
@@ -1701,7 +1715,6 @@ export const HostSetUp = () => {
               />
             </div>
 
-            {/* tiny helper */}
             <p className="mt-2 text-xs text-gray-600">
               Percentage applies to nightly price only; fixed amount is deducted per booking.
             </p>
@@ -1852,7 +1865,7 @@ export const HostSetUp = () => {
           </div>
 
           {/* Content */}
-          <div className="max-w-5xl w-full mx-auto h-full">
+          <div className="max-w-2xl w-full mx-auto h-full">
             <div className="
               rounded-3xl border border-white/20 bg-white/80 backdrop-blur-md
               p-5 sm:p-6 md:p-8
@@ -1876,7 +1889,6 @@ export const HostSetUp = () => {
               />
             </div>
 
-              {/* Optional quick actions */}
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
@@ -1966,8 +1978,160 @@ export const HostSetUp = () => {
         </section>
       )}
 
-      {/* ✅ Screen 10 */}
+      {/* 🛡️ Cancellation Policy — inline */}
       {step === 10 && (
+        <section className="
+          px-3 sm:px-6 md:px-8 py-12 sm:py-16
+          min-h-[calc(100vh-56px)]
+          grid grid-rows-[auto,1fr,auto] gap-6
+          bg-gradient-to-br from-blue-50 via-white to-indigo-50
+        ">
+          {/* Title */}
+          <div className="max-w-3xl mx-auto text-center">
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900">
+              Cancellation Policy
+            </h1>
+            <p className="mt-2 text-gray-700 text-sm sm:text-base">
+              Clearly set expectations so guests know what happens if plans change.
+            </p>
+          </div>
+
+          {/* Content */}
+          <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 items-start">
+            {/* Left: Policy input */}
+            <div className="
+              lg:col-span-2 rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-5 sm:p-6 md:p-8
+            ">
+              <div className="flex items-center gap-3">
+                <span className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  <ShieldAlert className="w-6 h-6" />
+                </span>
+                <div>
+                  <h2 className="text-lg sm:text-xl font-semibold text-gray-900">Your policy</h2>
+                  <p className="text-sm text-gray-600">Be precise about time windows and refunds.</p>
+                </div>
+              </div>
+
+              {/* Textarea */}
+              <div className="mt-5 grid gap-2">
+                <label className="text-sm font-semibold text-gray-900">Cancellation Policy</label>
+                <textarea
+                  rows={6}
+                  className="
+                    w-full rounded-2xl border border-gray-300 bg-white/90 px-4 py-3 text-gray-800 shadow-sm
+                    focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500
+                  "
+                  placeholder="e.g., Full refund up to 48 hours before the start time. 50% refund for 24–48 hours. No refund within 24 hours."
+                  value={formData.cancellationPolicy}
+                  onChange={(e) => handleChange('cancellationPolicy', e.target.value)}
+                />
+                {/* helper */}
+                <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+                  <span>Tip: Include a clear time cutoff and what refund applies.</span>
+                  <span>{(formData.cancellationPolicy || '').length} chars</span>
+                </div>
+                <div className="mt-1 h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-600"
+                    style={{
+                      width: `${Math.min(100, ((formData.cancellationPolicy?.length || 0) / 600) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Examples */}
+              <div className="mt-6 grid gap-3">
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <p className="text-sm text-indigo-900">
+                    Example: <span className="font-medium">
+                      “Full refund up to 48 hours before the start time. 50% refund for cancellations 24–48 hours prior. No refund within 24 hours.”
+                    </span>
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
+                  <p className="text-sm text-blue-900">
+                    Weather plan: <span className="font-medium">“If severe weather is forecast, we’ll reschedule or offer a full refund.”</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Tips & checklist */}
+            <aside className="
+              lg:sticky lg:top-24 rounded-3xl bg-white/80 backdrop-blur-md border border-white/60
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
+              p-5 sm:p-6 md:p-8 grid gap-5
+            ">
+              <div className="flex items-center gap-3">
+                <span className="grid place-items-center w-12 h-12 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  <CalendarClock className="w-6 h-6" />
+                </span>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-semibold text-gray-900">Make it clear</h3>
+                  <p className="text-sm text-gray-600">Guests should know exactly what applies.</p>
+                </div>
+              </div>
+
+              <ul className="text-sm text-gray-700 space-y-2">
+                <li>• Define the cutoff (e.g., 24/48/72 hours before start time).</li>
+                <li>• State refund amounts for each window.</li>
+                <li>• Mention no-show consequences.</li>
+                <li>• Include weather/force majeure handling.</li>
+                <li>• Note how to request a cancellation.</li>
+              </ul>
+
+              <div className="rounded-2xl border border-gray-200 bg-white/70 p-4 flex items-start gap-3">
+                <span className="grid place-items-center w-10 h-10 rounded-lg bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
+                  <Info className="w-5 h-5" />
+                </span>
+                <p className="text-sm text-gray-700">
+                  Keep language friendly but firm. Avoid ambiguity like “may” or “normally”—use clear “will” statements.
+                </p>
+              </div>
+            </aside>
+          </div>
+
+          {/* Actions */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={prevStep}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+            >
+              Back
+            </button>
+
+            <button
+              type="button"
+              onClick={saveDraft}
+              className="w-full sm:w-auto inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-100 transition"
+            >
+              Save to Drafts
+            </button>
+
+            <button
+              type="button"
+              onClick={nextStep}
+              disabled={!formData.cancellationPolicy?.trim()}
+              className="
+                w-full sm:w-auto inline-flex items-center justify-center
+                rounded-full bg-gradient-to-r from-blue-500 to-blue-600
+                px-7 py-3 text-sm font-semibold text-white shadow-md
+                hover:from-blue-600 hover:to-blue-700
+                transition disabled:opacity-50 disabled:pointer-events-none
+              "
+            >
+              Next
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* ✅ Screen 11 - Review & Publish */}
+      {step === 11 && (
       <section
         className="
           px-4 md:px-8 py-10
@@ -1993,14 +2157,14 @@ export const HostSetUp = () => {
             className="
               relative rounded-3xl overflow-hidden
               bg-white/70 backdrop-blur-md border border-white/60
-              shadow-[0_8px_20px_rgba(30,58,138,0.08),_0_20px_40px_rgba(30,58,138,0.06)]
-              hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_30px_60px_rgba(30,58,138,0.12)]
+              shadow-[0_8px_20px_rgba(30,58,138,0.08),0_20px_40px_rgba(30,58,138,0.06)]
+              hover:shadow-[0_12px_30px_rgba(30,58,138,0.12),0_30px_60px_rgba(30,58,138,0.12)]
               transition-shadow p-5 sm:p-6 md:p-8
             "
           >
             {formData.photos?.length ? (
               <>
-                {/* Hero preview (large) */}
+                {/* Hero preview */}
                 <div
                   className="
                     relative w-full rounded-2xl overflow-hidden border border-gray-200 bg-gray-50
@@ -2088,7 +2252,7 @@ export const HostSetUp = () => {
                 </div>
               </>
             ) : (
-              // Empty state (same footprint as hero)
+              // Empty state
               <div className="grid place-items-center rounded-2xl border border-dashed border-gray-300 bg-white/70 h-[300px] sm:h-[380px] md:h-[460px] lg:h-[560px]">
                 <div className="text-center p-6">
                   <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 grid place-items-center shadow-inner mb-3">
@@ -2134,7 +2298,7 @@ export const HostSetUp = () => {
               />
               <DetailRow label="Property Type" value={formData.propertyType || "Not set"} />
 
-              {/* Guests breakdown (object) */}
+              {/* Guests breakdown */}
               <DetailRow
                 label="Guests"
                 value={
@@ -2189,10 +2353,38 @@ export const HostSetUp = () => {
                 label="Availability"
                 value={
                   formData?.availability?.start && formData?.availability?.end
-                    ? `${formData.availability.start} to ${formData.availability.end}`
+                    ? `${prettyDate(formData.availability.start)} → ${prettyDate(formData.availability.end)}`
                     : "Not set"
                 }
               />
+
+              {/* ✅ Cancellation Policy preview with read-more */}
+              <div className="mt-3">
+                <span className="text-sm font-semibold text-gray-900">Cancellation Policy:</span>
+                {formData.cancellationPolicy ? (
+                  <>
+                    <p
+                      className={[
+                        "mt-1 text-sm text-gray-800 whitespace-pre-line transition-all",
+                        showFullPolicy ? "" : "max-h-24 overflow-hidden"
+                      ].join(" ")}
+                    >
+                      {formData.cancellationPolicy}
+                    </p>
+                    {formData.cancellationPolicy.length > 200 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowFullPolicy(v => !v)}
+                        className="mt-1 text-sm font-medium text-blue-600 hover:text-blue-700"
+                      >
+                        {showFullPolicy ? "Show less" : "Show more"}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <p className="mt-1 text-sm text-gray-500">Not set</p>
+                )}
+              </div>
             </div>
 
             {/* Terms */}
@@ -2254,16 +2446,14 @@ export const HostSetUp = () => {
           </button>
         </div>
 
-        {/* Policy modal (unchanged API) */}
+        {/* Policy modal */}
         <PolicyComplianceModal
           open={openPolicyModal}
-          onClose={() => setOpenPolicyModal(false)} 
-          onConfirm={() => { 
-            // mark that they agreed via the modal 
-            setFormData(prev => ({ ...prev, agreeToTerms: true })); 
-          }} 
+          onClose={() => setOpenPolicyModal(false)}
+          onConfirm={() => {
+            setFormData(prev => ({ ...prev, agreeToTerms: true }));
+          }}
         />
-
       </section>
     )}
     </div>

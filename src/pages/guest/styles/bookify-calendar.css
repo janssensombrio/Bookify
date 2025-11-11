@@ -1,20 +1,21 @@
-/* ===== Bookify Calendar v3: modern, stable, accessible ===== */
-.bookify-calendar {
-  /* (added) anchor ::after highlight to this element */
-  position: relative;
+/* ===== Bookify Calendar v4: responsive grid layout ===== */
 
-  /* Theme tokens */
-  --b1: #3b82f6;             /* blue-500 */
-  --b2: #6366f1;             /* indigo-500 */
-  --text: #0f172a;           /* slate-900 */
-  --muted: #64748b;          /* slate-500 */
-  --border: #e5e7eb;         /* gray-200 */
-  --hover: #f1f5f9;          /* slate-100 */
+/* Base container keeps your look & tokens */
+.bookify-calendar {
+  position: relative;
+  --b1: #3b82f6;
+  --b2: #6366f1;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e5e7eb;
+  --hover: #f1f5f9;
   --ring: rgba(59,130,246,.35);
   --shadow-1: 0 10px 24px rgba(2,6,23,.06);
   --shadow-2: 0 16px 36px rgba(2,6,23,.10);
 
-  /* Container look */
+  /* NEW: grid spacing token used below */
+  --gap: 8px;
+
   color: var(--text);
   border-radius: 16px;
   background: rgba(255,255,255,.92);
@@ -23,7 +24,6 @@
   box-shadow: var(--shadow-1), inset 0 1px 0 rgba(255,255,255,.65);
   padding: 12px;
 
-  /* Layout */
   display: flex;
   align-items: stretch;
   gap: 12px;
@@ -31,9 +31,10 @@
 
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
 
-/* soft top highlight - non-interactive */
+  /* NEW: make sure calendar never overflows its parent */
+  max-width: 100%;
+}
 .bookify-calendar::after {
   content: "";
   position: absolute;
@@ -44,7 +45,10 @@
   background: linear-gradient(to bottom, rgba(255,255,255,.55), rgba(255,255,255,0));
 }
 
-/* Header */
+/* Ensure react-datepicker shell is not constraining width */
+.bookify-calendar .react-datepicker { width: 100%; }
+
+/* Header (unchanged look) */
 .bookify-calendar .react-datepicker__header {
   background: linear-gradient(to right, rgba(59,130,246,.08), rgba(99,102,241,.08));
   border: none;
@@ -58,10 +62,12 @@
   letter-spacing: .2px;
 }
 
-/* Month cards */
+/* Month containers */
 .bookify-calendar .react-datepicker__month-container {
   flex: 1 1 0;
-  min-width: clamp(280px, 40vw, 360px);
+  /* NEW: let it shrink; prevent any min-width forcing overflow */
+  min-width: 0;
+  width: 100%;
   border-radius: 14px;
   background: rgba(255,255,255,.96);
   border: 1px solid var(--border);
@@ -74,30 +80,49 @@
   box-shadow: var(--shadow-2);
 }
 
-/* Day names */
-.bookify-calendar .react-datepicker__day-names { margin-top: 2px; }
+/* --- NEW: RESPONSIVE GRID LAYOUT --- */
+
+/* Day-name row uses a 7-col grid */
+.bookify-calendar .react-datepicker__day-names {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--gap);
+  padding: 0 var(--gap);
+  margin-top: 2px;
+}
 .bookify-calendar .react-datepicker__day-name {
-  display: inline-block;
-  width: 2.5rem; height: 2rem;
-  line-height: 2rem;
-  text-align: center;
+  /* Remove fixed widths/heights */
+  width: auto; height: auto; line-height: normal; margin: 0;
+  display: grid; place-items: center;
   color: var(--muted);
   font-weight: 600;
   text-transform: uppercase;
-  font-size: 11px;
+  /* Scale text with viewport, with reasonable bounds */
+  font-size: clamp(10px, 2.6vw, 12px);
+  padding: 6px 0;
 }
 
-/* Interaction stability */
+/* Month grid: 7 equal columns + gap; flatten weeks so days become direct grid items */
+.bookify-calendar .react-datepicker__month {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: var(--gap);
+  padding: 0 var(--gap) var(--gap);
+}
+.bookify-calendar .react-datepicker__week {
+  /* Flatten week wrappers so day cells participate in the month grid */
+  display: contents;
+}
+
+/* Day cells scale with grid; no fixed rems */
 .bookify-calendar .react-datepicker__day {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  margin: 2px;
+  margin: 0;        /* gaps handled by the grid */
+  width: 100%;      /* fill grid cell */
+  height: auto;
+  aspect-ratio: 1;  /* keep squares without hardcoding pixels */
+  display: grid;
+  place-items: center;
   border-radius: 9999px;
-  text-align: center;
-  vertical-align: middle;
   cursor: pointer !important;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -106,6 +131,8 @@
   transition: box-shadow .12s ease, background-color .12s ease, color .12s ease;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.6);
 }
+
+/* Hover, focus, state styles (kept; just work on the new layout) */
 @media (hover:hover) {
   .bookify-calendar .react-datepicker__day:hover {
     background: var(--hover);
@@ -114,14 +141,10 @@
     z-index: 1;
   }
 }
-
-/* Today ring */
 .bookify-calendar .react-datepicker__day--today {
   box-shadow: inset 0 0 0 2px var(--b1), inset 0 0 0 4px rgba(255,255,255,.65);
   font-weight: 700;
 }
-
-/* Disabled / outside-month */
 .bookify-calendar .react-datepicker__day--disabled {
   color: #cbd5e1 !important;
   opacity: .65;
@@ -130,8 +153,6 @@
 .bookify-calendar .react-datepicker__day--outside-month {
   color: #cbd5e1;
 }
-
-/* Selected & keyboard-selected */
 .bookify-calendar .react-datepicker__day--selected,
 .bookify-calendar .react-datepicker__day--keyboard-selected {
   background: linear-gradient(90deg, var(--b1), var(--b2));
@@ -139,8 +160,6 @@
   font-weight: 700;
   box-shadow: 0 8px 18px rgba(37,99,235,.28), inset 0 0 0 1px rgba(255,255,255,.65);
 }
-
-/* Range styles */
 .bookify-calendar .react-datepicker__day--in-range,
 .bookify-calendar .react-datepicker__day--in-selecting-range {
   background: linear-gradient(90deg, rgba(59,130,246,.12), rgba(99,102,241,.12));
@@ -161,17 +180,13 @@
   background: linear-gradient(90deg, var(--b1), var(--b2)) !important;
   color: #fff !important;
 }
-
-/* Keyboard focus */
 .bookify-calendar .react-datepicker__day:focus-visible {
   outline: none;
   box-shadow: 0 0 0 4px var(--ring), inset 0 0 0 1px rgba(255,255,255,.7);
 }
 
-/* Navigation */
-.bookify-calendar .react-datepicker__navigation {
-  top: 10px;
-}
+/* Navigation keeps your style */
+.bookify-calendar .react-datepicker__navigation { top: 10px; }
 .bookify-calendar .react-datepicker__navigation--previous,
 .bookify-calendar .react-datepicker__navigation--next {
   width: 32px; height: 32px;
@@ -180,7 +195,7 @@
   border: 1px solid var(--border);
   box-shadow: 0 6px 16px rgba(2,6,23,.12);
   cursor: pointer;
-  transition: box-shadow .12s ease, background-color .12s ease;
+  transition: box-shadow .12s, background-color .12s;
 }
 .bookify-calendar .react-datepicker__navigation--previous:hover,
 .bookify-calendar .react-datepicker__navigation--next:hover {
@@ -191,32 +206,142 @@
   border-color: #1e40af;
 }
 
-/* Responsive */
+/* --- RESPONSIVE TWEAKS --- */
+
+/* Phones: tighter gaps, smaller header padding */
 @media (max-width: 640px) {
   .bookify-calendar {
     flex-direction: column;
     gap: 10px;
     padding: 10px;
+    --gap: 6px; /* tighter */
   }
-  .bookify-calendar .react-datepicker__month-container {
-    min-width: 100%;
+  .bookify-calendar .react-datepicker__header {
+    padding: 8px 8px 6px;
+    margin: 2px 2px 6px;
   }
-  .bookify-calendar .react-datepicker__day,
+}
+
+/* Very small devices: shrink gap & fonts further to avoid overflow */
+@media (max-width: 360px) {
+  .bookify-calendar { --gap: 4px; }
   .bookify-calendar .react-datepicker__day-name {
-    width: 2.75rem;
-    height: 2.75rem;
-    line-height: 2.75rem;
-    margin: 2px;
+    font-size: clamp(9px, 3.2vw, 11px);
+    padding: 4px 0;
   }
 }
 
 /* Motion reduced */
 @media (prefers-reduced-motion: reduce) {
-  .bookify-calendar * {
-    transition: none !important;
+  .bookify-calendar * { transition: none !important; }
+}
+
+/* If you show 2 months on desktop side-by-side, keep flex row; mobile stacks automatically */
+@media (min-width: 641px) {
+  .bookify-calendar { flex-direction: row; }
+}
+@media (max-width: 640px) {
+  .bookify-calendar { flex-direction: column; }
+  .bookify-calendar .react-datepicker__month-container { flex: none; width: 100%; min-width: 0; }
+}
+
+/* ===== Bookify Calendar — Mobile overrides ===== */
+@media (max-width: 480px) {
+  .bookify-calendar {
+    /* keep it inside viewport */
+    max-width: 100vw;
+    padding: 8px;
+    border-radius: 12px;
+    overflow: hidden; /* safety net */
+    --gap: 6px;
+  }
+
+  /* make the root take full width */
+  .bookify-calendar .react-datepicker {
+    width: 100% !important;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .bookify-calendar .react-datepicker__header {
+    padding: 8px 8px 6px;
+    margin: 2px 0 6px;
+    border-radius: 10px;
+  }
+
+  /* month card should never enforce a min-width */
+  .bookify-calendar .react-datepicker__month-container {
+    width: 100% !important;
+    min-width: 0 !important;
+    padding: 6px 6px 8px;
+    box-sizing: border-box;
+  }
+
+  /* 7-col grid for day names */
+  .bookify-calendar .react-datepicker__day-names {
+    display: grid !important;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--gap);
+    padding: 0 4px;
+    margin: 0 0 4px;
+  }
+  .bookify-calendar .react-datepicker__day-name {
+    display: grid; place-items: center;
+    width: 100%; height: auto; margin: 0;
+    font-size: 10px; /* tighter on phones */
+    padding: 4px 0;
+  }
+
+  /* month grid = 7 equal columns */
+  .bookify-calendar .react-datepicker__month {
+    display: grid !important;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--gap);
+    padding: 0 4px 8px;
+    box-sizing: border-box;
+  }
+
+  /* flatten weeks so days participate in the same grid */
+  .bookify-calendar .react-datepicker__week {
+    display: contents !important;
+  }
+  /* If your environment has issues with display: contents,
+     comment the line above and use this fallback instead:
+     .bookify-calendar .react-datepicker__week {
+       display: grid !important;
+       grid-template-columns: repeat(7, minmax(0, 1fr));
+       gap: var(--gap);
+     }
+  */
+
+  /* day cells: no fixed rems; square via aspect-ratio */
+  .bookify-calendar .react-datepicker__day {
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 1 / 1;
+    margin: 0 !important;        /* gaps handled by grid */
+    font-size: 13px;              /* slightly smaller */
+    line-height: 1;               /* avoid overflow from line-height */
+  }
+
+  /* navigation: smaller + tighter placement */
+  .bookify-calendar .react-datepicker__navigation { top: 6px; }
+  .bookify-calendar .react-datepicker__navigation--previous,
+  .bookify-calendar .react-datepicker__navigation--next {
+    width: 28px; height: 28px;
   }
 }
 
-/* --- Force vertical 2-month layout --- */
-.bookify-calendar { flex-direction: column; gap: 12px; }
-.bookify-calendar .react-datepicker__month-container { flex: none; width: 100%; min-width: 0; }
+/* ultra-small devices (≤360px): tighten further */
+@media (max-width: 360px) {
+  .bookify-calendar { --gap: 4px; padding: 6px; }
+  .bookify-calendar .react-datepicker__day-name { font-size: 9px; }
+  .bookify-calendar .react-datepicker__day { font-size: 12px; }
+}
+
+@media (min-width: 641px) {
+  /* Hide any additional month containers beyond the first */
+  .bookify-calendar .react-datepicker__month-container:nth-of-type(n+2) {
+    display: none !important;
+  }
+}

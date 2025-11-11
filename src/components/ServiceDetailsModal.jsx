@@ -2,7 +2,16 @@ import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { PayPalButtons } from "@paypal/react-paypal-js";
 import { auth, database } from "../config/firebase";
-import { collection, addDoc, doc, getDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  doc,
+  getDoc,
+  getDocs,      // NEW
+  query,        // NEW
+  where,        // NEW
+  serverTimestamp
+} from "firebase/firestore";
 import emailjs from "@emailjs/browser";
 import {
   X as CloseIcon,
@@ -15,7 +24,11 @@ import {
   Languages,
   MapPin,
   Building2,
+  MessageSquareText,  // NEW
 } from "lucide-react";
+
+// NEW: host message modal
+import { MessageHostModal } from "./message-host-modal";
 
 /* ================= EmailJS config & helper (matches your template) ================= */
 // You can switch these to env vars (REACT_APP_EMAILJS_*) if you prefer.
@@ -42,7 +55,7 @@ async function sendBookingEmail({
     to_email: String(user?.email || ""),
     listing_title: String(title || "Untitled"),
     listing_category: String(category || "Services"),
-    listing_address: String(location || "—"),
+    listing_address: String(location || "Online"),
     payment_status: String(paymentStatus || "Paid"),
     currency_symbol: String(currencySymbol || "₱"),
     total_price: Number(total || 0).toFixed(2),
@@ -55,6 +68,96 @@ async function sendBookingEmail({
   return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params, EMAILJS_PUBLIC_KEY);
 }
 
+/* ===================== small helpers ===================== */
+const splitList = (text) =>
+  String(text)
+    .split(/•|\n|;|,/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+const splitTags = (text) =>
+  String(text)
+    .split(/,|\/|·|\|/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/* Host normalize helpers (same approach you used elsewhere) */
+const normalizeHost = (docSnap, fallbackUid) => {
+  const d = docSnap.data() || {};
+  const first = d.firstName || d.givenName || d.first_name || "";
+  const last  = d.lastName  || d.familyName || d.last_name  || "";
+  const displayName = d.displayName || d.name || [first, last].filter(Boolean).join(" ");
+  const photoURL =
+    d.photoURL ||
+    d.photoUrl ||
+    d.avatarURL ||
+    d.photo ||
+    d.avatar ||
+    d.profileImageUrl ||
+    null;
+  return {
+    id: docSnap.id,
+    uid: d.uid || fallbackUid,
+    email: d.email || "",
+    firstName: first,
+    lastName: last,
+    displayName,
+    photoURL,
+  };
+};
+
+async function mergeHostPhoto(uid, current) {
+  if (current?.photoURL) return current;
+  const candidates = [];
+  try {
+    const usersDoc = await getDoc(doc(database, "users", uid));
+    if (usersDoc.exists()) candidates.push(normalizeHost(usersDoc, uid));
+  } catch {}
+  try {
+    const hostsDoc = await getDoc(doc(database, "hosts", uid));
+    if (hostsDoc.exists()) candidates.push(normalizeHost(hostsDoc, uid));
+  } catch {}
+  try {
+    const usersQ = await getDocs(query(collection(database, "users"), where("uid", "==", uid)));
+    if (!usersQ.empty) candidates.push(normalizeHost(usersQ.docs[0], uid));
+  } catch {}
+  try {
+    const hostsQ = await getDocs(query(collection(database, "hosts"), where("uid", "==", uid)));
+    if (!hostsQ.empty) candidates.push(normalizeHost(hostsQ.docs[0], uid));
+  } catch {}
+  const photoFromAny = candidates.find((c) => c?.photoURL)?.photoURL || null;
+  return { ...current, photoURL: current.photoURL || photoFromAny };
+}
+
+/* Simple host avatar */
+function HostAvatar({ host }) {
+  const [ok, setOk] = useState(true);
+  const name =
+    ([host?.firstName, host?.lastName].filter(Boolean).join(" ")) ||
+    host?.displayName ||
+    host?.email ||
+    "H";
+  const initial = (name?.[0] || "H").toUpperCase();
+
+  return (
+    <div className="relative w-12 h-12 rounded-full bg-white/70 border border-white/60 overflow-hidden shrink-0 grid place-items-center text-gray-900 font-semibold ring-4 ring-white/60">
+      {host?.photoURL && ok ? (
+        <img
+          src={host.photoURL}
+          alt="Host avatar"
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+          crossOrigin="anonymous"
+          loading="lazy"
+          onError={() => setOk(false)}
+        />
+      ) : (
+        <span>{initial}</span>
+      )}
+    </div>
+  );
+}
+
 /* ================================= component ================================= */
 const ServiceDetailsModal = ({ listingId, onClose }) => {
   const [service, setService] = useState(null);
@@ -63,6 +166,10 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [paymentBreakdown, setPaymentBreakdown] = useState(null);
   const [showPayPal, setShowPayPal] = useState(false);
+
+  // NEW: host & message modal
+  const [host, setHost] = useState(null);
+  const [showMessageModal, setShowMessageModal] = useState(false);
 
   /* ===== Lock body scroll while modal is mounted ===== */
   useEffect(() => {
@@ -86,7 +193,8 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
           const data = docSnap.data();
-          setService({ id: docSnap.id, ...data }); // keep id
+          const normalized = { id: docSnap.id, ...data };
+          setService(normalized);
           setSelectedQuantity(1);
 
           // Preselect soonest schedule if present
@@ -106,6 +214,58 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
     if (listingId) fetchServiceDetails();
     setCurrentPhoto(0);
   }, [listingId]);
+
+  /* ===== Fetch host for this service ===== */
+  useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      const uid = service?.uid || service?.ownerId || service?.hostId;
+      if (!uid) {
+        if (!cancelled) setHost(null);
+        return;
+      }
+      try {
+        // Prefer hosts/<uid>, then users/<uid>, then where("uid","==",uid) fallbacks
+        const hostsDoc = await getDoc(doc(database, "hosts", uid));
+        if (hostsDoc.exists()) {
+          let h = normalizeHost(hostsDoc, uid);
+          h = await mergeHostPhoto(uid, h);
+          if (!cancelled) setHost(h);
+          return;
+        }
+        const usersDoc = await getDoc(doc(database, "users", uid));
+        if (usersDoc.exists()) {
+          let h = normalizeHost(usersDoc, uid);
+          h = await mergeHostPhoto(uid, h);
+          if (!cancelled) setHost(h);
+          return;
+        }
+        // Fallback queries
+        const usersQ = await getDocs(query(collection(database, "users"), where("uid", "==", uid)));
+        if (!usersQ.empty) {
+          let h = normalizeHost(usersQ.docs[0], uid);
+          h = await mergeHostPhoto(uid, h);
+          if (!cancelled) setHost(h);
+          return;
+        }
+        const hostsQ = await getDocs(query(collection(database, "hosts"), where("uid", "==", uid)));
+        if (!hostsQ.empty) {
+          let h = normalizeHost(hostsQ.docs[0], uid);
+          h = await mergeHostPhoto(uid, h);
+          if (!cancelled) setHost(h);
+          return;
+        }
+        if (!cancelled) setHost(null);
+      } catch (e) {
+        console.error("Failed to fetch host for service:", e);
+        if (!cancelled) setHost(null);
+      }
+    };
+
+    run();
+    return () => { cancelled = true; };
+  }, [service?.uid, service?.ownerId, service?.hostId]);
 
   /* ===== Keep photo index valid when photos change ===== */
   useEffect(() => {
@@ -203,18 +363,6 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
       day: "numeric",
     });
   };
-
-  const splitList = (text) =>
-    String(text)
-      .split(/•|\n|;|,/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-  const splitTags = (text) =>
-    String(text)
-      .split(/,|\/|·|\|/)
-      .map((s) => s.trim())
-      .filter(Boolean);
 
   // Currency symbol for UI & email
   const currencySymbol =
@@ -398,6 +546,28 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
                 )}
               </section>
 
+              {/* Host panel (NEW) */}
+              {host && (
+                <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 flex items-center gap-4 shadow-sm">
+                  <HostAvatar host={host} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[15px] sm:text-base font-semibold text-gray-900 truncate">
+                      {([host.firstName, host.lastName].filter(Boolean).join(" ")) ||
+                        host.displayName ||
+                        host.email ||
+                        "Service Provider"}
+                    </p>
+                    <p className="text-[13px] sm:text-sm text-gray-600 truncate">Service Provider</p>
+                  </div>
+                  <button
+                    onClick={() => setShowMessageModal(true)}
+                    className="inline-flex items-center gap-2 rounded-full border border-white/60 bg-white/80 px-4 py-2 text-[13px] sm:text-sm font-semibold text-gray-900 hover:bg-white shadow-sm active:scale-[0.98] transition"
+                  >
+                    <MessageSquareText className="w-4 h-4" /> Message Provider
+                  </button>
+                </section>
+              )}
+
               {/* Key Details */}
               <section className="space-y-3">
                 <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Details</h3>
@@ -477,7 +647,7 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
                 </div>
               </section>
 
-              {/* Provider */}
+              {/* Provider (keep existing display if you like) */}
               {service.providerName && (
                 <section>
                   <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Provider</h3>
@@ -513,7 +683,7 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
               {hasAmenities && (
                 <section>
                   <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Included Amenities</h3>
-                  <div className="mt-3 flex flex-wrap gap-2.5">
+                <div className="mt-3 flex flex-wrap gap-2.5">
                     {service.amenities.map((a, i) => (
                       <span
                         key={`${a}-${i}`}
@@ -828,6 +998,20 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
           </div>
         </div>
       </div>
+
+      {/* NEW: Message Host / Provider modal */}
+      {showMessageModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[2147483646]">
+            <MessageHostModal
+              open
+              onClose={() => setShowMessageModal(false)}
+              host={host}
+              hostId={host?.uid || service?.uid || service?.ownerId || service?.hostId}
+            />
+          </div>,
+          document.body
+        )}
     </div>
   );
 
