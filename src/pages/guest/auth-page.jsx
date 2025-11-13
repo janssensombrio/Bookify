@@ -27,7 +27,7 @@ import {
 } from "firebase/firestore";
 
 import BookifyIcon from "../../media/favorite.png";
-import FormBg from "../../media/beach.mp4";
+// import FormBg from "../../media/beach.mp4";
 import { useNavigate } from "react-router-dom";
 import emailjs from "@emailjs/browser";
 
@@ -627,7 +627,7 @@ export const AuthPage = () => {
       {/* Background Video */}
       <video
         className="absolute inset-0 w-full h-full object-cover"
-        src={FormBg}
+        src="https://www.pexels.com/download/video/3773486/"
         autoPlay
         muted
         loop
@@ -912,7 +912,7 @@ export const AuthPage = () => {
         <div className="relative hidden md:block">
           <video
             className="absolute inset-0 w-full h-full object-cover"
-            src={FormBg}
+            src="https://www.pexels.com/download/video/3773486/"
             autoPlay
             muted
             loop
