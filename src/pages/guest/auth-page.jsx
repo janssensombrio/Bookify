@@ -636,16 +636,17 @@ export const AuthPage = () => {
     <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden">
       {/* Background Video */}
       <video
-        className="absolute inset-0 w-full h-full object-cover"
-        src="https://www.pexels.com/download/video/3773486/"
-        autoPlay
-        muted
-        loop
-        playsInline
-      />
+      className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+      src="https://www.pexels.com/download/video/3773486/"
+      autoPlay
+      muted
+      loop
+      playsInline
+    />
+    <div className="absolute inset-0 backdrop-blur-[4px] pointer-events-none" />
       <div className="absolute inset-0 backdrop-blur-[4px]" />
 
-      <div className="relative w-full max-w-6xl grid grid-cols-1 md:grid-cols-2 rounded-[28px] overflow-hidden shadow-2xl bg-white backdrop-blur-sm">
+      <div className="relative z-20 w-full max-w-6xl grid grid-cols-1 md:grid-cols-2 rounded-[28px] overflow-hidden shadow-2xl bg-white backdrop-blur-sm">
         {/* LEFT */}
         <div className="px-6 sm:px-10 lg:px-14 py-8 sm:py-10 lg:py-12 flex flex-col">
           <div className="flex items-center space-x-3 mb-6">
