@@ -22,6 +22,9 @@ import ServiceDetailsPage from "./pages/host/ServiceDetailsPage";
 import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
 import AdminHostsPage from "./pages/admin/hosts.jsx";
 import AdminListingsPage from "./pages/admin/listings.jsx";
+import AdminBookingsPage from "./pages/admin/bookings.jsx";
+import AdminWalletPage from "./pages/admin/wallet.jsx";
+import AdminGuestsPage from "./pages/admin/guests.jsx";
 
 function App() {
   return (
@@ -51,11 +54,11 @@ function App() {
             {/* Admin */}
             <Route path="/admin-dashboard" element={<AdminDashboard />} />
             <Route path="/admin/hosts" element={<AdminHostsPage />} />
-            <Route path="/admin/guests" element={<div />} />
+            <Route path="/admin/guests" element={<AdminGuestsPage />} />
             <Route path="/admin/listings" element={<AdminListingsPage />} />
-            <Route path="/admin/bookings" element={<div />} />
-            <Route path="/admin/wallet" element={<div />} />
-            <Route path="/admin/users" element={<div />} />
+            <Route path="/admin/bookings" element={<AdminBookingsPage />} />
+            <Route path="/admin/wallet" element={<AdminWalletPage />} />
+            <Route path="/admin/users" />
           </Routes>
       </SidebarProvider>
     </Router>
