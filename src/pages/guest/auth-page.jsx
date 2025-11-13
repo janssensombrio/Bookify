@@ -318,55 +318,55 @@ export const AuthPage = () => {
   };
 
   /* ------------- Handle Google Redirect Results ------------- */
-useEffect(() => {
-  (async () => {
-    try {
-      if (handledRedirectRef.current) return;
+  useEffect(() => {
+    (async () => {
+      try {
+        if (handledRedirectRef.current) return;
 
-      const result = await getRedirectResult(auth);
-      handledRedirectRef.current = true;
+        const result = await getRedirectResult(auth);
+        handledRedirectRef.current = true;
 
-      // alert("REDIRECT RESULT: " + JSON.stringify(result));
+        if (result && result.user) {
+          const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
+          sessionStorage.removeItem(GOOGLE_FLOW_KEY);
 
-      if (result && result.user) {
-        const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
-        sessionStorage.removeItem(GOOGLE_FLOW_KEY);
+          if (flow === "signup") {
+            await upsertGoogleUser(database, result.user, result);
+            await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
+            alert(`Welcome ${result.user.displayName || result.user.email.split("@")[0]}!`);
+            goToPostLogin(result.user.email);
+            return;
+          }
 
-        if (flow === "signup") {
-          await upsertGoogleUser(database, result.user, result);
-          await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
-          alert(`Welcome ${result.user.displayName || result.user.email.split("@")[0]}!`);
-          goToPostLogin(result.user.email);
-          return;
-        }
+          const email = (result.user.email || "").toLowerCase();
 
-        const email = (result.user.email || "").toLowerCase();
+          if (isAdminEmail(email)) {
+            await upsertAdminIfNeeded(database, result.user);
+            alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
+            goToPostLogin(email);
+            return;
+          }
 
-        if (isAdminEmail(email)) {
-          await upsertAdminIfNeeded(database, result.user);
-          alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
+          const exists = await userExistsByEmail(database, email);
+          if (!exists) {
+            setBanner({
+              kind: "warning",
+              text: "That Google account isn't registered on Bookify. Please use 'Sign Up with Google'.",
+            });
+            await signOut(auth);
+            return;
+          }
+
+          alert(`Welcome ${result.user.displayName || email.split("@")[0]}!`);
           goToPostLogin(email);
-          return;
         }
-
-        const exists = await userExistsByEmail(database, email);
-        if (!exists) {
-          setBanner({
-            kind: "warning",
-            text: "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
-          });
-          await signOut(auth);
-          return;
-        }
-
-        alert(`Welcome ${result.user.displayName || email.split("@")[0]}!`);
-        goToPostLogin(email);
+      } catch (err) {
+        console.error("Redirect result error:", err);
+        reportAuthError(err);
+        handledRedirectRef.current = false; // Allow retry on error
       }
-    } catch (err) {
-      reportAuthError(err);
-    }
-  })();
-}, [navigate]);
+    })();
+  }, [navigate]);
 
   /* ---------------- Email/Password: Login ---------------- */
   const handleLogin = async () => {
@@ -599,33 +599,46 @@ useEffect(() => {
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(
-  navigator.userAgent
-);
+  // More robust mobile detection - checks user agent and screen size
+  const isMobile = (() => {
+    const ua = navigator.userAgent || navigator.vendor || window.opera || "";
+    const mobileRegex = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|mobile|CriOS/i;
+    const isMobileUA = mobileRegex.test(ua);
+    const isSmallScreen = window.innerWidth <= 768 || (window.screen && window.screen.width <= 768);
+    return isMobileUA || isSmallScreen;
+  })();
 
-  const handleGoogleClick = () => {
-  setBanner(null);
+  const handleGoogleClick = async () => {
+    setBanner(null);
+    setGoogleBusy(true);
 
-  const provider = new GoogleAuthProvider();
-  provider.setCustomParameters({ prompt: "select_account" });
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: "select_account" });
 
-  // FORCE Google Redirect on ALL mobile browsers
-  if (isMobile) {
-    sessionStorage.setItem(GOOGLE_FLOW_KEY, mode === "login" ? "login" : "signup");
-    signInWithRedirect(auth, provider);
-    return;
-  }
+      // FORCE Google Redirect on ALL mobile browsers and small screens
+      if (isMobile) {
+        const flow = mode === "login" ? "login" : "signup";
+        sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
+        await signInWithRedirect(auth, provider);
+        return;
+      }
 
-  // Desktop → popup is fine
-  if (mode === "login") {
-    handleGoogleAuth("login");
-    return;
-  }
+      // Desktop → popup is fine
+      if (mode === "login") {
+        await handleGoogleAuth("login");
+        return;
+      }
 
-  // Signup → show terms first
-  setPendingGoogleAuth(true);
-  setShowTerms(true);
-};
+      // Signup → show terms first
+      setPendingGoogleAuth(true);
+      setShowTerms(true);
+    } catch (err) {
+      console.error("Google sign-in error:", err);
+      reportAuthError(err);
+      setGoogleBusy(false);
+    }
+  };
 
 
   return (
@@ -968,27 +981,32 @@ useEffect(() => {
 
               <button
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   setShowTerms(false);
                   setAgreed(true);
                   if (pendingGoogleAuth) {
                     if (!googleBusyRef.current) {
-                      const provider = new GoogleAuthProvider();
-                      provider.setCustomParameters({ prompt: "select_account" });
+                      try {
+                        const provider = new GoogleAuthProvider();
+                        provider.setCustomParameters({ prompt: "select_account" });
 
-                      // Mobile → redirect
-                      if (isMobile) {
-                        sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
-                        signInWithRedirect(auth, provider);
-                      } 
-                      // Desktop → popup
-                      else {
-                        handleGoogleAuth("signup");
+                        // Mobile → redirect
+                        if (isMobile) {
+                          sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
+                          await signInWithRedirect(auth, provider);
+                        } 
+                        // Desktop → popup
+                        else {
+                          await handleGoogleAuth("signup");
+                        }
+                      } catch (err) {
+                        console.error("Google sign-up error:", err);
+                        reportAuthError(err);
+                        setGoogleBusy(false);
                       }
                     }
                     setPendingGoogleAuth(false);
                   }
-
                 }}
                 className="w-full sm:w-auto px-4 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
               >
