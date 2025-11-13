@@ -603,24 +603,34 @@ export const AuthPage = () => {
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-  const handleGoogleClick = () => {
-    setBanner(null);
-    if (mode === "login") {
-      if (isSafari || isIOS) {
-        sessionStorage.setItem(GOOGLE_FLOW_KEY, "login");
-        const provider = new GoogleAuthProvider();
-        provider.setCustomParameters({ prompt: "select_account" });
-        signInWithRedirect(auth, provider);
-      } else {
-        handleGoogleAuth("login");
-      }
-      return;
-    }
+  const isMobile = /Android|iPhone|iPad|iPod|Opera Mini|IEMobile|WPDesktop/i.test(
+  navigator.userAgent
+);
 
-    // signup → show terms first, then continue
-    setPendingGoogleAuth(true);
-    setShowTerms(true);
-  };
+  const handleGoogleClick = () => {
+  setBanner(null);
+
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
+
+  // FORCE Google Redirect on ALL mobile browsers
+  if (isMobile) {
+    sessionStorage.setItem(GOOGLE_FLOW_KEY, mode === "login" ? "login" : "signup");
+    signInWithRedirect(auth, provider);
+    return;
+  }
+
+  // Desktop → popup is fine
+  if (mode === "login") {
+    handleGoogleAuth("login");
+    return;
+  }
+
+  // Signup → show terms first
+  setPendingGoogleAuth(true);
+  setShowTerms(true);
+};
+
 
   return (
     <div className="relative min-h-screen w-full flex items-center justify-center p-4 sm:p-6 overflow-hidden">
@@ -966,17 +976,22 @@ export const AuthPage = () => {
                   setAgreed(true);
                   if (pendingGoogleAuth) {
                     if (!googleBusyRef.current) {
-                      if (isSafari || isIOS) {
+                      const provider = new GoogleAuthProvider();
+                      provider.setCustomParameters({ prompt: "select_account" });
+
+                      // Mobile → redirect
+                      if (isMobile) {
                         sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
-                        const provider = new GoogleAuthProvider();
-                        provider.setCustomParameters({ prompt: "select_account" });
                         signInWithRedirect(auth, provider);
-                      } else {
-                        handleGoogleAuth("signup"); // popup with fallback
+                      } 
+                      // Desktop → popup
+                      else {
+                        handleGoogleAuth("signup");
                       }
                     }
                     setPendingGoogleAuth(false);
                   }
+
                 }}
                 className="w-full sm:w-auto px-4 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
               >
