@@ -40,13 +40,18 @@ const EMAILJS_PUBLIC_KEY =
   process.env.REACT_APP_EMAILJS_PUBLIC_KEY || "hHgssQum5iOFlnJRD";
 const VERIFY_PAGE_PATH = "/verify";
 
-/* ---------------- Signup bonus (NEW) ---------------- */
+/* ---------------- Signup bonus ---------------- */
 const SIGNUP_BONUS_POINTS = 150;
 
-// Persist which Google flow we started, so redirect results can enforce the rule.
+/* ---------------- Google flow key ---------------- */
 const GOOGLE_FLOW_KEY = "bookify_google_flow"; // "login" | "signup"
 
-// Award 150 pts exactly once per user.
+/* ---------------- Admin config ---------------- */
+const ADMIN_EMAIL = "janssendelatorre23@gmail.com";
+const isAdminEmail = (email = "") =>
+  (email || "").trim().toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+/* ---------------- Points helpers ---------------- */
 const awardSignupPointsIfNeeded = async (db, uid, bonus = SIGNUP_BONUS_POINTS) => {
   try {
     const pRef = doc(db, "points", uid);
@@ -82,7 +87,7 @@ const awardSignupPointsIfNeeded = async (db, uid, bonus = SIGNUP_BONUS_POINTS) =
   return false;
 };
 
-/* ---------------- small utils ---------------- */
+/* ---------------- utils ---------------- */
 const genToken = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID().replace(/-/g, "")
@@ -122,7 +127,7 @@ const reportAuthError = (err) => {
   alert(`${msg}\n\n(dev: ${code})`);
 };
 
-/* ---------------- name helpers (Google) ---------------- */
+/* ---------------- Name helpers (Google) ---------------- */
 const deriveNamesFromGoogle = (user, result) => {
   const info = getAdditionalUserInfo(result);
   const prof = (info && info.profile) || {};
@@ -146,11 +151,11 @@ const deriveNamesFromGoogle = (user, result) => {
   return { displayName, firstName, lastName };
 };
 
-/* ---------------- upsert helpers ---------------- */
+/* ---------------- Upserts ---------------- */
 const requiredShapeFromUser = (user, extras = {}) => ({
   uid: user.uid,
-  email: user.email || "",
-  displayName: extras.displayName ?? (user.displayName || ""),
+  email: (user.email || "").toLowerCase(),
+  displayName: extras.displayName ?? (user.displayName || (user.email || "").split("@")[0] || ""),
   firstName: extras.firstName ?? "",
   lastName: extras.lastName ?? "",
   photoURL: user.photoURL || "",
@@ -158,7 +163,7 @@ const requiredShapeFromUser = (user, extras = {}) => ({
   ...extras.mergeFields,
 });
 
-// Only used for SIGNUP flow. DO NOT call this for LOGIN flow.
+// Only used for SIGNUP flow (Google). DO NOT call this for LOGIN flow.
 const upsertGoogleUser = async (db, user, result) => {
   const { displayName, firstName, lastName } = deriveNamesFromGoogle(user, result);
   const info = getAdditionalUserInfo(result);
@@ -187,6 +192,7 @@ const upsertGoogleUser = async (db, user, result) => {
   }
 };
 
+// Ensure any user has a reasonable /users doc (email/password paths)
 const ensureUserInFirestore = async (db, user) => {
   const uRef = doc(db, "users", user.uid);
   const snap = await getDoc(uRef);
@@ -194,7 +200,7 @@ const ensureUserInFirestore = async (db, user) => {
   if (!snap.exists()) {
     await setDoc(uRef, {
       uid: user.uid,
-      email: user.email || "",
+      email: (user.email || "").toLowerCase(),
       displayName: user.displayName || (user.email || "").split("@")[0] || "",
       firstName:
         (user.displayName || "").split(" ")[0] ||
@@ -212,7 +218,7 @@ const ensureUserInFirestore = async (db, user) => {
     const wantKeys = ["uid", "email", "displayName", "firstName", "lastName", "photoURL"];
     const fallback = {
       uid: user.uid,
-      email: user.email || "",
+      email: (user.email || "").toLowerCase(),
       displayName:
         existing.displayName ||
         user.displayName ||
@@ -237,7 +243,32 @@ const ensureUserInFirestore = async (db, user) => {
   }
 };
 
-// Helper to check if /users has a record for a given email (case-insensitive)
+// Ensure the admin has a user doc, mark role/admin + verified
+const upsertAdminIfNeeded = async (db, user) => {
+  const uRef = doc(db, "users", user.uid);
+  const snap = await getDoc(uRef);
+
+  const base = {
+    uid: user.uid,
+    email: (user.email || "").toLowerCase(),
+    displayName: user.displayName || (user.email || "").split("@")[0] || "",
+    firstName: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0] || "",
+    lastName: (user.displayName || "").split(" ").slice(1).join(" "),
+    photoURL: user.photoURL || "",
+    role: "admin",
+    verified: true,
+    verifiedAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  if (!snap.exists()) {
+    await setDoc(uRef, { ...base, createdAt: serverTimestamp() }, { merge: true });
+  } else {
+    await setDoc(uRef, base, { merge: true });
+  }
+};
+
+// Check if a /users doc exists for email (non-admins must exist before Google login)
 const userExistsByEmail = async (db, email) => {
   const safe = (email || "").trim().toLowerCase();
   if (!safe) return false;
@@ -276,12 +307,23 @@ export const AuthPage = () => {
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
-  // Handle Google Redirect results (enforce flow rule)
+  /* ------------- Post-login router (admin vs dashboard) ------------- */
+  const goToPostLogin = (email) => {
+    const e = (email || "").toLowerCase();
+    if (isAdminEmail(e)) {
+      navigate("/admin-dashboard");
+    } else {
+      navigate("/dashboard");
+    }
+  };
+
+  /* ------------- Handle Google Redirect Results ------------- */
   useEffect(() => {
     (async () => {
       try {
         if (handledRedirectRef.current) return;
         handledRedirectRef.current = true;
+
         const result = await getRedirectResult(auth);
         if (result && result.user) {
           const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
@@ -293,10 +335,21 @@ export const AuthPage = () => {
             alert(
               `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
             );
-            navigate("/dashboard");
+            goToPostLogin(result.user.email);
           } else {
-            // LOGIN flow → allow only if account exists in /users
-            const exists = await userExistsByEmail(database, result.user.email);
+            // LOGIN flow
+            const email = (result.user.email || "").toLowerCase();
+
+            if (isAdminEmail(email)) {
+              // Admin bypass
+              await upsertAdminIfNeeded(database, result.user);
+              alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
+              goToPostLogin(email);
+              return;
+            }
+
+            // Everyone else must already exist in /users
+            const exists = await userExistsByEmail(database, email);
             if (!exists) {
               setBanner({
                 kind: "warning",
@@ -306,10 +359,11 @@ export const AuthPage = () => {
               await signOut(auth);
               return;
             }
+
             alert(
               `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
             );
-            navigate("/dashboard");
+            goToPostLogin(email);
           }
         }
       } catch (err) {
@@ -330,6 +384,15 @@ export const AuthPage = () => {
 
       await ensureUserInFirestore(database, user);
 
+      // If admin, force admin role + skip verify; then route to admin dashboard
+      if (isAdminEmail(user.email)) {
+        await upsertAdminIfNeeded(database, user);
+        alert(`Welcome Admin ${user.displayName || user.email.split("@")[0]}!`);
+        goToPostLogin(user.email);
+        return;
+      }
+
+      // Non-admin: must be verified
       const uq = query(usersCollectionRef, where("uid", "==", user.uid));
       const usnap = await getDocs(uq);
 
@@ -347,7 +410,7 @@ export const AuthPage = () => {
       }
 
       alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
-      navigate("/dashboard");
+      goToPostLogin(user.email);
     } catch (err) {
       reportAuthError(err);
     }
@@ -437,12 +500,22 @@ export const AuthPage = () => {
         await upsertGoogleUser(database, user, result);
         await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
         alert(`Welcome ${user.displayName || (user.email || "").split("@")[0]}!`);
-        navigate("/dashboard");
+        goToPostLogin(user.email);
         return;
       }
 
-      // LOGIN flow → allow only if account exists in /users
-      const exists = await userExistsByEmail(database, user.email);
+      // LOGIN flow
+      const email = (user.email || "").toLowerCase();
+
+      if (isAdminEmail(email)) {
+        await upsertAdminIfNeeded(database, user);
+        alert(`Welcome Admin ${user.displayName || email.split("@")[0]}!`);
+        goToPostLogin(email);
+        return;
+      }
+
+      // Non-admins must exist already
+      const exists = await userExistsByEmail(database, email);
       if (!exists) {
         setBanner({
           kind: "warning",
@@ -452,8 +525,8 @@ export const AuthPage = () => {
         return;
       }
 
-      alert(`Welcome ${user.displayName || (user.email || "").split("@")[0]}!`);
-      navigate("/dashboard");
+      alert(`Welcome ${user.displayName || email.split("@")[0]}!`);
+      goToPostLogin(email);
     } catch (err) {
       const popupErrors = [
         "auth/popup-closed-by-user",
@@ -856,7 +929,7 @@ export const AuthPage = () => {
       {/* Terms & Conditions Modal */}
       {showTerms && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4 sm:px-0">
-          <div className="bg-white rounded-2xl w-full max-w-lg sm:max-w-md md:max-w-lg p-4 sm:p-6 relative shadow-lg max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-2xl w-full max-w-lg sm:max-w-md md:max-w-lg p-4 sm:p-6 relative shadow-lg max-h[90vh] flex flex-col">
             <h3 className="text-lg sm:text-xl font-semibold mb-3 sm:mb-4 text-gray-800 text-center sm:text-left">
               Terms and Conditions
             </h3>

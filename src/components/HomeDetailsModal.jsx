@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import emailjs from "@emailjs/browser";
 
@@ -11,6 +11,9 @@ import {
   where,
   getDocs,
   serverTimestamp,
+  setDoc,
+  onSnapshot,
+  runTransaction,
 } from "firebase/firestore";
 import { database, auth } from "../config/firebase";
 import { PayPalButtons } from "@paypal/react-paypal-js";
@@ -29,6 +32,8 @@ import {
   MessageSquareText,
   ShieldCheck,
   Info,
+  BadgePercent,
+  Sparkles,
 } from "lucide-react";
 
 /* ================== EmailJS env ================== */
@@ -37,6 +42,13 @@ const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
 const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 const isEmailJsConfigured = [EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY].every(Boolean);
+
+/* ================== Admin Wallet ================== */
+const ADMIN_WALLET_ID = "admin";
+
+/* ================== Rewards ================== */
+const BOOKING_REWARD_POINTS = 80;            // guest reward
+const HOST_BOOKING_REWARD_POINTS = 100;      // host reward per booking
 
 /* ============================ helpers ============================ */
 const numberOr = (v, d = 0) => {
@@ -59,6 +71,19 @@ const ymd = (d) => {
   return `${y}-${m}-${dd}`;
 };
 const fromYMD = (s) => (s ? new Date(`${s}T00:00:00`) : null);
+
+/* ===== Generate array of Date objects for each night ===== */
+const eachNight = (start, end) => {
+  const nights = [];
+  const s = startOfDay(start);
+  const e = startOfDay(end);
+  let current = s;
+  while (current < e) {
+    nights.push(current);
+    current = addDays(current, 1);
+  }
+  return nights;
+};
 
 /* ===== date math (day-precision) ===== */
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
@@ -94,6 +119,43 @@ const mergeIntervals = (arr = []) => {
 
 const rangesOverlap = (aStart, aEnd, bStart, bEnd) =>
   sameOrBefore(aStart, bEnd) && sameOrBefore(bStart, aEnd);
+
+/* ================== Promo/Coupon helpers (ADDED) ================== */
+const clampPercent = (v) => Math.max(0, Math.min(100, Number(v) || 0));
+const money = (n) => Math.max(0, Number(n) || 0);
+
+// offer applies if CHECK-IN date is inside [startsAt, endsAt] (inclusive)
+function withinOfferWindow(offer, start, end) { 
+  if (!start || !end) return false; 
+  const s = startOfDay(start); 
+  const oS = toJSDate(offer?.startsAt); 
+  const oE = toJSDate(offer?.endsAt); 
+  const afterStart = oS ? sameOrAfter(s, oS) : true; 
+  const beforeEnd  = oE ? sameOrBefore(s, oE) : true; 
+  return afterStart && beforeEnd; 
+}
+
+function appliesToListing(offer, listingId) {
+  if (!offer) return false;
+  if (offer.appliesTo === "all") return true;
+  const ids = Array.isArray(offer.listingIds) ? offer.listingIds : [];
+  return ids.includes(listingId);
+}
+
+function offerDiscountAmount({ discountType, discountValue }, baseSubtotal) {
+  const base = money(baseSubtotal);
+  if ((discountType || "percentage").toLowerCase() === "percentage") {
+    return (base * clampPercent(discountValue)) / 100;
+  }
+  return Math.min(base, money(discountValue));
+}
+
+function describeOffer(offer) {
+  const t = (offer.discountType || "percentage").toLowerCase();
+  return t === "percentage"
+    ? `${Number(offer.discountValue || 0)}% off`
+    : `₱${Number(offer.discountValue || 0).toLocaleString()} off`;
+}
 
 /* ============================ email util ============================ */
 async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymentStatus = "paid" }) {
@@ -143,6 +205,17 @@ export default function HomeDetailsModal({ listingId, onClose }) {
   const [showMessageModal, setShowMessageModal] = useState(false);
 
   const [bookedIntervals, setBookedIntervals] = useState([]); // [{start: Date, end: Date}] (inclusive, day-precision)
+
+  /* ======= ADDED: E-Wallet state ======= */
+  const [wallet, setWallet] = useState({ balance: 0, currency: "PHP" });
+  const [isPayingWallet, setIsPayingWallet] = useState(false);
+
+  /* ======= ADDED: Promo/Coupon UI state ======= */
+  const [autoPromo, setAutoPromo] = useState(null);        // best matching promo for this listing/dates
+  const [appliedCoupon, setAppliedCoupon] = useState(null); // chosen coupon (user input)
+  const [couponInput, setCouponInput] = useState("");
+  const [couponErr, setCouponErr] = useState("");
+  const promosCacheRef = useRef([]);                        // cache active promos for this host
 
   /* lock scroll */
   useEffect(() => {
@@ -292,6 +365,18 @@ export default function HomeDetailsModal({ listingId, onClose }) {
     return () => { cancelled = true; };
   }, [listing?.uid, listing?.ownerId, listing?.hostId]);
 
+  /* Subscribe wallet of current user */
+  useEffect(() => {
+    const u = auth.currentUser;
+    if (!u) return;
+    const wref = doc(database, "wallets", u.uid);
+    const unsub = onSnapshot(wref, (s) => {
+      const d = s.data() || {};
+      setWallet({ balance: Number(d.balance || 0), currency: d.currency || "PHP" });
+    });
+    return unsub;
+  }, []);
+
   /* Prefill availability */
   useEffect(() => {
     if (!listing?.availability?.start || !listing?.availability?.end) return;
@@ -300,7 +385,123 @@ export default function HomeDetailsModal({ listingId, onClose }) {
     setSelectedDates({ start: s, end: e });
   }, [listing]);
 
-  /* Payment recompute */
+  /* ======= ADDED: Load active promos for host (cache) ======= */
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchPromos() {
+      const hostUid = listing?.uid || listing?.ownerId || listing?.hostId || null;
+      promosCacheRef.current = [];
+      if (!hostUid) { setAutoPromo(null); return; }
+      try {
+        const promosRef = collection(database, "promos");
+        const q1 = query(promosRef, where("uid", "==", hostUid), where("status", "==", "active"));
+        const q2 = query(promosRef, where("ownerUid", "==", hostUid), where("status", "==", "active"));
+        const [s1, s2] = await Promise.all([getDocs(q1), getDocs(q2)]);
+        const map = new Map();
+        s1.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
+        s2.forEach((d) => map.set(d.id, { id: d.id, ...d.data() }));
+        const all = Array.from(map.values());
+        if (!cancelled) {
+          promosCacheRef.current = all;
+          setAutoPromo((p) => p ?? null);
+        }
+      } catch (e) {
+        console.warn("Promo load failed:", e?.message || e);
+        if (!cancelled) {
+          promosCacheRef.current = [];
+          setAutoPromo(null);
+        }
+      }
+    }
+    fetchPromos();
+    return () => { cancelled = true; };
+  }, [listing?.uid, listing?.ownerId, listing?.hostId, listingId]);
+
+  /* ======= ADDED: coupon apply/clear handlers ======= */
+  const applyCouponCode = async () => {
+    setCouponErr("");
+    const user = auth.currentUser;
+    if (!user) {
+      setCouponErr("Please sign in to apply a coupon.");
+      return;
+    }
+    if (!payment) {
+      setCouponErr("Select valid dates first.");
+      return;
+    }
+    const code = (couponInput || "").trim().toUpperCase();
+    if (!code) { setCouponErr("Enter a coupon code."); return; }
+
+    try {
+      // Find coupon docs with this code
+      const couponsRef = collection(database, "coupons");
+      const snap = await getDocs(query(couponsRef, where("code", "==", code)));
+      const candidates = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+      const { start, end } = selectedDates || {};
+      const baseSubtotal = Number(payment?.subtotalBase || 0);
+
+      const valid = [];
+      for (const c of candidates) {
+        const statusOk = (c.status || "active") === "active";
+        const listingOk = appliesToListing(c, listingId);
+        const windowOk = withinOfferWindow(c, start, end);
+        const minOk = c.minSubtotal == null || Number(c.minSubtotal) <= baseSubtotal;
+
+        if (!(statusOk && listingOk && windowOk && minOk)) continue;
+
+        // maxUses (global)
+        let maxOk = true;
+        if (Number.isFinite(Number(c.maxUses))) {
+          try {
+            const rAll = await getDocs(query(collection(database, "couponRedemptions"), where("couponId", "==", c.id)));
+            maxOk = rAll.size < Number(c.maxUses);
+          } catch {}
+        }
+
+        // perUserLimit
+        let perUserOk = true;
+        if (Number.isFinite(Number(c.perUserLimit))) {
+          try {
+            const rMe = await getDocs(query(
+              collection(database, "couponRedemptions"),
+              where("couponId", "==", c.id),
+              where("uid", "==", user.uid)
+            ));
+            perUserOk = rMe.size < Number(c.perUserLimit);
+          } catch {}
+        }
+
+        if (maxOk && perUserOk) valid.push(c);
+      }
+
+      if (!valid.length) {
+        setAppliedCoupon(null);
+        setCouponErr("This code isn't valid for your stay.");
+        return;
+      }
+
+      // keep the most generous for the current base subtotal
+      const best = valid.reduce((a, b) => {
+        const da = offerDiscountAmount(a, baseSubtotal);
+        const db = offerDiscountAmount(b, baseSubtotal);
+        return db > da ? b : a;
+      });
+
+      setAppliedCoupon(best);
+      setCouponErr("");
+    } catch (e) {
+      console.error(e);
+      setCouponErr("Could not verify coupon. Please try again.");
+    }
+  };
+
+  const clearCoupon = () => {
+    setAppliedCoupon(null);
+    setCouponErr("");
+  };
+
+  /* Payment recompute — NOW STACKS PROMO + COUPON */
   useEffect(() => {
     if (!listing) return setPayment(null);
     const { start, end } = selectedDates || {};
@@ -310,7 +511,8 @@ export default function HomeDetailsModal({ listingId, onClose }) {
     const price = numberOr(listing.price);
     const clean = includeCleaningFee ? numberOr(listing.cleaningFee) : 0;
 
-    const type = listing.discountType || "none";
+    // ----- Listing's own discount (existing behavior) -----
+    const type = (listing.discountType || "none").toLowerCase();
     const dVal = numberOr(listing.discountValue);
 
     const cappedPercent = Math.min(100, Math.max(0, dVal));
@@ -320,17 +522,82 @@ export default function HomeDetailsModal({ listingId, onClose }) {
     const staySubtotal = nightlyAfter * nights;
     const fixedDiscount = type === "fixed" ? Math.max(0, dVal) : 0;
 
-    const subtotal = Math.max(0, staySubtotal + clean - fixedDiscount);
+    // Base BEFORE fees/cleaning (used for offer/coupon minSubtotal checks)
+    const baseSubtotal = Math.max(0, staySubtotal - fixedDiscount);
+
+    // ----- Stacking: promo first, coupon second -----
+    const promos = promosCacheRef.current || [];
+
+    // Best PROMO against baseSubtotal
+    const eligiblePromos = promos.filter(
+      (p) =>
+        (p.status || "active") === "active" &&
+        appliesToListing(p, listingId) &&
+        withinOfferWindow(p, start, end) &&
+        (p.minSubtotal == null || Number(p.minSubtotal) <= baseSubtotal)
+    );
+    const bestPromo = eligiblePromos.length
+      ? eligiblePromos.reduce((a, b) => {
+          const da = offerDiscountAmount(a, baseSubtotal);
+          const db = offerDiscountAmount(b, baseSubtotal);
+          return db > da ? b : a;
+        })
+      : null;
+
+    // Valid COUPON (against baseSubtotal policy; change to afterPromo if desired)
+    const couponOk =
+      appliedCoupon &&
+      (appliedCoupon.status || "active") === "active" &&
+      appliesToListing(appliedCoupon, listingId) &&
+      withinOfferWindow(appliedCoupon, start, end) &&
+      (appliedCoupon.minSubtotal == null || Number(appliedCoupon.minSubtotal) <= baseSubtotal);
+
+    const promoDiscount = bestPromo ? offerDiscountAmount(bestPromo, baseSubtotal) : 0;
+    const afterPromo = Math.max(0, baseSubtotal - promoDiscount);
+
+    // coupon applies to AFTER-PROMO amount
+    const couponDiscount = couponOk ? offerDiscountAmount(appliedCoupon, afterPromo) : 0;
+
+    const offerDiscount = promoDiscount + couponDiscount;
+    const subtotal = Math.max(0, afterPromo - couponDiscount);
+
     const serviceRate = 0.1;
     const serviceFee = subtotal * serviceRate;
     const total = subtotal + serviceFee;
 
+    // keep sidebar hint for auto promo (it shows when no coupon is applied in UI)
+    setAutoPromo(bestPromo || null);
+
     setPayment({
-      nights, price, perNightDiscount, nightlyAfter,
-      cleaningFee: clean, fixedDiscount, subtotal, serviceFee, serviceRate, total,
-      type, dVal: type === "percentage" ? cappedPercent : dVal,
+      nights,
+      price,
+      perNightDiscount,
+      nightlyAfter,
+      cleaningFee: clean,
+      fixedDiscount,
+      subtotal,            // post-offer subtotal (used for host payout with wallet)
+      subtotalBase: baseSubtotal, // for coupon validity calculations
+      serviceFee,
+      serviceRate,
+      total,
+      type,
+      dVal: type === "percentage" ? cappedPercent : dVal,
+
+      // Aggregate discount (sum)
+      offerDiscount,
+
+      // PROMO detail
+      promoDiscount,
+      promoLabel: bestPromo ? describeOffer(bestPromo) : "",
+      promoId: bestPromo?.id || null,
+
+      // COUPON detail
+      couponDiscount,
+      couponLabel: couponOk ? describeOffer(appliedCoupon) : "",
+      couponId: couponOk ? (appliedCoupon?.id || null) : null,
+      offerCode: couponOk ? (appliedCoupon?.code || null) : null,
     });
-  }, [selectedDates, includeCleaningFee, listing]);
+  }, [selectedDates, includeCleaningFee, listing, appliedCoupon, listingId]);
 
   if (!listing) return null;
 
@@ -385,6 +652,345 @@ export default function HomeDetailsModal({ listingId, onClose }) {
 
     setTotalAmount(payment.total);
     setShowPayPal(true);
+  };
+
+  /* ==================== E-Wallet payment flow ==================== */
+  const payWithWallet = async () => {
+    try {
+      const user = auth.currentUser;
+
+      if (!user) {
+        alert("Please log in to pay with your wallet.");
+        return;
+      }
+      if (!payment) {
+        alert("Please select valid dates first.");
+        return;
+      }
+
+      const { start, end } = selectedDates || {};
+      if (!start || !end) {
+        alert("Please select valid dates.");
+        return;
+      }
+
+      const total = Number(payment.total || 0);
+      const subtotal = Number(payment.subtotal || 0);
+      const serviceFee = Number(payment.serviceFee || 0);
+      if (!Number.isFinite(total) || total <= 0) {
+        alert("We could not compute a valid total.");
+        return;
+      }
+
+      if (wallet.balance < total) {
+        alert("Your wallet balance is not enough for this booking.");
+        return;
+      }
+
+      // Preflight overlap check
+      setIsPayingWallet(true);
+      try {
+        const preQ = query(
+          collection(database, "bookings"),
+          where("listingId", "==", listing.id),
+          where("status", "in", ["confirmed", "pending"])
+        );
+        const snap = await getDocs(preQ);
+
+        const s0 = startOfDay(start);
+        const e0 = startOfDay(end);
+        const conflict = snap.docs.some((d) => {
+          const b = d.data();
+          const ci = toJSDate(b.checkIn);
+          const co = toJSDate(b.checkOut);
+          if (!ci || !co) return false;
+          return rangesOverlap(s0, addDays(e0, -1), startOfDay(ci), addDays(startOfDay(co), -1));
+        });
+        if (conflict) {
+          setIsPayingWallet(false);
+          alert("Those dates were just booked. Please pick different dates.");
+          return;
+        }
+      } catch (e) {
+        console.error("Preflight overlap check failed:", e);
+        setIsPayingWallet(false);
+        alert("Could not verify availability. Please try again.");
+        return;
+      }
+
+    // Transaction: lock nights + booking + guest debit + host payout + points + admin fee
+    try {
+      await runTransaction(database, async (tx) => {
+        const s0 = startOfDay(start);
+        const e0 = startOfDay(end);
+        const nights = eachNight(s0, e0);
+
+        const hostUid = listing?.uid || listing?.ownerId || listing?.hostId || "";
+        if (!hostUid) throw new Error("Listing host not found.");
+
+        // Refs
+        const wrefGuest = doc(database, "wallets", user.uid);
+        const wrefHost  = doc(database, "wallets", hostUid);
+        const walletTxGuestRef = doc(collection(database, "wallets", user.uid, "transactions"));
+        const walletTxHostRef  = doc(collection(database, "wallets", hostUid, "transactions"));
+
+        const pointsGuestRef = doc(database, "points", user.uid);
+        const pointsHostRef  = doc(database, "points", hostUid);
+        const ptsLogGuestRef = doc(collection(database, "points", user.uid, "transactions"));
+        const ptsLogHostRef  = doc(collection(database, "points", hostUid, "transactions"));
+
+        const bookingRef = doc(collection(database, "bookings"));
+        const nightRefs = nights.map((d) =>
+          doc(database, "nightLocks", `${listing.id}_${ymd(d)}`)
+        );
+
+        // READS (before any write)
+        const wSnapGuest = await tx.get(wrefGuest);
+        const pSnapGuest = await tx.get(pointsGuestRef);
+        const wSnapHost  = await tx.get(wrefHost);
+        const pSnapHost  = await tx.get(pointsHostRef);
+
+        // Read admin wallet balance
+        let adminBal = 0;
+        let adminBalAfter = 0;
+        if (serviceFee > 0) {
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          const adminSnap = await tx.get(wrefAdmin);
+          adminBal = Number(adminSnap.data()?.balance || 0);
+          adminBalAfter = adminBal + serviceFee;
+        }
+
+        for (const nref of nightRefs) {
+          const nsnap = await tx.get(nref);
+          if (nsnap.exists()) throw new Error("One or more nights just became unavailable. Please choose new dates.");
+        }
+
+        const guestBalBefore = Number(wSnapGuest.data()?.balance || 0);
+        if (guestBalBefore < total) throw new Error("Insufficient wallet balance.");
+
+        const guestPtsBefore = Number(pSnapGuest.data()?.balance || 0);
+        const guestPtsAfter  = guestPtsBefore + BOOKING_REWARD_POINTS;
+
+        const hostBalBefore = Number(wSnapHost.data()?.balance || 0);
+        const hostBalAfter  = hostBalBefore + subtotal;
+
+        const hostPtsBefore = Number(pSnapHost.data()?.balance || 0);
+        const hostPtsAfter  = hostPtsBefore + HOST_BOOKING_REWARD_POINTS;
+
+        const guestBalAfter = guestBalBefore - total;
+
+        const appliedOffers = [
+          ...(Number(payment?.promoDiscount || 0) > 0
+            ? [{
+                kind: "promo",
+                offerId: payment?.promoId || null,
+                label: payment?.promoLabel || "",
+                discount: Number(payment?.promoDiscount || 0),
+              }]
+            : []),
+          ...(Number(payment?.couponDiscount || 0) > 0
+            ? [{
+                kind: "coupon",
+                offerId: payment?.couponId || null,
+                code: payment?.offerCode || null,
+                label: payment?.couponLabel || "",
+                discount: Number(payment?.couponDiscount || 0),
+              }]
+            : []),
+        ];
+
+        // BOOKING
+        const bookingData = {
+          uid: user.uid,
+          guestEmail: user.email,
+          guestName: user.displayName || "",
+          checkIn: s0,
+          checkOut: e0,
+          nights: payment.nights,
+          adults,
+          children,
+          infants,
+          pricePerNight: Number(listing.price || 0),
+          cleaningFee: includeCleaningFee ? Number(listing.cleaningFee || 0) : 0,
+          discountType: listing.discountType || "none",
+          discountValue: Number(listing.discountValue || 0),
+          totalPrice: total,
+          listingTitle: listing.title || "Untitled",
+          listingCategory: listing.category || "Homes",
+          listingAddress: listing.location || "",
+          listingPhotos: Array.isArray(listing.photos) ? listing.photos : [],
+          hostId: hostUid,
+          listingId: listing.id,
+          status: "confirmed",
+          paymentStatus: "paid",
+          paymentMethod: "wallet",
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          appliedOffers,
+        };
+        tx.set(bookingRef, bookingData);
+
+        // Night locks
+        for (const [i, nref] of nightRefs.entries()) {
+          tx.set(nref, {
+            listingId: listing.id,
+            date: ymd(nights[i]),
+            bookingId: bookingRef.id,
+            uid: user.uid,
+            createdAt: serverTimestamp(),
+          });
+        }
+
+        // GUEST wallet: debit total
+        tx.set(walletTxGuestRef, {
+          uid: user.uid,
+          type: "booking_payment",
+          delta: -total,
+          amount: total,
+          status: "completed",
+          method: "wallet",
+          note: `${listing.title || "Listing"} — ${ymd(s0)} to ${ymd(addDays(e0, -1))}`,
+          metadata: { bookingId: bookingRef.id, listingId: listing.id, hostUid },
+          balanceAfter: guestBalAfter,
+          timestamp: serverTimestamp(),
+        });
+        tx.set(
+          wrefGuest,
+          { uid: user.uid, balance: guestBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+
+        // HOST wallet: credit subtotal
+        tx.set(
+          wrefHost,
+          { uid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+        tx.set(walletTxHostRef, {
+          uid: hostUid,
+          type: "booking_income",
+          delta: +subtotal,
+          amount: subtotal,
+          status: "completed",
+          method: "wallet",
+          sourceUid: user.uid,
+          note: `Earnings from ${listing.title || "Listing"} — ${ymd(s0)} to ${ymd(addDays(e0, -1))}`,
+          metadata: { bookingId: bookingRef.id, payerUid: user.uid, listingId: listing.id },
+          balanceAfter: hostBalAfter,
+          timestamp: serverTimestamp(),
+        });
+
+        // GUEST points
+        tx.set(
+          pointsGuestRef,
+          { uid: user.uid, balance: guestPtsAfter, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+        tx.set(ptsLogGuestRef, {
+          uid: user.uid,
+          type: "booking_reward",
+          delta: BOOKING_REWARD_POINTS,
+          amount: BOOKING_REWARD_POINTS,
+          status: "completed",
+          note: `Reward for booking ${listing.title || "Listing"}`,
+          bookingId: bookingRef.id,
+          balanceAfter: guestPtsAfter,
+          timestamp: serverTimestamp(),
+        });
+
+        // HOST points
+        tx.set(
+          pointsHostRef,
+          { uid: hostUid, balance: hostPtsAfter, updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+        tx.set(ptsLogHostRef, {
+          uid: hostUid,
+          type: "host_booking_reward",
+          delta: HOST_BOOKING_REWARD_POINTS,
+          amount: HOST_BOOKING_REWARD_POINTS,
+          status: "completed",
+          note: `Reward for hosting a booking on ${listing.title || "Listing"}`,
+          bookingId: bookingRef.id,
+          balanceAfter: hostPtsAfter,
+          timestamp: serverTimestamp(),
+        });
+
+        // ADMIN wallet: credit service fee
+        if (serviceFee > 0) {
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          const walletTxAdminRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+          tx.set(walletTxAdminRef, {
+            uid: ADMIN_WALLET_ID,
+            type: "service_fee",
+            delta: +serviceFee,
+            amount: serviceFee,
+            status: "completed",
+            method: "wallet",
+            note: `Service fee from ${listing.title || "Listing"} — ${ymd(s0)} to ${ymd(addDays(e0, -1))}`,
+            metadata: { bookingId: bookingRef.id, listingId: listing.id, hostUid, payerUid: user.uid },
+            balanceAfter: adminBalAfter,
+            timestamp: serverTimestamp(),
+          });
+          tx.set(
+            wrefAdmin,
+            { uid: ADMIN_WALLET_ID, balance: adminBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+        }
+
+        // Coupon redemption audit
+        if (Number(payment?.couponDiscount || 0) > 0 && payment?.couponId) {
+          const redRef = doc(collection(database, "couponRedemptions"));
+          tx.set(redRef, {
+            uid: user.uid,
+            couponId: payment.couponId,
+            code: payment?.offerCode || null,
+            bookingId: bookingRef.id,
+            listingId: listing.id,
+            hostUid,
+            timestamp: serverTimestamp(),
+          });
+        }
+      });
+
+      // Update disabled days locally
+      const s = startOfDay(selectedDates.start);
+      const e = addDays(startOfDay(selectedDates.end), -1);
+      if (s && e && e >= s) {
+        setBookedIntervals((prev) => mergeIntervals([...prev, { start: s, end: e }]));
+      }
+
+      // Email confirmation
+      try {
+        await sendBookingConfirmationEmail({
+          user: auth.currentUser,
+          listing,
+          totalAmount: payment.total,
+          paymentStatus: "paid",
+        });
+      } catch (e) {
+        console.error("Email send failed:", e);
+      }
+
+      setIsPayingWallet(false);
+      setShowPayPal(false);
+      alert(
+        `Paid with E-Wallet.\n• Host received: ₱${Number(payment.subtotal || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n• You earned: +${BOOKING_REWARD_POINTS} pts\n• Host earned: +${HOST_BOOKING_REWARD_POINTS} pts\n\nA confirmation email will follow shortly.`
+      );
+      onClose?.();
+    } catch (txError) {
+      console.error("Transaction error:", txError);
+      setIsPayingWallet(false);
+      throw txError; // Re-throw to be caught by outer catch
+    }
+    } catch (e) {
+      console.error("E-Wallet payment error:", e);
+      setIsPayingWallet(false);
+      const errorMessage = e?.message || "We couldn't complete your wallet payment.";
+      alert(`Payment failed: ${errorMessage}`);
+      throw e; // Re-throw to be caught by button handler
+    }
   };
 
   /* Helper for the datepicker's filterDate */
@@ -523,6 +1129,16 @@ export default function HomeDetailsModal({ listingId, onClose }) {
           bookedIntervals={bookedIntervals}
           setBookedIntervals={setBookedIntervals}
           filterDate={(date) => !isDisabledDay(date)}
+          couponInput={couponInput}
+          setCouponInput={setCouponInput}
+          couponErr={couponErr}
+          appliedCoupon={appliedCoupon}
+          applyCouponCode={applyCouponCode}
+          clearCoupon={clearCoupon}
+          autoPromo={autoPromo}
+          wallet={wallet}
+          payWithWallet={payWithWallet}
+          isPayingWallet={isPayingWallet}
         />
       </div>
 
@@ -571,6 +1187,16 @@ function RightPane(props) {
     bookedIntervals,
     setBookedIntervals,
     filterDate,
+    couponInput,
+    setCouponInput,
+    couponErr,
+    appliedCoupon,
+    applyCouponCode,
+    clearCoupon,
+    autoPromo,
+    wallet,
+    payWithWallet,
+    isPayingWallet,
   } = props;
 
   const [showFullPolicy, setShowFullPolicy] = useState(false);
@@ -873,6 +1499,28 @@ function RightPane(props) {
                 </div>
               )}
 
+              {/* Promo discount */}
+              {Number(payment?.promoDiscount || 0) > 0 && (
+                <div className="flex items-center justify-between text-[13.5px] sm:text-sm text-blue-700">
+                  <span className="inline-flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Promo: {payment?.promoLabel || "Discount"}
+                  </span>
+                  <span>− ₱{Number(payment.promoDiscount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+
+              {/* Coupon discount */}
+              {Number(payment?.couponDiscount || 0) > 0 && (
+                <div className="flex items-center justify-between text-[13.5px] sm:text-sm text-emerald-700">
+                  <span className="inline-flex items-center gap-1">
+                    <BadgePercent className="w-3.5 h-3.5" />
+                    Coupon: {payment?.couponLabel || "Discount"}
+                  </span>
+                  <span>− ₱{Number(payment.couponDiscount || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
                 <span>Subtotal</span>
                 <span className="font-medium">₱{payment.subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
@@ -895,6 +1543,64 @@ function RightPane(props) {
               )}
             </section>
           )}
+
+          {/* Coupon Code Input */}
+          {payment && (
+            <section className="rounded-[18px] bg-white/95 border border-white/70 p-4 sm:p-5 shadow-lg ring-1 ring-black/5 space-y-3">
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-1">Have a coupon code?</h3>
+              {appliedCoupon ? (
+                <div className="flex items-center justify-between rounded-xl bg-emerald-50 border border-emerald-200 p-3">
+                  <div className="flex items-center gap-2">
+                    <BadgePercent className="w-4 h-4 text-emerald-700" />
+                    <span className="text-sm font-semibold text-emerald-900">
+                      {appliedCoupon.code || payment?.offerCode || "Coupon applied"}
+                    </span>
+                    <span className="text-xs text-emerald-700">
+                      {payment?.couponLabel || describeOffer(appliedCoupon)}
+                    </span>
+                  </div>
+                  <button
+                    onClick={clearCoupon}
+                    className="text-xs font-medium text-emerald-700 hover:text-emerald-900 underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                      placeholder="Enter coupon code"
+                      className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") applyCouponCode();
+                      }}
+                    />
+                    <button
+                      onClick={applyCouponCode}
+                      className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                  {couponErr && (
+                    <p className="text-xs text-red-600">{couponErr}</p>
+                  )}
+                  {autoPromo && !appliedCoupon && (
+                    <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 p-2">
+                      <Sparkles className="w-4 h-4 text-blue-600" />
+                      <span className="text-xs text-blue-800">
+                        Promo available: {describeOffer(autoPromo)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
         </div>
       </div>
 
@@ -914,6 +1620,9 @@ function RightPane(props) {
         infants={infants}
         onClose={onClose}
         setBookedIntervals={setBookedIntervals}
+        wallet={wallet}
+        payWithWallet={payWithWallet}
+        isPayingWallet={isPayingWallet}
       />
     </div>
   );
@@ -959,7 +1668,11 @@ function FooterActions({
   infants,
   onClose,
   setBookedIntervals,
+  wallet,
+  payWithWallet,
+  isPayingWallet,
 }) {
+  const computedTotal = Number(payment?.total ?? totalAmount ?? 0);
   return (
     <div
       className="w-full bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70 border-t border-white/60 ring-1 ring-black/5 px-4 pt-4 pb-6 sm:pb-6"
@@ -1001,6 +1714,26 @@ function FooterActions({
 
                     const listingDocRef = listing?.id ? doc(database, "listings", listing.id) : null;
 
+                    const appliedOffers = [
+                      ...(Number(payment?.promoDiscount || 0) > 0
+                        ? [{
+                            kind: "promo",
+                            offerId: payment?.promoId || null,
+                            label: payment?.promoLabel || "",
+                            discount: Number(payment?.promoDiscount || 0),
+                          }]
+                        : []),
+                      ...(Number(payment?.couponDiscount || 0) > 0
+                        ? [{
+                            kind: "coupon",
+                            offerId: payment?.couponId || null,
+                            code: payment?.offerCode || null,
+                            label: payment?.couponLabel || "",
+                            discount: Number(payment?.couponDiscount || 0),
+                          }]
+                        : []),
+                    ];
+
                     const bookingData = {
                       uid: user.uid,
                       guestEmail: user.email,
@@ -1029,10 +1762,29 @@ function FooterActions({
                       createdAt: serverTimestamp(),
                       updatedAt: serverTimestamp(),
                       paypalOrderId: details?.id || null,
+                      // ADDED: applied offers (promo + coupon)
+                      appliedOffers,
                     };
 
                     const bookingsRef = collection(database, "bookings");
-                    await addDoc(bookingsRef, bookingData);
+                    const bookingDocRef = await addDoc(bookingsRef, bookingData);
+
+                    // ADDED: coupon redemption audit row (if coupon applied)
+                    if (Number(payment?.couponDiscount || 0) > 0 && payment?.couponId) {
+                      try {
+                        const redRef = doc(collection(database, "couponRedemptions"));
+                        await setDoc(redRef, {
+                          uid: user.uid,
+                          couponId: payment.couponId,
+                          code: payment.offerCode || null,
+                          bookingId: bookingDocRef.id,
+                          discount: Number(payment.couponDiscount || 0),
+                          timestamp: serverTimestamp(),
+                        });
+                      } catch (redErr) {
+                        console.warn("Coupon redemption audit failed:", redErr);
+                      }
+                    }
 
                     // Optimistically disable newly booked range
                     const s = startOfDay(bookingData.checkIn);
@@ -1062,6 +1814,40 @@ function FooterActions({
                 onCancel={() => setShowPayPal(false)}
               />
             </div>
+
+            {/* E-Wallet button appears above Cancel */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (payWithWallet) {
+                  payWithWallet().catch((err) => {
+                    console.error("E-Wallet payment error:", err);
+                    alert(`Payment error: ${err?.message || "Unknown error occurred"}`);
+                  });
+                } else {
+                  console.error("payWithWallet function is not defined");
+                  alert("Payment function not available. Please refresh the page.");
+                }
+              }}
+              disabled={!payment || wallet?.balance < computedTotal || isPayingWallet}
+              className={[
+                "mt-3 w-full inline-flex items-center justify-center rounded-full",
+                "bg-slate-900 px-6 py-3 text-sm font-semibold text-white shadow hover:bg-black",
+                "transition disabled:opacity-50 disabled:pointer-events-none",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60",
+              ].join(" ")}
+              title={
+                !payment
+                  ? "Select dates first"
+                  : wallet?.balance < computedTotal
+                  ? "Insufficient wallet balance"
+                  : "Pay with E-Wallet"
+              }
+            >
+              {isPayingWallet ? "Processing…" : "Pay with E-Wallet"}
+            </button>
 
             <button
               type="button"

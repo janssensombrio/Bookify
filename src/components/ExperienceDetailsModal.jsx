@@ -763,6 +763,8 @@ const ExperienceDetailsModal = ({ listingId, onClose }) => {
                           listingId,
                           quantity: payment.participants,
                           schedule: selectedSchedule, // {date, time}
+                          checkIn: selectedSchedule?.date || null,
+                          checkOut: selectedSchedule?.date || null,
                           guestEmail: user.email,
                           subtotal: payment.subtotal,
                           serviceFee: payment.serviceFee,

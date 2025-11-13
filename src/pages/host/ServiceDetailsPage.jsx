@@ -1,5 +1,5 @@
 // src/pages/ServiceDetailsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { PayPalButtons } from "@paypal/react-paypal-js";
@@ -25,6 +25,7 @@ import { MessageHostModal } from "../../components/message-host-modal";
 /* =============== Rewards =============== */
 const BOOKING_REWARD_POINTS = 80; // guest reward
 const HOST_BOOKING_REWARD_POINTS = 100; // provider/host reward per booking (wallet flow)
+const ADMIN_WALLET_ID = "admin";
 
 /* ================= EmailJS config & helper ================= */
 // const EMAILJS_SERVICE_ID = "service_xxx";
@@ -783,6 +784,9 @@ function ServiceCheckout({
               }
 
               await runTransaction(database, async (tx) => {
+                const serviceFee = Number(payment.tax || 0); // service fee is stored as "tax" in payment
+                const hostUid = service?.uid || service?.ownerId || service?.hostId || null;
+
                 const bookingRef = doc(collection(database, "bookings"));
                 const pointsRef = doc(database, "points", user.uid);
                 const ptsLogRef = doc(collection(database, "points", user.uid, "transactions"));
@@ -791,6 +795,16 @@ function ServiceCheckout({
                 // READS
                 const pSnap = await tx.get(pointsRef);
                 const lsnap = await tx.get(lref);
+
+                // Read admin wallet balance (if service fee will be credited)
+                let adminBal = 0;
+                let adminBalAfter = 0;
+                if (completed && serviceFee > 0) {
+                  const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+                  const adminSnap = await tx.get(wrefAdmin);
+                  adminBal = Number(adminSnap.data()?.balance || 0);
+                  adminBalAfter = adminBal + serviceFee;
+                }
 
                 const prevCount = Number(lsnap.data()?.count || 0);
                 const newCount = prevCount + participants;
@@ -905,6 +919,32 @@ function ServiceCheckout({
                     timestamp: serverTimestamp(),
                   });
                 }
+
+                // ---------- ADMIN wallet: credit service fee (PayPal payment) ----------
+                if (completed && serviceFee > 0) {
+                  const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+                  
+                  // Ensure admin wallet exists (if it didn't exist, balance was 0)
+                  const walletTxAdminRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+                  tx.set(walletTxAdminRef, {
+                    uid: ADMIN_WALLET_ID,
+                    type: "service_fee",
+                    delta: +serviceFee,
+                    amount: serviceFee,
+                    status: "completed",
+                    method: "paypal",
+                    note: `Service fee from ${service?.title || "Service"} — ${fmtDate(selectedSchedule.date)} ${rawTime}`,
+                    metadata: { bookingId: bookingRef.id, listingId: targetId, hostUid, payerUid: user.uid },
+                    balanceAfter: adminBalAfter,
+                    timestamp: serverTimestamp(),
+                  });
+                  
+                  tx.set(
+                    wrefAdmin,
+                    { uid: ADMIN_WALLET_ID, balance: adminBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+                    { merge: true }
+                  );
+                }
               });
 
               try {
@@ -988,6 +1028,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 
   // Reviews
   const [reviews, setReviews] = useState([]);
+  const reviewsScrollRef = useRef(null);
   const [reviewStats, setReviewStats] = useState({ avg: 0, count: 0 });
 
   // Wallet live state
@@ -1449,6 +1490,16 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
         const pSnapHost = await tx.get(pointsHostRef);
         const lsnap = await tx.get(lref);
 
+        // Read admin wallet balance (if service fee will be credited)
+        let adminBal = 0;
+        let adminBalAfter = 0;
+        if (serviceFee > 0) {
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          const adminSnap = await tx.get(wrefAdmin);
+          adminBal = Number(adminSnap.data()?.balance || 0);
+          adminBalAfter = adminBal + serviceFee;
+        }
+
         const currentBal = Number(wSnapGuest.data()?.balance || 0);
         if (currentBal < total) throw new Error("Insufficient wallet balance.");
 
@@ -1625,20 +1676,30 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
           timestamp: serverTimestamp(),
         });
 
-        // Platform fee
+        // ---------- ADMIN wallet: credit service fee ----------
         if (serviceFee > 0) {
-          const platformFeeRef = doc(collection(database, "platformFees"));
-          tx.set(platformFeeRef, {
-            uid: user.uid,
-            payerUid: user.uid,
-            hostUid,
-            listingId,
-            bookingId: bookingRef.id,
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          
+          // Ensure admin wallet exists (if it didn't exist, balance was 0)
+          const walletTxAdminRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+          tx.set(walletTxAdminRef, {
+            uid: ADMIN_WALLET_ID,
+            type: "service_fee",
+            delta: +serviceFee,
             amount: serviceFee,
-            currency: "PHP",
-            status: "owed",
-            createdAt: serverTimestamp(),
+            status: "completed",
+            method: "wallet",
+            note: `Service fee from ${service?.title || "Service"} — ${fmtDate(selectedSchedule.date)} ${rawTime}`,
+            metadata: { bookingId: bookingRef.id, listingId, hostUid, payerUid: user.uid },
+            balanceAfter: adminBalAfter,
+            timestamp: serverTimestamp(),
           });
+          
+          tx.set(
+            wrefAdmin,
+            { uid: ADMIN_WALLET_ID, balance: adminBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+            { merge: true }
+          );
         }
       });
 
@@ -2038,6 +2099,26 @@ A confirmation email will follow shortly.`
             </div>
           </GlassCard>
 
+          {/* Location Map */}
+          {service.address && service.locationType === "in-person" && (
+            <GlassCard className="p-5 sm:p-6">
+              <h3 className="text-sm font-semibold text-slate-900 tracking-wide mb-3">Location</h3>
+              <div className="w-full rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+                <iframe
+                  width="100%"
+                  height="400"
+                  style={{ border: 0, minHeight: '300px' }}
+                  loading="lazy"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                  src={`https://maps.google.com/maps?q=${encodeURIComponent(service.address)}&output=embed`}
+                  title="Location Map"
+                  className="w-full h-[300px] sm:h-[400px]"
+                />
+              </div>
+            </GlassCard>
+          )}
+
           {/* Optional sections */}
           {service.providerName && (
             <GlassCard className="p-5 sm:p-6">
@@ -2121,29 +2202,61 @@ A confirmation email will follow shortly.`
 
           {/* ===== Ratings & Reviews ===== */}
           <GlassCard className="p-5 sm:p-6">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="flex items-center">
-                <Stars value={reviewStats.avg} size={18} />
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center">
+                  <Stars value={reviewStats.avg} size={18} />
+                </div>
+                <p className="text-sm text-slate-800">
+                  <span className="font-semibold">
+                    {reviewStats.avg ? reviewStats.avg.toFixed(1) : "—"}
+                  </span>
+                  <span className="mx-1">/ 5</span>
+                  <span className="text-slate-500">
+                    ({reviewStats.count} review{reviewStats.count === 1 ? "" : "s"})
+                  </span>
+                </p>
               </div>
-              <p className="text-sm text-slate-800">
-                <span className="font-semibold">
-                  {reviewStats.avg ? reviewStats.avg.toFixed(1) : "—"}
-                </span>
-                <span className="mx-1">/ 5</span>
-                <span className="text-slate-500">
-                  ({reviewStats.count} review{reviewStats.count === 1 ? "" : "s"})
-                </span>
-              </p>
+              {reviews.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (reviewsScrollRef.current) {
+                        reviewsScrollRef.current.scrollBy({ left: -320, behavior: "smooth" });
+                      }
+                    }}
+                    className="p-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition-colors"
+                    aria-label="Scroll reviews left"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-slate-700" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (reviewsScrollRef.current) {
+                        reviewsScrollRef.current.scrollBy({ left: 320, behavior: "smooth" });
+                      }
+                    }}
+                    className="p-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition-colors"
+                    aria-label="Scroll reviews right"
+                  >
+                    <ChevronRight className="w-4 h-4 text-slate-700" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {reviews.length === 0 ? (
               <p className="text-sm text-slate-600">No reviews yet.</p>
             ) : (
-              <ul className="space-y-4">
+              <div
+                ref={reviewsScrollRef}
+                className="flex gap-4 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden scrollbar-hide"
+                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+              >
                 {reviews.map((r) => (
-                  <li
+                  <div
                     key={r.id}
-                    className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+                    className="flex-shrink-0 w-[320px] sm:w-[360px] flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
                   >
                     <div className="flex items-start gap-3">
                       <UserAvatar user={r.user} />
@@ -2169,16 +2282,16 @@ A confirmation email will follow shortly.`
                             </span>
                           )}
                         </div>
-                        {String(r.comment || r.text || r.content || "").trim() && (
-                          <p className="mt-1 text-[13.5px] text-slate-800 whitespace-pre-wrap">
-                            {r.comment || r.text || r.content}
-                          </p>
-                        )}
                       </div>
                     </div>
-                  </li>
+                    {String(r.comment || r.text || r.content || "").trim() && (
+                      <p className="text-[13.5px] text-slate-800 whitespace-pre-wrap line-clamp-4">
+                        {r.comment || r.text || r.content}
+                      </p>
+                    )}
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
           </GlassCard>
         </div>

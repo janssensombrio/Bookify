@@ -906,6 +906,8 @@ const ServiceDetailsModal = ({ listingId, onClose }) => {
                             uid: user.uid,
                             quantity,
                             schedule,
+                            checkIn: schedule?.date || null,
+                            checkOut: schedule?.date || null,
                             guestEmail: user.email,
                             subtotal,
                             serviceFee,

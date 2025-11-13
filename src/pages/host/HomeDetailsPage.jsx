@@ -47,6 +47,9 @@ import {
   CalendarDays
 } from "lucide-react";
 
+/* ================== Admin Wallet ================== */
+const ADMIN_WALLET_ID = "admin";
+
 /* ================== Rewards ================== */
 const BOOKING_REWARD_POINTS = 80;            // guest reward (existing behavior)
 const HOST_BOOKING_REWARD_POINTS = 100;      // NEW: host reward per booking (E-Wallet flow)
@@ -715,7 +718,7 @@ function PayPalCheckout({
                 return;
               }
 
-              // Transaction: lock nights + create booking + award points
+              // Transaction: lock nights + create booking + award points + credit admin wallet
               await runTransaction(database, async (tx) => {
                 const sLock = startOfDay(selectedDates.start);
                 const eLock = startOfDay(selectedDates.end);
@@ -728,6 +731,11 @@ function PayPalCheckout({
                 const nightRefs = nightsArr.map((d) =>
                   doc(database, "nightLocks", `${listing.id}_${ymd(d)}`)
                 );
+                const hostUid = listing.uid || listing.ownerId || listing.hostId || "";
+
+                // Calculate service fee
+                const subtotal = Number(payment?.subtotal || 0);
+                const serviceFee = Number(payment?.serviceFee || 0);
 
                 // ---------- READS ----------
                 const pSnap = await tx.get(pointsRef);
@@ -737,6 +745,16 @@ function PayPalCheckout({
                   if (nsnap.exists()) {
                     throw new Error("One or more nights just became unavailable. Please choose new dates.");
                   }
+                }
+
+                // Read admin wallet balance (if service fee will be credited)
+                let adminBal = 0;
+                let adminBalAfter = 0;
+                if (completed && serviceFee > 0) {
+                  const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+                  const adminSnap = await tx.get(wrefAdmin);
+                  adminBal = Number(adminSnap.data()?.balance || 0);
+                  adminBalAfter = adminBal + serviceFee;
                 }
 
                 const curPts = Number(pSnap.data()?.balance || 0);
@@ -837,6 +855,32 @@ function PayPalCheckout({
                     hostUid: listing?.uid || listing?.ownerId || listing?.hostId || null,
                     timestamp: serverTimestamp(),
                   });
+                }
+
+                // ---------- ADMIN wallet: credit service fee (PayPal payment) ----------
+                if (completed && serviceFee > 0) {
+                  const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+                  
+                  // Ensure admin wallet exists (if it didn't exist, balance was 0)
+                  const walletTxAdminRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+                  tx.set(walletTxAdminRef, {
+                    uid: ADMIN_WALLET_ID,
+                    type: "service_fee",
+                    delta: +serviceFee,
+                    amount: serviceFee,
+                    status: "completed",
+                    method: "paypal",
+                    note: `Service fee from ${listing.title || "Listing"} — ${ymd(sLock)} to ${ymd(addDays(eLock, -1))}`,
+                    metadata: { bookingId: bookingRef.id, listingId: listing.id, hostUid, payerUid: user.uid },
+                    balanceAfter: adminBalAfter,
+                    timestamp: serverTimestamp(),
+                  });
+                  
+                  tx.set(
+                    wrefAdmin,
+                    { uid: ADMIN_WALLET_ID, balance: adminBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+                    { merge: true }
+                  );
                 }
               });
 
@@ -939,6 +983,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
   /* NEW: Reviews state */
   const [reviews, setReviews] = useState([]);       // all reviews for this listing
+  const reviewsScrollRef = useRef(null);
   const [profiles, setProfiles] = useState({});     // uid -> profile data (users/hosts)
   const [loadingReviews, setLoadingReviews] = useState(true);
 
@@ -1553,6 +1598,16 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         const wSnapHost  = await tx.get(wrefHost);
         const pSnapHost  = await tx.get(pointsHostRef);
 
+        // Read admin wallet balance (if service fee will be credited)
+        let adminBal = 0;
+        let adminBalAfter = 0;
+        if (serviceFee > 0) {
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          const adminSnap = await tx.get(wrefAdmin);
+          adminBal = Number(adminSnap.data()?.balance || 0);
+          adminBalAfter = adminBal + serviceFee;
+        }
+
         for (const nref of nightRefs) {
           const nsnap = await tx.get(nref);
           if (nsnap.exists()) throw new Error("One or more nights just became unavailable. Please choose new dates.");
@@ -1710,20 +1765,30 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
           timestamp: serverTimestamp(),
         });
 
-        // ---------- Optional: record platform fee owed (for later recon) ----------
+        // ---------- ADMIN wallet: credit service fee ----------
         if (serviceFee > 0) {
-          const platformFeeRef = doc(collection(database, "platformFees"));
-          tx.set(platformFeeRef, {
-            uid: user.uid,                 // so your current rules allow create
-            payerUid: user.uid,
-            hostUid,
-            listingId: listing.id,
-            bookingId: bookingRef.id,
+          const wrefAdmin = doc(database, "wallets", ADMIN_WALLET_ID);
+          
+          // Ensure admin wallet exists (if it didn't exist, balance was 0)
+          const walletTxAdminRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+          tx.set(walletTxAdminRef, {
+            uid: ADMIN_WALLET_ID,
+            type: "service_fee",
+            delta: +serviceFee,
             amount: serviceFee,
-            currency: "PHP",
-            status: "owed",
-            createdAt: serverTimestamp(),
+            status: "completed",
+            method: "wallet",
+            note: `Service fee from ${listing.title || "Listing"} — ${ymd(s0)} to ${ymd(addDays(e0, -1))}`,
+            metadata: { bookingId: bookingRef.id, listingId: listing.id, hostUid, payerUid: user.uid },
+            balanceAfter: adminBalAfter,
+            timestamp: serverTimestamp(),
           });
+          
+          tx.set(
+            wrefAdmin,
+            { uid: ADMIN_WALLET_ID, balance: adminBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+            { merge: true }
+          );
         }
 
         // ADDED: coupon redemption audit row (if coupon applied)
@@ -1946,10 +2011,29 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
             </div>
           </GlassCard>
 
+          {/* Location Map */}
+          {listing.location && (
+            <GlassCard className="p-5 sm:p-6">
+              <h3 className="text-sm font-semibold text-slate-900 tracking-wide mb-3">Location</h3>
+              <div className="w-full rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+                <iframe
+                  width="100%"
+                  height="400"
+                  style={{ border: 0, minHeight: '300px' }}
+                  loading="lazy"
+                  allowFullScreen
+                  referrerPolicy="no-referrer-when-downgrade"
+                  src={`https://maps.google.com/maps?q=${encodeURIComponent(listing.location)}&output=embed`}
+                  title="Location Map"
+                  className="w-full h-[300px] sm:h-[400px]"
+                />
+              </div>
+            </GlassCard>
+          )}
+
           {/* ===== NEW: Guest Reviews ===== */}
           <GlassCard className="p-5 sm:p-6">
-            <div className="flex items-center justify-between gap-3">
-              {/* <h3 className="text-lg font-bold text-slate-900">Reviews</h3> */}
+            <div className="flex items-center justify-between gap-3 mb-4">
               {reviews.length > 0 && (
                 <div className="inline-flex items-center gap-2">
                   <Stars value={avgRating} />
@@ -1958,14 +2042,44 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
                   </span>
                 </div>
               )}
+              {reviews.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (reviewsScrollRef.current) {
+                        reviewsScrollRef.current.scrollBy({ left: -320, behavior: "smooth" });
+                      }
+                    }}
+                    className="p-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition-colors"
+                    aria-label="Scroll reviews left"
+                  >
+                    <ChevronLeft className="w-4 h-4 text-slate-700" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (reviewsScrollRef.current) {
+                        reviewsScrollRef.current.scrollBy({ left: 320, behavior: "smooth" });
+                      }
+                    }}
+                    className="p-2 rounded-full border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition-colors"
+                    aria-label="Scroll reviews right"
+                  >
+                    <ChevronRight className="w-4 h-4 text-slate-700" />
+                  </button>
+                </div>
+              )}
             </div>
 
             {loadingReviews ? (
-              <div className="mt-3 text-sm text-slate-600">Loading reviews…</div>
+              <div className="text-sm text-slate-600">Loading reviews…</div>
             ) : reviews.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-600">No reviews yet.</p>
+              <p className="text-sm text-slate-600">No reviews yet.</p>
             ) : (
-              <ul className="mt-4 space-y-4">
+              <div
+                ref={reviewsScrollRef}
+                className="flex gap-4 overflow-x-auto pb-2 [&::-webkit-scrollbar]:hidden scrollbar-hide"
+                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+              >
                 {reviews.map((r) => {
                   const prof = profiles[r.uid] || {};
                   const name =
@@ -1985,22 +2099,27 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
                   const when = fmtReviewDate(r.updatedAt || r.createdAt);
 
                   return (
-                    <li key={r.id} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white/80 p-4">
-                      <ReviewerAvatar name={name} photoURL={photoURL} />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <p className="font-semibold text-slate-900 truncate">{name}</p>
-                          {!!when && <span className="text-xs text-slate-500">{when}</span>}
+                    <div
+                      key={r.id}
+                      className="flex-shrink-0 w-[320px] sm:w-[360px] flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white/80 p-4"
+                    >
+                      <div className="flex items-start gap-3">
+                        <ReviewerAvatar name={name} photoURL={photoURL} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="font-semibold text-slate-900 truncate">{name}</p>
+                            {!!when && <span className="text-xs text-slate-500">{when}</span>}
+                          </div>
+                          <div className="mt-1"><Stars value={Number(r.rating) || 0} /></div>
                         </div>
-                        <div className="mt-1"><Stars value={Number(r.rating) || 0} /></div>
-                        {r.text && (
-                          <p className="mt-2 text-sm text-slate-800 whitespace-pre-wrap">{r.text}</p>
-                        )}
                       </div>
-                    </li>
+                      {r.text && (
+                        <p className="text-sm text-slate-800 whitespace-pre-wrap line-clamp-4">{r.text}</p>
+                      )}
+                    </div>
                   );
                 })}
-              </ul>
+              </div>
             )}
           </GlassCard>
 

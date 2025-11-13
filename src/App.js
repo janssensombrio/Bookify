@@ -19,6 +19,11 @@ import WalletPage from "./pages/guest/wallet-page.jsx";
 import HomeDetailsPage from "./pages/host/HomeDetailsPage";
 import ExperienceDetailsPage from "./pages/host/ExperienceDetailsPage";
 import ServiceDetailsPage from "./pages/host/ServiceDetailsPage";
+import AdminDashboard from "./pages/admin/AdminDashboard.jsx";
+import AdminHostsPage from "./pages/admin/hosts.jsx";
+import AdminGuestsPage from "./pages/admin/guests.jsx";
+import AdminListingsPage from "./pages/admin/listings.jsx";
+import AdminBookingsPage from "./pages/admin/bookings.jsx";
 
 function App() {
   return (
@@ -44,6 +49,15 @@ function App() {
             <Route path="/homes/:listingId" element={<HomeDetailsPage />} />
             <Route path="/experiences/:listingId" element={<ExperienceDetailsPage />} />
             <Route path="/services/:listingId" element={<ServiceDetailsPage />} />
+
+            {/* Admin */}
+            <Route path="/admin-dashboard" element={<AdminDashboard />} />
+            <Route path="/admin/hosts" element={<AdminHostsPage />} />
+            <Route path="/admin/guests" element={<AdminGuestsPage />} />
+            <Route path="/admin/listings" element={<AdminListingsPage />} />
+            <Route path="/admin/bookings" element={<AdminBookingsPage />} />
+            <Route path="/admin/wallet" element={<div />} />
+            <Route path="/admin/users" element={<div />} />
           </Routes>
       </SidebarProvider>
     </Router>

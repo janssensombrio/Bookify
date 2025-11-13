@@ -10,7 +10,6 @@ import {
   getDoc,
   doc,
   updateDoc,
-  setDoc,
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
@@ -43,6 +42,26 @@ import {
   Hash,
   Star,
 } from "lucide-react";
+
+/* ---------------- EmailJS config ---------------- */
+import emailjs from "@emailjs/browser";
+
+const EMAILJS = {
+  SERVICE_ID: "service_7y9jqhs",
+  TEMPLATE_ID: "template_6ak94mi",
+  PUBLIC_KEY: "0QgVGXmPL9kGSq53X",
+};
+
+// Initialize once at module load (idempotent)
+if (!emailjs.__BOOKIFY_INIT__) {
+  try {
+    emailjs.init(EMAILJS.PUBLIC_KEY); // ✅ pass string, not object
+    emailjs.__BOOKIFY_INIT__ = true;
+    console.info("[EmailJS] init OK");
+  } catch (e) {
+    console.error("[EmailJS] init failed:", e);
+  }
+}
 
 /* ---------------- small utils ---------------- */
 const fmtRange = (start, end) => {
@@ -324,6 +343,22 @@ const canReview = (b) => {
   return isPastBooking(b) && s !== "canceled" && s !== "cancelled";
 };
 
+/* ---------- NEW: day helpers for Today/Upcoming bucketing ---------- */
+const startOfDay = (d = new Date()) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+const endOfDay = (d = new Date()) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+const isSameDay = (a, b) => {
+  if (!a || !b) return false;
+  const ad = a?.toDate ? a.toDate() : new Date(a);
+  const bd = b?.toDate ? b.toDate() : new Date(b);
+  return (
+    ad.getFullYear() === bd.getFullYear() &&
+    ad.getMonth() === bd.getMonth() &&
+    ad.getDate() === bd.getDate()
+  );
+};
+
 /* ---------------- skeletons ---------------- */
 const CardSkeleton = () => (
   <div className="rounded-3xl bg-white/80 border border-white/50 shadow-[0_10px_30px_rgba(2,6,23,0.08)] overflow-hidden animate-pulse">
@@ -340,7 +375,7 @@ const CardSkeleton = () => (
   </div>
 );
 
-/* ---------------- shared card shell ---------------- */
+/* ---------------- shared card shell (tweaked for consistent footers) ---------------- */
 const CardShell = ({ cover, chip, children, onClick }) => (
   <div
     onClick={onClick}
@@ -358,28 +393,30 @@ const CardShell = ({ cover, chip, children, onClick }) => (
       bg-gradient-to-b from-white to-slate-50
       border border-slate-200/70
       shadow-[0_15px_40px_rgba(2,6,23,0.08)]
-      hover:shadow-[0_20px_60px_rgba(2,6,23,0.12)]
+      hover:shadow-[0_30px_80px_rgba(2,6,23,0.15)]
       transition-all duration-300
+      flex flex-col h-full
     "
   >
     <div className="relative h-40">
       <img
         src={
           cover ||
-          "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=1200&auto=format&fit=crop"
+          'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=1200&auto=format&fit=crop'
         }
         alt=""
         className="absolute inset-0 w-full h-full object-cover"
         loading="lazy"
       />
-      <div className="absolute inset-0 bg-gradient-to-t from-black/10 via-transparent to-white/10 mix-blend-overlay" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/15 via-black/5 to-transparent mix-blend-overlay" />
       {chip && (
-        <span className="absolute top-3 left-3 text-xs px-2 py-1 rounded-full bg-black/60 text-white">
+        <span className="absolute top-3 left-3 text-xs px-2 py-1 rounded-full bg-black/65 text-white shadow">
           {chip}
         </span>
       )}
     </div>
-    <div className="p-5">{children}</div>
+    {/* content */}
+    <div className="p-5 flex-1 min-h-[1px]">{children}</div>
   </div>
 );
 
@@ -457,6 +494,38 @@ function Toast({ toast, onClose }) {
   );
 }
 
+/* ---------------- NEW: Result Modal (used for success) ---------------- */
+const ResultModal = ({ open, title, message, onClose, primaryLabel = "OK" }) => {
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative z-10 w-full sm:w-[520px]">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-white border border-slate-200 shadow-xl p-6">
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 grid place-items-center w-10 h-10 rounded-xl bg-emerald-600 text-white shadow">
+              ✓
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold text-slate-900">{title}</h3>
+              {message && <p className="text-sm text-slate-700 mt-2 whitespace-pre-wrap">{message}</p>}
+            </div>
+          </div>
+          <div className="mt-6 flex items-center justify-end">
+            <button
+              onClick={onClose}
+              className="inline-flex items-center justify-center rounded-xl px-4 h-10 text-sm font-semibold bg-gradient-to-b from-blue-600 to-blue-700 text-white shadow hover:from-blue-500 hover:to-blue-700"
+            >
+              {primaryLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 /* ---------------- NEW: Review Modal ---------------- */
 const ReviewModal = ({ open, booking, existingReview, onClose, onSubmit, submitting }) => {
   const [rating, setRating] = useState(existingReview?.rating || 0);
@@ -513,7 +582,7 @@ const ReviewModal = ({ open, booking, existingReview, onClose, onSubmit, submitt
               className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 transition"
               disabled={submitting}
             >
-              Cancel
+              Cancel Booking
             </button>
             <button
               onClick={() => onSubmit?.({ rating, text })}
@@ -530,8 +599,48 @@ const ReviewModal = ({ open, booking, existingReview, onClose, onSubmit, submitt
   );
 };
 
+/* ----------- Local button styles for cards (consistent & prominent) ----------- */
+const btn = {
+  base: "inline-flex items-center justify-center rounded-xl px-4 h-10 text-sm font-semibold transition active:translate-y-[1px] focus:outline-none focus-visible:ring-2",
+  primary:
+    "text-white bg-gradient-to-b from-blue-600 to-blue-700 shadow-[0_8px_20px_rgba(37,99,235,0.35)] hover:from-blue-500 hover:to-blue-700 focus-visible:ring-blue-400/60",
+  danger:
+    "text-white bg-gradient-to-b from-rose-600 to-rose-700 shadow-[0_8px_20px_rgba(225,29,72,0.35)] hover:from-rose-500 hover:to-rose-700 focus-visible:ring-rose-400/60",
+  outline:
+    "text-slate-800 bg-white border border-slate-200 hover:bg-slate-50 shadow focus-visible:ring-slate-300/60",
+};
+
+/* ----------- Card footers: identical structure in all cards ----------- */
+const CardFooter = ({ total, onCancel, onView, showCancel }) => (
+  <div className="mt-6">
+    <div className="flex items-center justify-between">
+      <div className="text-sm text-slate-600">Total</div>
+      <div className="text-lg font-bold text-blue-600">{total}</div>
+    </div>
+
+    <div className="mt-4 flex items-center gap-2">
+      {/* left spacer ensures two buttons align to the right across cards */}
+      <div className="flex-1" />
+      {showCancel && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onCancel?.(); }}
+          className={`${btn.base} ${btn.danger}`}
+        >
+          Cancel Booking
+        </button>
+      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); onView?.(); }}
+        className={`${btn.base} ${btn.outline}`}
+      >
+        View Details
+      </button>
+    </div>
+  </div>
+);
+
 /* ---------------- category cards ---------------- */
-const HomesCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
+const HomesCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review, showTodayActions = false }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled listing";
   const loc = b.listing?.location || b.listingAddress || "";
   const dates = fmtRange(b.checkIn, b.checkOut);
@@ -593,50 +702,50 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, revi
         </span>
       </div>
 
-      {canReview(b) && (
-        <div className="mt-4 flex items-center justify-between">
-          <div>
-            {review?.rating ? (
-              <ReviewBadge rating={review.rating} label="You rated this" />
-            ) : (
-              <span className="text-sm text-slate-600">How was your booking?</span>
-            )}
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
-            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-          >
-            {review?.rating ? "Edit review" : "Rate & review"}
-          </button>
+      {/* ACTIONS: Today -> show Cancel; otherwise keep Rate & review (only for past) */}
+      {showTodayActions ? (
+        <div className="mt-4 flex items-center justify-end">
+          {isCancelable(b) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestCancel?.(b); }}
+              className={`${btn.base} ${btn.danger}`}
+            >
+              Cancel Booking
+            </button>
+          )}
         </div>
+      ) : (
+        canReview(b) && (
+          <div className="mt-4 flex items-center justify-between">
+            <div>
+              {review?.rating ? (
+                <ReviewBadge rating={review.rating} label="You rated this" />
+              ) : (
+                <span className="text-sm text-slate-600">How was your booking?</span>
+              )}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+              className={`${btn.base} ${btn.primary}`}
+            >
+              {review?.rating ? "Edit review" : "Rate & review"}
+            </button>
+          </div>
+        )
       )}
 
-      <div className="mt-4 flex items-center justify-between">
-        <div className="text-sm text-slate-600">Total</div>
-        <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2">
-        {isCancelable(b) && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="h-9 px-4 rounded-xl text-rose-700 bg-gradient-to-b from-rose-50 to-rose-100 border border-rose-200 shadow hover:from-rose-100 hover:to-rose-200 active:translate-y-px transition"
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); onRequestDetails(b); }}
-          className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-        >
-          View
-        </button>
-      </div>
+      {/* spacer + consistent footer */}
+      <CardFooter
+        total={peso(b.totalPrice)}
+        showCancel={isCancelable(b)}
+        onCancel={() => onRequestCancel(b)}
+        onView={() => onRequestDetails(b)}
+      />
     </CardShell>
   );
 };
 
-const ExperienceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
+const ExperienceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review, showTodayActions = false }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled experience";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -686,50 +795,48 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview,
         </span>
       </div>
 
-      {canReview(b) && (
-        <div className="mt-4 flex items-center justify-between">
-          <div>
-            {review?.rating ? (
-              <ReviewBadge rating={review.rating} label="You rated this" />
-            ) : (
-              <span className="text-sm text-slate-600">How was your booking?</span>
-            )}
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
-            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-          >
-            {review?.rating ? "Edit review" : "Rate & review"}
-          </button>
+      {showTodayActions ? (
+        <div className="mt-4 flex items-center justify-end">
+          {isCancelable(b) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestCancel?.(b); }}
+              className={`${btn.base} ${btn.danger}`}
+            >
+              Cancel Booking
+            </button>
+          )}
         </div>
+      ) : (
+        canReview(b) && (
+          <div className="mt-4 flex items-center justify-between">
+            <div>
+              {review?.rating ? (
+                <ReviewBadge rating={review.rating} label="You rated this" />
+              ) : (
+                <span className="text-sm text-slate-600">How was your booking?</span>
+              )}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+              className={`${btn.base} ${btn.primary}`}
+            >
+              {review?.rating ? "Edit review" : "Rate & review"}
+            </button>
+          </div>
+        )
       )}
 
-      <div className="mt-4 flex items-center justify-between">
-        <div className="text-sm text-slate-600">Total</div>
-        <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2">
-        {isCancelable(b) && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="h-9 px-4 rounded-xl text-rose-700 bg-gradient-to-b from-rose-50 to-rose-100 border border-rose-200 shadow hover:from-rose-100 hover:to-rose-200 active:translate-y-px transition"
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); onRequestDetails(b); }}
-          className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-        >
-          View
-        </button>
-      </div>
+      <CardFooter
+        total={peso(b.totalPrice)}
+        showCancel={isCancelable(b)}
+        onCancel={() => onRequestCancel(b)}
+        onView={() => onRequestDetails(b)}
+      />
     </CardShell>
   );
 };
 
-const ServiceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review }) => {
+const ServiceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, review, showTodayActions = false }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled service";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -766,45 +873,43 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails, onRequestReview, re
         </span>
       </div>
 
-      {canReview(b) && (
-        <div className="mt-4 flex items-center justify-between">
-          <div>
-            {review?.rating ? (
-              <ReviewBadge rating={review.rating} label="You rated this" />
-            ) : (
-              <span className="text-sm text-slate-600">How was your booking?</span>
-            )}
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
-            className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-          >
-            {review?.rating ? "Edit review" : "Rate & review"}
-          </button>
+      {showTodayActions ? (
+        <div className="mt-4 flex items-center justify-end">
+          {isCancelable(b) && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestCancel?.(b); }}
+              className={`${btn.base} ${btn.danger}`}
+            >
+              Cancel Booking
+            </button>
+          )}
         </div>
+      ) : (
+        canReview(b) && (
+          <div className="mt-4 flex items-center justify-between">
+            <div>
+              {review?.rating ? (
+                <ReviewBadge rating={review.rating} label="You rated this" />
+              ) : (
+                <span className="text-sm text-slate-600">How was your booking?</span>
+              )}
+            </div>
+            <button
+              onClick={(e) => { e.stopPropagation(); onRequestReview?.(b); }}
+              className={`${btn.base} ${btn.primary}`}
+            >
+              {review?.rating ? "Edit review" : "Rate & review"}
+            </button>
+          </div>
+        )
       )}
 
-      <div className="mt-4 flex items-center justify-between">
-        <div className="text-sm text-slate-600">Total</div>
-        <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
-      </div>
-
-      <div className="mt-4 flex items-center justify-end gap-2">
-        {isCancelable(b) && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onRequestCancel(b); }}
-            className="h-9 px-4 rounded-xl text-rose-700 bg-gradient-to-b from-rose-50 to-rose-100 border border-rose-200 shadow hover:from-rose-100 hover:to-rose-200 active:translate-y-px transition"
-          >
-            Cancel
-          </button>
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); onRequestDetails(b); }}
-          className="h-9 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
-        >
-          View
-        </button>
-      </div>
+      <CardFooter
+        total={peso(b.totalPrice)}
+        showCancel={isCancelable(b)}
+        onCancel={() => onRequestCancel(b)}
+        onView={() => onRequestDetails(b)}
+      />
     </CardShell>
   );
 };
@@ -896,14 +1001,14 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
           <div className="mt-6 flex items-center justify-end gap-3">
             <button
               onClick={onClose}
-              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+              className={`${btn.base} ${btn.outline}`}
             >
               Back
             </button>
             <button
               onClick={submit}
               disabled={!canContinue}
-              className="h-10 px-4 rounded-xl text-white bg-gradient-to-b from-blue-600 to-blue-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_16px_rgba(37,99,235,0.35)] hover:from-blue-500 hover:to-blue-700 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className={`${btn.base} ${btn.primary} disabled:opacity-60 disabled:cursor-not-allowed`}
             >
               Continue
             </button>
@@ -955,7 +1060,7 @@ const CancelConfirmModal = ({
           <div className="mt-6 flex items-center justify-end gap-3">
             <button
               onClick={onBack}
-              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+              className={`${btn.base} ${btn.outline}`}
               disabled={submitting}
             >
               Back
@@ -963,7 +1068,7 @@ const CancelConfirmModal = ({
             <button
               onClick={onConfirm}
               disabled={submitting}
-              className="h-10 px-4 rounded-xl text-white bg-gradient-to-b from-rose-600 to-rose-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_16px_rgba(225,29,72,0.35)] hover:from-rose-500 hover:to-rose-700 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              className={`${btn.base} ${btn.danger} disabled:opacity-60 disabled:cursor-not-allowed`}
             >
               {submitting ? "Cancelling…" : "Cancel booking"}
             </button>
@@ -1513,7 +1618,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
               ))}
             </div>
 
-            <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700">
+            <p className="inline-flex items-center gap-2 text-sm sm:text[15px] text-gray-700">
               <MapPin className="w-4 h-4 text-blue-600" />
               <span className="font-medium text-gray-900">{location}</span>
             </p>
@@ -1557,7 +1662,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
                   <button
                     type="button"
                     onClick={() => onRequestReview?.(booking)}
-                    className="mt-1 inline-flex items-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                    className={`${btn.base} ${btn.outline}`}
                   >
                     Edit review
                   </button>
@@ -1568,7 +1673,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
                   <button
                     type="button"
                     onClick={() => onRequestReview?.(booking)}
-                    className="inline-flex items-center rounded-full border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+                    className={`${btn.base} ${btn.primary}`}
                   >
                     Rate & review
                   </button>
@@ -1600,7 +1705,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
             <button
               type="button"
               onClick={() => onRequestCancel(booking)}
-              className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-rose-600 to-rose-700 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-rose-500 hover:to-rose-700 active:scale-[0.99] transition"
+              className={`${btn.base} ${btn.danger} w-full sm:w-auto flex-1 min-w-[140px]`}
             >
               Cancel Booking
             </button>
@@ -1608,7 +1713,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
           <button
             type="button"
             onClick={onClose}
-            className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full border border-gray-300 bg-white px-6 py-3 text-sm font-medium text-gray-800 hover:bg-gray-50 transition"
+            className={`${btn.base} ${btn.outline} w-full sm:w-auto flex-1 min-w-[140px]`}
           >
             Close
           </button>
@@ -1657,6 +1762,174 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
   );
 };
 
+/* ---------------- Pagination ---------------- */
+function usePagination(list, pageSize) {
+  const [page, setPage] = useState(1);
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const current = Math.min(page, pages);
+  const start = (current - 1) * pageSize;
+  const end = start + pageSize;
+  const slice = list.slice(start, end);
+
+  // helpers
+  const next = () => setPage((p) => Math.min(p + 1, pages));
+  const prev = () => setPage((p) => Math.max(p - 1, 1));
+  const goto = (n) => setPage(() => Math.min(Math.max(1, n), pages));
+
+  return { page: current, pages, total, slice, next, prev, goto, setPage };
+}
+
+// Replace your Pager with this version
+const Pager = ({ page, pages, onPrev, onNext, onGoto }) => {
+  if (pages <= 1) return null;
+
+  const chips =
+    "inline-flex items-center justify-center min-w=[40px] min-w-[40px] h-10 px-3 rounded-xl text-sm font-semibold transition border";
+
+  // Neighbors clamped to (2 .. pages-1)
+  const start = Math.max(2, page - 1);
+  const end   = Math.min(pages - 1, page + 1);
+
+  const parts = [1];
+
+  // Left ellipsis if there's a gap between 1 and start
+  if (start > 2) parts.push("…");
+
+  // Middle neighbors
+  for (let n = start; n <= end; n++) {
+    if (n > 1 && n < pages) parts.push(n);
+  }
+
+  // Right ellipsis if there's a gap between end and pages
+  if (end < pages - 1) parts.push("…");
+
+  if (pages > 1) parts.push(pages);
+
+  return (
+    <div className="mt-8 flex items-center justify-center gap-2 select-none">
+      <button
+        onClick={onPrev}
+        className={`${chips} bg-white border-slate-200 text-slate-800 hover:bg-slate-50`}
+        aria-label="Previous page"
+        disabled={page === 1}
+      >
+        <ChevronLeft size={16} />
+      </button>
+
+      {parts.map((p, i) =>
+        p === "…" ? (
+          <span key={`gap-${i}`} className="px-1 text-slate-400">…</span>
+        ) : (
+          <button
+            key={`pg-${p}`}
+            onClick={() => onGoto(p)}
+            className={
+              p === page
+                ? `${chips} text-white bg-gradient-to-b from-blue-600 to-blue-700 border-blue-600 shadow-[0_10px_24px_rgba(37,99,235,0.35)]`
+                : `${chips} bg-white border-slate-200 text-slate-800 hover:bg-slate-50`
+            }
+            aria-current={p === page ? "page" : undefined}
+          >
+            {p}
+          </button>
+        )
+      )}
+
+      <button
+        onClick={onNext}
+        className={`${chips} bg-white border-slate-200 text-slate-800 hover:bg-slate-50`}
+        aria-label="Next page"
+        disabled={page === pages}
+      >
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+};
+
+/* ---------------- EmailJS: send cancellation email (patched) ---------------- */
+async function sendCancellationEmail({ booking, reasonText, refundAmount, authUser }) {
+  try {
+    // Resolve recipient
+    const to_email =
+      authUser?.email ||
+      booking?.guestEmail ||
+      booking?.email ||
+      booking?.userEmail ||
+      (typeof booking?.user === "object" ? booking.user?.email : null) ||
+      null;
+
+    if (!to_email) {
+      console.warn("[EmailJS] Recipient email missing; skipping send.");
+      return { ok: false, status: 422, text: "Recipient email missing" };
+    }
+
+    // Derive fields
+    const cat = (booking?.listing?.category || booking?.listingCategory || "").toLowerCase();
+    const listingTitle = booking?.listing?.title || booking?.listingTitle || "Your booking";
+
+    const guestsLabelHomes =
+      `${(booking.adults || 0) + (booking.children || 0) + (booking.infants || 0)} guest(s)`;
+    const guestsLabelOther =
+      typeof booking.quantity === "number" ? `Qty ${booking.quantity}` : guestsLabelHomes;
+
+    const amountPaid = typeof booking?.totalPrice === "number"
+      ? `₱${Number(booking.totalPrice).toLocaleString()}`
+      : "—";
+
+    const refund = typeof refundAmount === "number"
+      ? `₱${Number(refundAmount).toLocaleString()}`
+      : (typeof booking?.refundAmount === "number"
+          ? `₱${Number(booking.refundAmount).toLocaleString()}`
+          : "—");
+
+    const dateRange = cat.startsWith("home")
+      ? fmtRange(booking?.checkIn, booking?.checkOut)
+      : (booking?.schedule?.date
+          ? `${fmtDateStr(booking.schedule.date)}${booking?.schedule?.time ? " • " + fmtTimeStr(booking.schedule.time) : ""}`
+          : "");
+
+    const origin =
+      (typeof window !== "undefined" && window.location?.origin) || "https://bookify.example.com";
+
+    // ⚠️ Make sure these names match your EmailJS template variables exactly
+    const templateParams = {
+      to_email: to_email,                               // <-- common variable name
+      to_name: authUser?.displayName || to_email,       // <-- used in template greeting
+      reply_to: "noreply@bookify",                      // <-- optional, set what you want
+      website_link: origin,
+      support_link: `${origin}/support`,
+      booking_id: booking?.id || booking?.bookingId || "",
+      listing_title: listingTitle,
+      date_range: dateRange || "—",
+      guests_label: (cat.startsWith("service") || cat.startsWith("experience"))
+        ? guestsLabelOther
+        : guestsLabelHomes,
+      amount_paid: amountPaid,
+      refund_amount: refund,
+      cancel_reason: reasonText || booking?.cancelReason || "—",
+    };
+
+    // If you’ve called emailjs.init already, you can omit the 4th arg entirely.
+    const res = await emailjs.send(
+      EMAILJS.SERVICE_ID,
+      EMAILJS.TEMPLATE_ID,
+      templateParams,
+      EMAILJS.PUBLIC_KEY // ✅ pass string or remove (since we init() above)
+    );
+
+    // Typical EmailJS success returns { status: 200, text: "OK" }
+    console.info("[EmailJS] send result:", res);
+    const ok = (res?.status >= 200 && res?.status < 300);
+    return { ok, status: res?.status ?? 0, text: res?.text ?? "" };
+  } catch (err) {
+    // Inspect the real cause in DevTools → Console/Network
+    console.error("[EmailJS] send failed:", err);
+    return { ok: false, status: err?.status ?? 500, text: err?.text ?? String(err?.message || "Failed to send email") };
+  }
+}
+
 /* ---------------- page ---------------- */
 export default function BookingsPage() {
   const navigate = useNavigate();
@@ -1703,8 +1976,12 @@ export default function BookingsPage() {
   const [reviewTarget, setReviewTarget] = useState(null);
   const [savingReview, setSavingReview] = useState(false);
 
-  // Toast
+  // Toast (still used for errors/other notices)
   const [toast, setToast] = useState(null);
+
+  // NEW: success modal for cancellation
+  const [cancelSuccessOpen, setCancelSuccessOpen] = useState(false);
+  const [cancelSuccessMsg, setCancelSuccessMsg] = useState("");
 
   // read host flag from localStorage after login
   useEffect(() => {
@@ -1777,30 +2054,82 @@ export default function BookingsPage() {
     return () => { cancelled = true; };
   }, [uid, rows]);
 
+  /* ---------- BUCKETS: Today / Upcoming / To Review / Cancelled ---------- */
+  const todayList = useMemo(() => {
+    const now = new Date();
+    const sOD = startOfDay(now), eOD = endOfDay(now);
+
+    return rows.filter((r) => {
+      const status = (r.status || "").toLowerCase();
+      if (status === "canceled" || status === "cancelled" || status === "completed") return false;
+
+      const cat = normalizeCategory(r.listing?.category || r.listingCategory || "");
+
+      if (cat.startsWith("home")) {
+        const ci = r.checkIn?.toDate?.() ?? null;
+        const co = r.checkOut?.toDate?.() ?? null;
+        if (!ci || !co) return false;
+        // overlap today
+        return ci <= eOD && co >= sOD;
+      }
+
+      if (r?.schedule?.date) {
+        const sd = new Date(`${r.schedule.date}T00:00:00`);
+        return isSameDay(sd, now);
+      }
+      return false;
+    });
+  }, [rows]);
+
   const upcoming = useMemo(() => {
-    const now = Date.now();
+    const afterToday = endOfDay(new Date()).getTime();
+
     return rows.filter((r) => {
-      const ci =
-        r.checkIn?.toDate?.() ?? (r.schedule?.date ? new Date(`${r.schedule.date}T00:00:00`) : null);
-      return (ci ? ci.getTime() : 0) >= now;
+      const status = (r.status || "").toLowerCase();
+      if (status === "canceled" || status === "cancelled" || status === "completed") return false;
+
+      const cat = normalizeCategory(r.listing?.category || r.listingCategory || "");
+
+      if (cat.startsWith("home")) {
+        const ci = r.checkIn?.toDate?.() ?? null;
+        return ci ? ci.getTime() > afterToday : false;
+      }
+
+      if (r?.schedule?.date) {
+        const sd = new Date(`${r.schedule.date}T00:00:00`).getTime();
+        return sd > afterToday;
+      }
+      return false;
     });
   }, [rows]);
 
-  const past = useMemo(() => {
-    const now = Date.now();
+  const toReview = useMemo(() => rows.filter((r) => canReview(r)), [rows]);
+
+  const cancelled = useMemo(() => {
     return rows.filter((r) => {
-      const co =
-        r.checkOut?.toDate?.() ?? (r.schedule?.date ? new Date(`${r.schedule.date}T00:00:00`) : null);
-      return (co ? co.getTime() : 0) < now;
+      const s = (r.status || "").toLowerCase();
+      return s === "canceled" || s === "cancelled";
     });
   }, [rows]);
 
-  const [tab, setTab] = useState("all"); // all | upcoming | past
+  // Tabs & visible list
+  const [tab, setTab] = useState("today"); // today | upcoming | review | cancelled
   const visible = useMemo(() => {
-    if (tab === "upcoming") return upcoming;
-    if (tab === "past") return past;
-    return rows;
-  }, [tab, rows, upcoming, past]);
+    switch (tab) {
+      case "today": return todayList;
+      case "upcoming": return upcoming;
+      case "review": return toReview;
+      case "cancelled": return cancelled;
+      default: return todayList;
+    }
+  }, [tab, todayList, upcoming, toReview, cancelled]);
+
+  /* ---------- NEW: client-side pagination (no scrollbar for card grid) ---------- */
+  const PAGE_SIZE = 3; // 3 cards per page
+  const { page, pages, slice: paged, next, prev, goto, setPage } = usePagination(visible, PAGE_SIZE);
+
+  // reset page when tab or visible list changes
+  useEffect(() => { setPage(1); }, [tab, visible.length, setPage]);
 
   /* ---------- host CTA ---------- */
   const handleHostClick = () => {
@@ -1815,7 +2144,7 @@ export default function BookingsPage() {
     setShowHostModal(true);
   };
 
-  /* ---------- cancel flow handlers ---------- */
+  /* ---------- cancel flow helpers ---------- */
   const startCancel = (booking) => {
     setCancelTarget(booking);
     setCancelReason("");
@@ -1858,24 +2187,49 @@ export default function BookingsPage() {
     setConfirmOpen(true);
   };
 
+  /* ---------- cancel confirm: Firestore + EmailJS + modal ---------- */
   const handleConfirmCancel = async () => {
     if (!cancelTarget || !cancelTarget.id) return;
     setSubmittingCancel(true);
     try {
+      // 1) Mark booking cancelled in Firestore
       await updateDoc(doc(database, "bookings", cancelTarget.id), {
         status: "cancelled",
         cancelReason: cancelReason,
         cancelledAt: serverTimestamp(),
         uid, // include uid to satisfy rules on update
       });
-      setToast({ type: "success", text: "Booking cancelled ✅" });
+
+      // 2) Send EmailJS to the canceller (authUser first)
+      const res = await sendCancellationEmail({
+        booking: cancelTarget,
+        reasonText: cancelReason,
+        refundAmount: cancelTarget?.refundAmount,
+        authUser,
+      });
+
+      // 3) Success modal
+      const base =
+        `Your booking ${cancelTarget?.id ? `(#${cancelTarget.id}) ` : ""}was cancelled successfully.` +
+        (typeof cancelTarget?.totalPrice === "number"
+          ? `\nTotal: ₱${Number(cancelTarget.totalPrice).toLocaleString()}`
+          : "");
+
+      const emailNote = res.ok
+        ? "\n\nA confirmation email has been sent to your inbox."
+        : "\n\nWe couldn't send the confirmation email right now, but your booking is cancelled.";
+
+      setCancelSuccessMsg(base + emailNote);
+      setCancelSuccessOpen(true);
+
+      // 4) Reset flow UI
       setConfirmOpen(false);
       setCancelTarget(null);
       setCancelReason("");
       setPolicyText("");
     } catch (e) {
       console.error("Cancel booking failed:", e);
-      alert("Failed to cancel booking. Please try again.");
+      setToast({ type: "error", text: "Failed to cancel booking. Please try again." });
     } finally {
       setSubmittingCancel(false);
     }
@@ -1916,13 +2270,11 @@ export default function BookingsPage() {
       const existed = !!reviewsMap[reviewTarget.id];
 
       const base = {
-        uid, // REQUIRED by your rules: request.resource.data.uid == request.auth.uid
+        uid, // REQUIRED
         rating: Number(rating),
         text: String(text || "").trim().slice(0, 1000),
         updatedAt: serverTimestamp(),
         ...(existed ? {} : { createdAt: serverTimestamp() }),
-
-        // helpful metadata
         bookingId: reviewTarget.id,
         listingId,
         guestUid: uid,
@@ -1932,29 +2284,16 @@ export default function BookingsPage() {
         ),
       };
 
-      // 3 targets
       const reviewRef = doc(database, "listings", listingId, "reviews", reviewTarget.id);
       const globalRef = doc(database, "reviews", `${listingId}_${reviewTarget.id}_${uid}`);
       const userRef   = doc(database, "users", uid, "reviews", reviewTarget.id);
 
-      // Atomic commit
       const batch = writeBatch(database);
       batch.set(reviewRef, base, { merge: true });
       batch.set(globalRef, { ...base, id: globalRef.id }, { merge: true });
       batch.set(userRef, base, { merge: true });
       await batch.commit();
 
-      // Verify (read back) + console breadcrumbs
-      const [s1, s2, s3] = await Promise.all([reviewRef, globalRef, userRef].map(getDoc));
-      const exists1 = s1.exists(), exists2 = s2.exists(), exists3 = s3.exists();
-      const projectId = getApp()?.options?.projectId;
-
-      console.info(
-        "[reviews] written",
-        { projectId, reviewRef: reviewRef.path, exists1, globalRef: globalRef.path, exists2, userRef: userRef.path, exists3 }
-      );
-
-      // Optimistic UI map (drives “Edit review” UI)
       setReviewsMap((m) => ({
         ...m,
         [reviewTarget.id]: {
@@ -1995,7 +2334,7 @@ export default function BookingsPage() {
           <h2 className="text-2xl font-semibold">Please sign in to view your bookings</h2>
           <button
             onClick={() => navigate("/login")}
-            className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-5 py-2.5 text-white font-semibold hover:bg-blue-700"
+            className={`${btn.base} ${btn.primary} px-5`}
           >
             Go to Login
           </button>
@@ -2014,7 +2353,7 @@ export default function BookingsPage() {
       <header
         className={`
           fixed top-0 right-0 z-30
-          bg-white text-gray-800 border-b border-gray-200 shadow-sm
+          bg-white/90 backdrop-blur border-b border-gray-200 shadow-[0_4px_20px_rgba(2,6,23,0.06)]
           transition-all duration-300
           left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"}
         `}
@@ -2027,9 +2366,7 @@ export default function BookingsPage() {
               aria-controls="app-sidebar"
               aria-expanded={sidebarOpen}
               onClick={() => setSidebarOpen(true)}
-              className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${
-                sidebarOpen ? "hidden" : ""
-              }`}
+              className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${sidebarOpen ? "hidden" : ""}`}
             >
               <Menu size={20} />
             </button>
@@ -2045,7 +2382,7 @@ export default function BookingsPage() {
 
           <button
             onClick={handleHostClick}
-            className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
+            className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-700 shadow-md transition-all"
           >
             <Compass size={18} />
             {isHost ? "Switch to Hosting" : "Become a Host"}
@@ -2071,11 +2408,12 @@ export default function BookingsPage() {
           </div>
 
           <div className="mb-5">
-            <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+            <div className="inline-flex rounded-2xl border border-gray-200 bg-white/90 backdrop-blur p-1 shadow-sm">
               {[
-                { key: "all", label: "All" },
-                { key: "upcoming", label: "Upcoming" },
-                { key: "past", label: "Past" },
+                { key: "today",     label: "Today" },
+                { key: "upcoming",  label: "Upcoming" },
+                { key: "review",    label: "To Review" },
+                { key: "cancelled", label: "Cancelled" },
               ].map((t) => {
                 const active = tab === t.key;
                 return (
@@ -2093,6 +2431,12 @@ export default function BookingsPage() {
                 );
               })}
             </div>
+            {/* Small helper: count */}
+            {!loading && (
+              <div className="mt-2 text-sm text-slate-500">
+                Showing {visible.length === 0 ? 0 : Math.min(visible.length, page * PAGE_SIZE) - ((page - 1) * PAGE_SIZE)} of {visible.length} — page {page} / {Math.max(1, Math.ceil(visible.length / PAGE_SIZE))}
+              </div>
+            )}
           </div>
 
           {loading ? (
@@ -2106,25 +2450,36 @@ export default function BookingsPage() {
               <p className="text-muted-foreground">No bookings found.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
-              {visible.map((b) => {
-                const cat = normalizeCategory(b.listing?.category || b.listingCategory || "");
-                const commonProps = {
-                  b,
-                  onRequestCancel: startCancel,
-                  onRequestDetails: startDetails,
-                  onRequestReview: startReview,
-                  review: reviewsMap[b.id],
-                };
-                if (cat.startsWith("experience")) {
-                  return <ExperienceCard key={b.id} {...commonProps} />;
-                }
-                if (cat.startsWith("service")) {
-                  return <ServiceCard key={b.id} {...commonProps} />;
-                }
-                return <HomesCard key={b.id} {...commonProps} />;
-              })}
-            </div>
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {paged.map((b) => {
+                  const cat = normalizeCategory(b.listing?.category || b.listingCategory || "");
+                  const commonProps = {
+                    b,
+                    onRequestCancel: startCancel,
+                    onRequestDetails: startDetails,
+                    onRequestReview: startReview,
+                    review: reviewsMap[b.id],
+                    showTodayActions: tab === "today", // <-- key change
+                  };
+                  if (cat.startsWith("experience")) {
+                    return <ExperienceCard key={b.id} {...commonProps} />;
+                  }
+                  if (cat.startsWith("service")) {
+                    return <ServiceCard key={b.id} {...commonProps} />;
+                  }
+                  return <HomesCard key={b.id} {...commonProps} />;
+                })}
+              </div>
+
+              <Pager
+                page={page}
+                pages={Math.max(1, Math.ceil(visible.length / PAGE_SIZE))}
+                onPrev={prev}
+                onNext={next}
+                onGoto={goto}
+              />
+            </>
           )}
         </div>
       </main>
@@ -2192,7 +2547,15 @@ export default function BookingsPage() {
         submitting={savingReview}
       />
 
-      {/* Toast */}
+      {/* Success modal for cancellation */}
+      <ResultModal
+        open={cancelSuccessOpen}
+        title="Booking cancelled"
+        message={cancelSuccessMsg}
+        onClose={() => setCancelSuccessOpen(false)}
+      />
+
+      {/* Toast (still used for other notices / errors) */}
       <Toast toast={toast} onClose={() => setToast(null)} />
     </div>
   );
