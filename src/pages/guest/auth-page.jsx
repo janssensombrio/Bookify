@@ -318,59 +318,53 @@ export const AuthPage = () => {
   };
 
   /* ------------- Handle Google Redirect Results ------------- */
-  useEffect(() => {
-    (async () => {
-      try {
-        if (handledRedirectRef.current) return;
-        handledRedirectRef.current = true;
+useEffect(() => {
+  (async () => {
+    try {
+      if (handledRedirectRef.current) return;
 
-        const result = await getRedirectResult(auth);
-        if (result && result.user) {
-          const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
-          sessionStorage.removeItem(GOOGLE_FLOW_KEY);
+      const result = await getRedirectResult(auth);
+      handledRedirectRef.current = true;
 
-          if (flow === "signup") {
-            await upsertGoogleUser(database, result.user, result);
-            await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
-            alert(
-              `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
-            );
-            goToPostLogin(result.user.email);
-          } else {
-            // LOGIN flow
-            const email = (result.user.email || "").toLowerCase();
+      if (result && result.user) {
+        const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
+        sessionStorage.removeItem(GOOGLE_FLOW_KEY);
 
-            if (isAdminEmail(email)) {
-              // Admin bypass
-              await upsertAdminIfNeeded(database, result.user);
-              alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
-              goToPostLogin(email);
-              return;
-            }
-
-            // Everyone else must already exist in /users
-            const exists = await userExistsByEmail(database, email);
-            if (!exists) {
-              setBanner({
-                kind: "warning",
-                text:
-                  "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
-              });
-              await signOut(auth);
-              return;
-            }
-
-            alert(
-              `Welcome ${result.user.displayName || (result.user.email || "").split("@")[0]}!`
-            );
-            goToPostLogin(email);
-          }
+        if (flow === "signup") {
+          await upsertGoogleUser(database, result.user, result);
+          await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
+          alert(`Welcome ${result.user.displayName || result.user.email.split("@")[0]}!`);
+          goToPostLogin(result.user.email);
+          return;
         }
-      } catch (err) {
-        reportAuthError(err);
+
+        const email = (result.user.email || "").toLowerCase();
+
+        if (isAdminEmail(email)) {
+          await upsertAdminIfNeeded(database, result.user);
+          alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
+          goToPostLogin(email);
+          return;
+        }
+
+        const exists = await userExistsByEmail(database, email);
+        if (!exists) {
+          setBanner({
+            kind: "warning",
+            text: "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
+          });
+          await signOut(auth);
+          return;
+        }
+
+        alert(`Welcome ${result.user.displayName || email.split("@")[0]}!`);
+        goToPostLogin(email);
       }
-    })();
-  }, [navigate]);
+    } catch (err) {
+      reportAuthError(err);
+    }
+  })();
+}, [navigate]);
 
   /* ---------------- Email/Password: Login ---------------- */
   const handleLogin = async () => {
