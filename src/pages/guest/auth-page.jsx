@@ -326,6 +326,8 @@ useEffect(() => {
       const result = await getRedirectResult(auth);
       handledRedirectRef.current = true;
 
+      alert("REDIRECT RESULT: " + JSON.stringify(result));
+
       if (result && result.user) {
         const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
         sessionStorage.removeItem(GOOGLE_FLOW_KEY);
