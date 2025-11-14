@@ -556,8 +556,6 @@ export default function WalletPage() {
 
         <div className="flex flex-wrap gap-2">
           <PillButton icon={Plus} label="Add funds" onClick={() => setShowAdd(true)} />
-          <PillButton icon={ArrowUpRight} label="Withdraw" variant="ghost" onClick={() => setShowWd(true)} />
-          <PillButton icon={Send} label="Transfer" variant="ghost" onClick={() => setShowTf(true)} />
         </div>
       </div>
 

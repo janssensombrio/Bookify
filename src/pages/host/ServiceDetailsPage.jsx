@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import emailjs from "@emailjs/browser";
 import {
-  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck
+  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck, Share2, Copy, Facebook
 } from "lucide-react";
 import { MessageHostModal } from "../../components/message-host-modal";
 
@@ -1048,6 +1048,33 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
   // PROMO state (auto-applied)
   const [autoPromo, setAutoPromo] = useState(null);
 
+  /* ======= Share functionality ======= */
+  const [shareToast, setShareToast] = useState(null);
+  
+  const getShareUrl = () => {
+    return `${window.location.origin}/services/${listingId}`;
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      const url = getShareUrl();
+      await navigator.clipboard.writeText(url);
+      setShareToast({ kind: "success", text: "Link copied to clipboard!" });
+      setTimeout(() => setShareToast(null), 3000);
+    } catch (err) {
+      setShareToast({ kind: "error", text: "Failed to copy link" });
+      setTimeout(() => setShareToast(null), 3000);
+    }
+  };
+
+  const handleFacebookShare = () => {
+    const url = getShareUrl();
+    const title = service?.title || "Check out this service";
+    const description = service?.description || "";
+    const shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}&quote=${encodeURIComponent(title + (description ? ` - ${description.substring(0, 100)}` : ""))}`;
+    window.open(shareUrl, "_blank", "width=600,height=400");
+  };
+
   /* Fetch service */
   useEffect(() => {
     const fetchServiceDetails = async () => {
@@ -1834,14 +1861,30 @@ A confirmation email will follow shortly.`
             {service.title || "Untitled"}
           </h1>
 
-          {host && (
+          <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={() => setShowMessageModal(true)}
-              className="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              onClick={handleFacebookShare}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              title="Share on Facebook"
             >
-              <MessageSquareText className="w-5 h-5" /> Message Provider
+              <Facebook className="w-4 h-4" />
             </button>
-          )}
+            <button
+              onClick={handleCopyLink}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              title="Copy link"
+            >
+              <Copy className="w-4 h-4" />
+            </button>
+            {host && (
+              <button
+                onClick={() => setShowMessageModal(true)}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              >
+                <MessageSquareText className="w-5 h-5" /> Message Provider
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -2687,6 +2730,22 @@ A confirmation email will follow shortly.`
         message={modal.message}
         onClose={closeModal}
       />
+
+      {/* Share toast notification */}
+      {shareToast && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70]">
+          <div
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm shadow border ${
+              shareToast.kind === "success"
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-rose-50 text-rose-700 border-rose-200"
+            }`}
+          >
+            {shareToast.kind === "success" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+            {shareToast.text}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

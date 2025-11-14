@@ -44,7 +44,10 @@ import {
   Briefcase,
   GraduationCap,
   Home,
-  CalendarDays
+  CalendarDays,
+  Share2,
+  Copy,
+  Facebook
 } from "lucide-react";
 
 /* ================== Admin Wallet ================== */
@@ -994,6 +997,33 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const [couponErr, setCouponErr] = useState("");
   const promosCacheRef = useRef([]);                        // cache active promos for this host
 
+  /* ======= Share functionality ======= */
+  const [shareToast, setShareToast] = useState(null);
+  
+  const getShareUrl = () => {
+    return `${window.location.origin}/homes/${listingId}`;
+  };
+
+  const handleCopyLink = async () => {
+    try {
+      const url = getShareUrl();
+      await navigator.clipboard.writeText(url);
+      setShareToast({ kind: "success", text: "Link copied to clipboard!" });
+      setTimeout(() => setShareToast(null), 3000);
+    } catch (err) {
+      setShareToast({ kind: "error", text: "Failed to copy link" });
+      setTimeout(() => setShareToast(null), 3000);
+    }
+  };
+
+  const handleFacebookShare = () => {
+    const url = getShareUrl();
+    const title = listing?.title || "Check out this home";
+    const description = listing?.description || "";
+    const shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}&quote=${encodeURIComponent(title + (description ? ` - ${description.substring(0, 100)}` : ""))}`;
+    window.open(shareUrl, "_blank", "width=600,height=400");
+  };
+
   /* Load listing */
   useEffect(() => {
     const run = async () => {
@@ -1855,14 +1885,30 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
             {listing.title || "Home details"}
           </h1>
 
-          {host && (
+          <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={() => setShowMessageModal(true)}
-              className="ml-auto inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              onClick={handleFacebookShare}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              title="Share on Facebook"
             >
-              <MessageSquareText className="w-5 h-5" /> Message Host
+              <Facebook className="w-4 h-4" />
             </button>
-          )}
+            <button
+              onClick={handleCopyLink}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              title="Copy link"
+            >
+              <Copy className="w-4 h-4" />
+            </button>
+            {host && (
+              <button
+                onClick={() => setShowMessageModal(true)}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+              >
+                <MessageSquareText className="w-5 h-5" /> Message Host
+              </button>
+            )}
+          </div>
         </div>
       </header>
 
@@ -2268,6 +2314,22 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         message={modal.message}
         onClose={closeModal}
       />
+
+      {/* Share toast notification */}
+      {shareToast && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70]">
+          <div
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm shadow border ${
+              shareToast.kind === "success"
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                : "bg-rose-50 text-rose-700 border-rose-200"
+            }`}
+          >
+            {shareToast.kind === "success" ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+            {shareToast.text}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
