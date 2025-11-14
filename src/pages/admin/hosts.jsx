@@ -105,13 +105,22 @@ export default function AdminHostsPage() {
         alert("You must be logged in to save settings.");
         return;
       }
+      
       const settingsRef = doc(database, "settings", "hostPolicies");
+      
+      // Firestore rule requires: request.auth.uid == request.resource.data.uid
+      // So we must include uid: user.uid in the document data
+      // Using setDoc with merge: true to update existing or create new
       await setDoc(settingsRef, {
-        uid: user.uid, // Required by Firestore rules: request.auth.uid == request.resource.data.uid
-        ...settings,
+        uid: user.uid, // Required: must match request.auth.uid to satisfy Firestore rules
+        serviceFeeHomes: settings.serviceFeeHomes,
+        serviceFeeExperiences: settings.serviceFeeExperiences,
+        serviceFeeServices: settings.serviceFeeServices,
+        policies: settings.policies,
         updatedAt: new Date(),
-        updatedBy: "admin"
+        updatedBy: user.uid
       }, { merge: true });
+      
       setEditingSettings(false);
       alert("Settings saved successfully!");
     } catch (e) {
