@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "./components/AdminSidebar.jsx";
 import BookifyLogo from "../../components/bookify-logo.jsx";
-import { database } from "../../config/firebase";
+import { database, auth } from "../../config/firebase";
 import { collection, getDocs, doc, updateDoc, setDoc, query, orderBy, getDoc } from "firebase/firestore";
 import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu, Settings, Save, Edit2, FileText, Percent } from "lucide-react";
 import BookifyIcon from "../../media/favorite.png";
@@ -100,8 +100,14 @@ export default function AdminHostsPage() {
   /* --- Save settings to Firestore --- */
   const saveSettings = async () => {
     try {
+      const user = auth.currentUser;
+      if (!user) {
+        alert("You must be logged in to save settings.");
+        return;
+      }
       const settingsRef = doc(database, "settings", "hostPolicies");
       await setDoc(settingsRef, {
+        uid: user.uid, // Required by Firestore rules: request.auth.uid == request.resource.data.uid
         ...settings,
         updatedAt: new Date(),
         updatedBy: "admin"
