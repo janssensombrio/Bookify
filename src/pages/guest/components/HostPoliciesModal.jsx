@@ -1,7 +1,39 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
+import { database } from "../../../config/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function HostPoliciesModal({ onClose, onAgree }) {
+  const [policies, setPolicies] = useState([
+    "Legal Compliance: You'll comply with all local laws, permits, tax obligations, and HOA/building rules that apply to short-term hosting or experiences/services.",
+    "Safety: Maintain a safe environment (e.g., working locks, smoke/CO detectors for homes; appropriate equipment and safety briefings for experiences/services).",
+    "Accuracy: Your listing details, photos, amenities, pricing, and accessibility information must be accurate and kept up to date.",
+    "Cleanliness & Maintenance: Provide a clean, well-maintained space or service that matches guest expectations.",
+    "Guest Conduct & House Rules: Clearly disclose your rules (pets, smoking, noise, parties) and enforce them consistently and fairly.",
+    "Cancellations & Refunds: Honor your chosen cancellation policy and communicate promptly if issues arise.",
+    "Fair Pricing: All fees must be disclosed. No off-platform payments or hidden charges.",
+    "Non-Discrimination: Provide equal access and do not discriminate against guests.",
+    "Privacy: No hidden cameras or undisclosed monitoring devices. Respect guest data privacy.",
+    "Support: Be reachable during bookings and resolve issues in good faith."
+  ]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const settingsRef = doc(database, "settings", "hostPolicies");
+        const snap = await getDoc(settingsRef);
+        if (snap.exists() && snap.data().policies) {
+          setPolicies(snap.data().policies);
+        }
+      } catch (e) {
+        console.error("Failed to load policies:", e);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
   return (
     <div
       role="dialog"
@@ -29,44 +61,15 @@ export default function HostPoliciesModal({ onClose, onAgree }) {
             These complement local laws and any additional rules you set for your listing.
           </p>
 
-          <ol className="list-decimal ml-5 space-y-2">
-            <li>
-              <strong>Legal Compliance:</strong> You’ll comply with all local laws, permits, tax obligations, 
-              and HOA/building rules that apply to short-term hosting or experiences/services.
-            </li>
-            <li>
-              <strong>Safety:</strong> Maintain a safe environment (e.g., working locks, smoke/CO detectors 
-              for homes; appropriate equipment and safety briefings for experiences/services).
-            </li>
-            <li>
-              <strong>Accuracy:</strong> Your listing details, photos, amenities, pricing, and accessibility 
-              information must be accurate and kept up to date.
-            </li>
-            <li>
-              <strong>Cleanliness & Maintenance:</strong> Provide a clean, well-maintained space or service 
-              that matches guest expectations.
-            </li>
-            <li>
-              <strong>Guest Conduct & House Rules:</strong> Clearly disclose your rules (pets, smoking, noise, parties) 
-              and enforce them consistently and fairly.
-            </li>
-            <li>
-              <strong>Cancellations & Refunds:</strong> Honor your chosen cancellation policy and communicate 
-              promptly if issues arise.
-            </li>
-            <li>
-              <strong>Fair Pricing:</strong> All fees must be disclosed. No off-platform payments or hidden charges.
-            </li>
-            <li>
-              <strong>Non-Discrimination:</strong> Provide equal access and do not discriminate against guests.
-            </li>
-            <li>
-              <strong>Privacy:</strong> No hidden cameras or undisclosed monitoring devices. Respect guest data privacy.
-            </li>
-            <li>
-              <strong>Support:</strong> Be reachable during bookings and resolve issues in good faith.
-            </li>
-          </ol>
+          {loading ? (
+            <div className="text-center text-gray-500 py-4">Loading policies...</div>
+          ) : (
+            <ol className="list-decimal ml-5 space-y-2">
+              {policies.map((policy, idx) => (
+                <li key={idx}>{policy}</li>
+              ))}
+            </ol>
+          )}
 
           <p className="pt-2">
             By selecting <strong>Agree</strong>, you acknowledge you’ve read and will follow these policies.

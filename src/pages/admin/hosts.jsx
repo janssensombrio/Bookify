@@ -3,8 +3,8 @@ import { useNavigate } from "react-router-dom";
 import AdminSidebar from "./components/AdminSidebar.jsx";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { database } from "../../config/firebase";
-import { collection, getDocs, doc, updateDoc, query, orderBy } from "firebase/firestore";
-import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu } from "lucide-react";
+import { collection, getDocs, doc, updateDoc, setDoc, query, orderBy, getDoc } from "firebase/firestore";
+import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu, Settings, Save, Edit2, FileText, Percent } from "lucide-react";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
 
@@ -38,6 +38,81 @@ export default function AdminHostsPage() {
   const [confirmHostId, setConfirmHostId] = useState(null);
   const [confirmWant, setConfirmWant] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+
+  // Service Fees & Policies state
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState({
+    serviceFeeHomes: 10, // percentage
+    serviceFeeExperiences: 20, // percentage
+    serviceFeeServices: 12, // percentage
+    policies: [
+      "Legal Compliance: You'll comply with all local laws, permits, tax obligations, and HOA/building rules that apply to short-term hosting or experiences/services.",
+      "Safety: Maintain a safe environment (e.g., working locks, smoke/CO detectors for homes; appropriate equipment and safety briefings for experiences/services).",
+      "Accuracy: Your listing details, photos, amenities, pricing, and accessibility information must be accurate and kept up to date.",
+      "Cleanliness & Maintenance: Provide a clean, well-maintained space or service that matches guest expectations.",
+      "Guest Conduct & House Rules: Clearly disclose your rules (pets, smoking, noise, parties) and enforce them consistently and fairly.",
+      "Cancellations & Refunds: Honor your chosen cancellation policy and communicate promptly if issues arise.",
+      "Fair Pricing: All fees must be disclosed. No off-platform payments or hidden charges.",
+      "Non-Discrimination: Provide equal access and do not discriminate against guests.",
+      "Privacy: No hidden cameras or undisclosed monitoring devices. Respect guest data privacy.",
+      "Support: Be reachable during bookings and resolve issues in good faith."
+    ]
+  });
+  const [editingSettings, setEditingSettings] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+
+  /* --- Load settings from Firestore --- */
+  useEffect(() => {
+    (async () => {
+      setSettingsLoading(true);
+      try {
+        const settingsRef = doc(database, "settings", "hostPolicies");
+        const snap = await getDoc(settingsRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          const defaultPolicies = [
+            "Legal Compliance: You'll comply with all local laws, permits, tax obligations, and HOA/building rules that apply to short-term hosting or experiences/services.",
+            "Safety: Maintain a safe environment (e.g., working locks, smoke/CO detectors for homes; appropriate equipment and safety briefings for experiences/services).",
+            "Accuracy: Your listing details, photos, amenities, pricing, and accessibility information must be accurate and kept up to date.",
+            "Cleanliness & Maintenance: Provide a clean, well-maintained space or service that matches guest expectations.",
+            "Guest Conduct & House Rules: Clearly disclose your rules (pets, smoking, noise, parties) and enforce them consistently and fairly.",
+            "Cancellations & Refunds: Honor your chosen cancellation policy and communicate promptly if issues arise.",
+            "Fair Pricing: All fees must be disclosed. No off-platform payments or hidden charges.",
+            "Non-Discrimination: Provide equal access and do not discriminate against guests.",
+            "Privacy: No hidden cameras or undisclosed monitoring devices. Respect guest data privacy.",
+            "Support: Be reachable during bookings and resolve issues in good faith."
+          ];
+          setSettings({
+            serviceFeeHomes: data.serviceFeeHomes ?? 10,
+            serviceFeeExperiences: data.serviceFeeExperiences ?? 20,
+            serviceFeeServices: data.serviceFeeServices ?? 12,
+            policies: data.policies || defaultPolicies
+          });
+        }
+      } catch (e) {
+        console.error("Failed to load settings:", e);
+      } finally {
+        setSettingsLoading(false);
+      }
+    })();
+  }, []);
+
+  /* --- Save settings to Firestore --- */
+  const saveSettings = async () => {
+    try {
+      const settingsRef = doc(database, "settings", "hostPolicies");
+      await setDoc(settingsRef, {
+        ...settings,
+        updatedAt: new Date(),
+        updatedBy: "admin"
+      }, { merge: true });
+      setEditingSettings(false);
+      alert("Settings saved successfully!");
+    } catch (e) {
+      console.error("Failed to save settings:", e);
+      alert("Failed to save settings: " + String(e));
+    }
+  };
 
   /* --- data load (unchanged logic) --- */
   useEffect(() => {
@@ -395,6 +470,188 @@ export default function AdminHostsPage() {
     }
   };
 
+  /* --- Export Settings CSV --- */
+  const exportSettingsCSV = () => {
+    try {
+      const rows = [
+        ["Setting", "Value"],
+        ["Service Fee - Homes (%)", settings.serviceFeeHomes],
+        ["Service Fee - Experiences (%)", settings.serviceFeeExperiences],
+        ["Service Fee - Services (%)", settings.serviceFeeServices],
+        ["", ""],
+        ["Policy #", "Policy Text"]
+      ];
+      settings.policies.forEach((policy, idx) => {
+        rows.push([idx + 1, policy.replace(/"/g, '""')]);
+      });
+      const csv = rows.map(row => 
+        row.map(cell => {
+          const s = String(cell || "");
+          return s.includes(",") || s.includes('"') || s.includes("\n")
+            ? `"${s.replace(/"/g, '""')}"`
+            : s;
+        }).join(",")
+      ).join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `host_policies_settings_${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error("Failed to export settings CSV", e);
+      alert("Failed to export CSV: " + String(e));
+    }
+  };
+
+  /* --- Export Settings PDF --- */
+  const exportSettingsPDF = async () => {
+    try {
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+      const html = [];
+      html.push(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Host Policies & Service Fees</title>
+  <style>
+    :root{ --brand:#2563eb; --ink:#0f172a; --muted:#64748b; --line:#e5e7eb; --bg:#ffffff; --subtle:#f8fafc; --thead:#f1f5f9; }
+    @page{ margin: 18mm; }
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
+    body{ margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+    .brand{ display:flex; align-items:center; gap:12px; }
+    .brand img{ width:28px; height:28px; border-radius:6px; object-fit:cover; }
+    .brand h1{ font-size:16px; line-height:1.1; margin:0; }
+    .brand small{ color:var(--muted); display:block; font-weight:500; }
+    .meta{ text-align:right; color:var(--muted); font-size:11px; }
+    .section{ margin:20px 0; }
+    .section h2{ font-size:14px; font-weight:600; margin-bottom:12px; color:var(--ink); }
+    table{ width:100%; border-collapse:separate; border-spacing:0; border:1px solid var(--line); border-radius:8px; overflow:hidden; margin-bottom:20px; }
+    thead{ background:var(--thead); }
+    thead th{ text-align:left; padding:10px 12px; font-size:11px; color:#334155; border-bottom:1px solid var(--line); font-weight:600; }
+    tbody td{ padding:10px 12px; border-bottom:1px solid var(--line); background:#fff; }
+    tbody tr:last-child td{ border-bottom:none; }
+    .policy-list{ margin:12px 0; }
+    .policy-item{ margin:8px 0; padding:8px 0; border-bottom:1px solid var(--line); }
+    .policy-num{ font-weight:600; color:var(--brand); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="${BookifyIcon}" alt="Bookify logo"/>
+      <h1>Bookify <small>Host Policies & Service Fees</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Service Fees</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:60%;">Category</th>
+          <th style="width:40%;">Fee (%)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Homes</td>
+          <td>${settings.serviceFeeHomes}%</td>
+        </tr>
+        <tr>
+          <td>Experiences</td>
+          <td>${settings.serviceFeeExperiences}%</td>
+        </tr>
+        <tr>
+          <td>Services</td>
+          <td>${settings.serviceFeeServices}%</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Hosting Policies</h2>
+    <div class="policy-list">`);
+      
+      settings.policies.forEach((policy, idx) => {
+        html.push(`<div class="policy-item">
+          <span class="policy-num">${idx + 1}.</span> ${escapeHtml(policy)}
+        </div>`);
+      });
+
+      html.push(`</div>
+  </div>
+
+</body>
+</html>`);
+
+      const loadHtml2Pdf = () => {
+        return new Promise((resolve, reject) => {
+          if (window.html2pdf) {
+            resolve(window.html2pdf);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          script.onload = () => resolve(window.html2pdf);
+          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
+          document.head.appendChild(script);
+        });
+      };
+
+      try {
+        const html2pdf = await loadHtml2Pdf();
+        const element = document.createElement("div");
+        element.innerHTML = html.join("");
+        document.body.appendChild(element);
+
+        const opt = {
+          margin: [18, 18],
+          filename: `host_policies_settings_${new Date().toISOString().slice(0, 10)}.pdf`,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        };
+
+        await html2pdf().set(opt).from(element).save();
+        document.body.removeChild(element);
+      } catch (err) {
+        const win = window.open("", "_blank");
+        if (!win) {
+          alert("Unable to open print window. Please allow popups for this site.");
+          return;
+        }
+        win.document.open();
+        win.document.write(html.join(""));
+        win.document.close();
+        setTimeout(() => {
+          win.focus();
+          win.print();
+        }, 500);
+      }
+    } catch (e) {
+      console.error("Failed to export settings PDF", e);
+      alert("Failed to export PDF: " + String(e));
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
       <AdminSidebar />
@@ -538,6 +795,211 @@ export default function AdminHostsPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Service Fees & Policies Section */}
+          <div className="glass rounded-2xl border border-white/40 bg-white/80 shadow-lg overflow-hidden">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
+              <div className="flex items-center gap-2">
+                <Settings className="text-indigo-600 w-5 h-5" />
+                <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                  Service Fees & Policies
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                {!editingSettings ? (
+                  <>
+                    <button
+                      onClick={exportSettingsCSV}
+                      className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-slate-200 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      <Download size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">CSV</span>
+                    </button>
+                    <button
+                      onClick={exportSettingsPDF}
+                      className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-slate-200 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                    >
+                      <FileText size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">PDF</span>
+                    </button>
+                    <button
+                      onClick={() => setEditingSettings(true)}
+                      className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full bg-blue-600 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                    >
+                      <Edit2 size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Edit</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={async () => {
+                        setEditingSettings(false);
+                        // Reload settings to discard changes
+                        try {
+                          const settingsRef = doc(database, "settings", "hostPolicies");
+                          const snap = await getDoc(settingsRef);
+                          const defaultPolicies = [
+                            "Legal Compliance: You'll comply with all local laws, permits, tax obligations, and HOA/building rules that apply to short-term hosting or experiences/services.",
+                            "Safety: Maintain a safe environment (e.g., working locks, smoke/CO detectors for homes; appropriate equipment and safety briefings for experiences/services).",
+                            "Accuracy: Your listing details, photos, amenities, pricing, and accessibility information must be accurate and kept up to date.",
+                            "Cleanliness & Maintenance: Provide a clean, well-maintained space or service that matches guest expectations.",
+                            "Guest Conduct & House Rules: Clearly disclose your rules (pets, smoking, noise, parties) and enforce them consistently and fairly.",
+                            "Cancellations & Refunds: Honor your chosen cancellation policy and communicate promptly if issues arise.",
+                            "Fair Pricing: All fees must be disclosed. No off-platform payments or hidden charges.",
+                            "Non-Discrimination: Provide equal access and do not discriminate against guests.",
+                            "Privacy: No hidden cameras or undisclosed monitoring devices. Respect guest data privacy.",
+                            "Support: Be reachable during bookings and resolve issues in good faith."
+                          ];
+                          if (snap.exists()) {
+                            const data = snap.data();
+                            setSettings({
+                              serviceFeeHomes: data.serviceFeeHomes ?? 10,
+                              serviceFeeExperiences: data.serviceFeeExperiences ?? 20,
+                              serviceFeeServices: data.serviceFeeServices ?? 12,
+                              policies: data.policies || defaultPolicies
+                            });
+                          } else {
+                            setSettings({
+                              serviceFeeHomes: 10,
+                              serviceFeeExperiences: 20,
+                              serviceFeeServices: 12,
+                              policies: defaultPolicies
+                            });
+                          }
+                        } catch (e) {
+                          console.error("Failed to reload settings:", e);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-slate-200 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={saveSettings}
+                      className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full bg-emerald-600 px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
+                    >
+                      <Save size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Save</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 sm:p-6 space-y-6">
+              {settingsLoading ? (
+                <div className="text-center text-slate-500 py-8">Loading settings...</div>
+              ) : (
+                <>
+                  {/* Service Fees */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <Percent className="w-4 h-4 text-indigo-600" />
+                      Service Fees (Percentage)
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Homes</label>
+                        {editingSettings ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={settings.serviceFeeHomes}
+                            onChange={(e) => setSettings({ ...settings, serviceFeeHomes: Number(e.target.value) })}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        ) : (
+                          <div className="px-3 py-2 bg-slate-50 rounded-lg text-sm font-medium">{settings.serviceFeeHomes}%</div>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Experiences</label>
+                        {editingSettings ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={settings.serviceFeeExperiences}
+                            onChange={(e) => setSettings({ ...settings, serviceFeeExperiences: Number(e.target.value) })}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        ) : (
+                          <div className="px-3 py-2 bg-slate-50 rounded-lg text-sm font-medium">{settings.serviceFeeExperiences}%</div>
+                        )}
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-600 mb-1">Services</label>
+                        {editingSettings ? (
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            value={settings.serviceFeeServices}
+                            onChange={(e) => setSettings({ ...settings, serviceFeeServices: Number(e.target.value) })}
+                            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        ) : (
+                          <div className="px-3 py-2 bg-slate-50 rounded-lg text-sm font-medium">{settings.serviceFeeServices}%</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Policies */}
+                  <div>
+                    <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-indigo-600" />
+                      Hosting Policies
+                    </h4>
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                      {settings.policies.map((policy, idx) => (
+                        <div key={idx} className="flex gap-3 items-start">
+                          <span className="text-xs font-semibold text-indigo-600 mt-1 shrink-0">{idx + 1}.</span>
+                          {editingSettings ? (
+                            <textarea
+                              value={policy}
+                              onChange={(e) => {
+                                const newPolicies = [...settings.policies];
+                                newPolicies[idx] = e.target.value;
+                                setSettings({ ...settings, policies: newPolicies });
+                              }}
+                              className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-h-[60px]"
+                              rows={2}
+                            />
+                          ) : (
+                            <p className="flex-1 text-sm text-slate-700">{policy}</p>
+                          )}
+                          {editingSettings && (
+                            <button
+                              onClick={() => {
+                                const newPolicies = settings.policies.filter((_, i) => i !== idx);
+                                setSettings({ ...settings, policies: newPolicies });
+                              }}
+                              className="text-red-600 hover:text-red-700 p-1"
+                              title="Remove policy"
+                            >
+                              <XCircle size={16} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      {editingSettings && (
+                        <button
+                          onClick={() => {
+                            setSettings({ ...settings, policies: [...settings.policies, "New policy text..."] });
+                          }}
+                          className="w-full mt-2 px-4 py-2 rounded-lg border-2 border-dashed border-slate-300 text-slate-600 hover:border-blue-400 hover:text-blue-600 transition text-sm"
+                        >
+                          + Add Policy
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
