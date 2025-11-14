@@ -1026,6 +1026,69 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     window.open(shareUrl, "_blank", "width=600,height=400");
   };
 
+  /* Update Open Graph meta tags for Facebook sharing */
+  useEffect(() => {
+    if (!listing || !listingId) return;
+
+    const photos = Array.isArray(listing?.photos) ? listing.photos : [];
+    const firstImage = photos.length > 0 ? photos[0] : null;
+    const title = listing?.title || "Check out this home";
+    const description = listing?.description || "";
+    const url = `${window.location.origin}/homes/${listingId}`;
+
+    // Update or create og:title
+    let ogTitle = document.querySelector('meta[property="og:title"]');
+    if (!ogTitle) {
+      ogTitle = document.createElement('meta');
+      ogTitle.setAttribute('property', 'og:title');
+      document.head.appendChild(ogTitle);
+    }
+    ogTitle.setAttribute('content', title);
+
+    // Update or create og:description
+    let ogDescription = document.querySelector('meta[property="og:description"]');
+    if (!ogDescription) {
+      ogDescription = document.createElement('meta');
+      ogDescription.setAttribute('property', 'og:description');
+      document.head.appendChild(ogDescription);
+    }
+    ogDescription.setAttribute('content', description.substring(0, 200));
+
+    // Update or create og:image
+    if (firstImage) {
+      let ogImage = document.querySelector('meta[property="og:image"]');
+      if (!ogImage) {
+        ogImage = document.createElement('meta');
+        ogImage.setAttribute('property', 'og:image');
+        document.head.appendChild(ogImage);
+      }
+      ogImage.setAttribute('content', firstImage);
+    }
+
+    // Update or create og:url
+    let ogUrl = document.querySelector('meta[property="og:url"]');
+    if (!ogUrl) {
+      ogUrl = document.createElement('meta');
+      ogUrl.setAttribute('property', 'og:url');
+      document.head.appendChild(ogUrl);
+    }
+    ogUrl.setAttribute('content', url);
+
+    // Update or create og:type
+    let ogType = document.querySelector('meta[property="og:type"]');
+    if (!ogType) {
+      ogType = document.createElement('meta');
+      ogType.setAttribute('property', 'og:type');
+      document.head.appendChild(ogType);
+    }
+    ogType.setAttribute('content', 'website');
+
+    // Cleanup function to remove meta tags when component unmounts or listing changes
+    return () => {
+      // Optionally remove meta tags on cleanup, but we'll keep them for better sharing
+    };
+  }, [listing, listingId]);
+
   /* Load listing */
   useEffect(() => {
     const run = async () => {
