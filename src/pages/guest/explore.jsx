@@ -274,7 +274,7 @@ export const Explore = () => {
             muted
             playsInline
           >
-            <source src={FormBg} type="video/mp4" />
+            <source src="https://www.pexels.com/download/video/3773486/" type="video/mp4" />
             Your browser does not support the video tag.
           </video>
 
