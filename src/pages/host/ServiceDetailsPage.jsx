@@ -18,7 +18,7 @@ import {
 } from "firebase/firestore";
 import emailjs from "@emailjs/browser";
 import {
-  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck, Share2, Copy, Facebook
+  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck, Share2, Copy, Facebook, LogIn
 } from "lucide-react";
 import { MessageHostModal } from "../../components/message-host-modal";
 
@@ -1025,6 +1025,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 
   const [host, setHost] = useState(null);
   const [showMessageModal, setShowMessageModal] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
 
   // Reviews
   const [reviews, setReviews] = useState([]);
@@ -1440,6 +1441,12 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
   };
 
   const handleBookNow = () => {
+    // Check if user is logged in
+    if (!auth.currentUser) {
+      setShowLoginModal(true);
+      return;
+    }
+
     if (!selectedSchedule || !payment) {
       alert("Please select a schedule and ensure payment details are calculated.");
       return;
@@ -2746,6 +2753,47 @@ A confirmation email will follow shortly.`
           </div>
         </div>
       )}
+
+      {/* Login Modal */}
+      {showLoginModal &&
+        createPortal(
+          <div className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-6">
+              <div className="flex items-start gap-4">
+                <div className="mt-0.5">
+                  <div className="h-12 w-12 rounded-xl bg-blue-100 grid place-items-center">
+                    <LogIn className="w-6 h-6 text-blue-600" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-slate-900 mb-2">Login Required</h3>
+                  <p className="text-sm text-slate-600 mb-4">
+                    You need to be logged in to make a booking. Please log in to continue.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => setShowLoginModal(false)}
+                      className="flex-1 inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowLoginModal(false);
+                        navigate("/");
+                      }}
+                      className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+                    >
+                      <LogIn className="w-4 h-4" />
+                      Go to Login
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
