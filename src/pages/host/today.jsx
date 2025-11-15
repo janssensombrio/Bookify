@@ -13,6 +13,7 @@ import {
   serverTimestamp,
   addDoc,
   deleteDoc,
+  getDocs,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { database, auth } from "../../config/firebase";
@@ -30,6 +31,12 @@ import {
   ChevronRight,
   CircleUserRound,
   Send,
+  BookOpen,
+  TrendingUp,
+  DollarSign,
+  XCircle,
+  Clock,
+  Package,
 } from "lucide-react";
 
 // =============================================================================
@@ -284,7 +291,7 @@ const isCancelable = (b) => {
 // =============================================================================
 
 const CardSkeleton = () => (
-  <div className="rounded-3xl bg-white/80 border border-white/50 shadow-[0_10px_30px_rgba(2,6,23,0.08)] overflow-hidden animate-pulse">
+  <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md overflow-hidden animate-pulse">
     <div className="h-40 bg-slate-200/80" />
     <div className="p-5 space-y-3">
       <div className="h-5 bg-slate-200 rounded w-2/3" />
@@ -310,15 +317,16 @@ const CardShell = ({ cover, chip, header, children, onClick }) => {
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={handleKeyDown}
       className="
-        group rounded-3xl overflow-hidden cursor-pointer
-        bg-gradient-to-b from-white to-slate-50
-        border border-slate-200/70
-        shadow-[0_15px_40px_rgba(2,6,23,0.08)]
-        hover:shadow-[0_20px_60px_rgba(2,6,23,0.12)]
-        transition-all duration-300
+        group rounded-2xl overflow-hidden cursor-pointer
+        bg-white/60 border-2 border-white/60
+        backdrop-blur-sm
+        shadow-md hover:shadow-lg
+        transition-all duration-300 transform-gpu
+        hover:-translate-y-1 hover:scale-[1.02]
+        flex flex-col h-full
       "
     >
-      <div className="relative h-40">
+      <div className="relative h-40 shrink-0">
         <img
           src={cover || "https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?q=80&w=1200&auto=format&fit=crop"}
           alt=""
@@ -332,9 +340,11 @@ const CardShell = ({ cover, chip, header, children, onClick }) => {
           </span>
         )}
       </div>
-      <div className="p-5">
+      <div className="p-5 flex flex-col flex-1 min-h-0">
         {header}
-        {children}
+        <div className="flex-1 flex flex-col min-h-0">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -415,6 +425,13 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
     >
       <h3 className="text-lg font-semibold text-slate-900 line-clamp-1">{title}</h3>
 
+      <div className="mt-1 flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-sm text-slate-700">
+          <Package size={16} />
+          <span>Home</span>
+        </span>
+      </div>
+
       {loc && (
         <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
           <MapPin size={16} />
@@ -466,7 +483,7 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
         <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-auto pt-4">
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -487,7 +504,17 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const pBadge = payBadge(b.paymentStatus);
   const dateStr = b?.schedule?.date ? fmtDateStr(b.schedule.date) : "";
   const timeStr = b?.schedule?.time ? fmtTimeStr(b.schedule.time) : "";
-  const type = b.experienceType ? b.experienceType[0].toUpperCase() + b.experienceType.slice(1) : null;
+  
+  // Additional experience details
+  const location = b.listing?.location || b.listingAddress || "";
+  const duration = b.listing?.duration || b.duration || "";
+  const experienceType = b.listing?.experienceType || b.experienceType || "";
+  const type = experienceType ? experienceType[0].toUpperCase() + experienceType.slice(1) : null;
+  const quantity = typeof b.quantity === "number" ? b.quantity : null;
+  const participants = typeof b.participants === "number" ? b.participants : quantity;
+  const maxParticipants = typeof b.listing?.maxParticipants === "number" ? b.listing.maxParticipants : null;
+  const languages = Array.isArray(b.listing?.languages) && b.listing.languages.length > 0 ? b.listing.languages : [];
+  const ageRestriction = b.listing?.ageRestriction || null;
 
   const handleCancelClick = (e) => {
     e.stopPropagation();
@@ -510,31 +537,60 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
     >
       <h3 className="text-lg font-semibold text-slate-900 line-clamp-1">{title}</h3>
 
+      <div className="mt-1 flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-sm text-slate-700">
+          <Package size={16} />
+          <span>Experience</span>
+        </span>
+      </div>
+
+      {location && (
+        <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+          <MapPin size={16} />
+          <span className="line-clamp-1">{location}</span>
+        </div>
+      )}
+
       <div className="mt-2 flex items-center gap-2 text-sm text-slate-700">
         <CalIcon size={16} />
         <span>{[dateStr, timeStr].filter(Boolean).join(" • ")}</span>
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-700">
-        {b.duration && (
+        {duration && (
           <span className="inline-flex items-center gap-1">
-            <CircleUserRound size={16} />
-            {b.duration}
+            <Clock size={16} />
+            {duration}
+          </span>
+        )}
+        {participants !== null && (
+          <span className="inline-flex items-center gap-1">
+            <Users size={16} />
+            {participants} {participants === 1 ? "participant" : "participants"}
+            {maxParticipants !== null && ` / ${maxParticipants} max`}
           </span>
         )}
         {type && (
           <span className="inline-flex items-center gap-1">
-            <Users size={16} />
+            <Package size={16} />
             {type}
           </span>
         )}
-        {typeof b.quantity === "number" && (
-          <span className="inline-flex items-center gap-1">
-            <Users size={16} />
-            Qty {b.quantity}
-          </span>
-        )}
       </div>
+
+      {languages.length > 0 && (
+        <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+          <span className="font-medium">Languages:</span>
+          <span className="line-clamp-1">{languages.join(", ")}</span>
+        </div>
+      )}
+
+      {ageRestriction && typeof ageRestriction.min === "number" && typeof ageRestriction.max === "number" && (
+        <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+          <span className="font-medium">Age:</span>
+          <span>{ageRestriction.min}–{ageRestriction.max} years</span>
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${pBadge.cls}`}>
@@ -548,7 +604,7 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
         <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-auto pt-4">
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -569,6 +625,14 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   const pBadge = payBadge(b.paymentStatus);
   const dateStr = b?.schedule?.date ? fmtDateStr(b.schedule.date) : "";
   const timeStr = b?.schedule?.time ? fmtTimeStr(b.schedule.time) : "";
+  
+  // Additional service details
+  const location = b.listing?.location || b.listingAddress || b.listing?.address || "";
+  const duration = b.listing?.duration || b.duration || "";
+  const serviceType = b.listing?.serviceType || b.serviceType || "";
+  const quantity = typeof b.quantity === "number" ? b.quantity : null;
+  const providerName = b.listing?.providerName || b.providerName || "";
+  const pricingType = b.listing?.pricingType || b.pricingType || "";
 
   const handleCancelClick = (e) => {
     e.stopPropagation();
@@ -591,10 +655,58 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
     >
       <h3 className="text-lg font-semibold text-slate-900 line-clamp-1">{title}</h3>
 
+      <div className="mt-1 flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 text-sm text-slate-700">
+          <Package size={16} />
+          <span>Service</span>
+        </span>
+      </div>
+
+      {location && (
+        <div className="mt-1 flex items-center gap-2 text-sm text-slate-600">
+          <MapPin size={16} />
+          <span className="line-clamp-1">{location}</span>
+        </div>
+      )}
+
       <div className="mt-2 flex items-center gap-2 text-sm text-slate-700">
         <CalIcon size={16} />
         <span>{[dateStr, timeStr].filter(Boolean).join(" • ")}</span>
       </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-700">
+        {duration && (
+          <span className="inline-flex items-center gap-1">
+            <Clock size={16} />
+            {duration}
+          </span>
+        )}
+        {quantity !== null && (
+          <span className="inline-flex items-center gap-1">
+            <Users size={16} />
+            Qty {quantity}
+          </span>
+        )}
+        {serviceType && (
+          <span className="inline-flex items-center gap-1">
+            <Package size={16} />
+            {serviceType}
+          </span>
+        )}
+        {providerName && (
+          <span className="inline-flex items-center gap-1">
+            <CircleUserRound size={16} />
+            {providerName}
+          </span>
+        )}
+      </div>
+
+      {pricingType && (
+        <div className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+          <span className="font-medium">Pricing:</span>
+          <span>{pricingType}</span>
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${pBadge.cls}`}>
@@ -608,7 +720,7 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
         <div className="text-lg font-bold text-blue-600">{peso(b.totalPrice)}</div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-auto pt-4">
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -678,7 +790,7 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
   return (
     <Overlay onBackdropClick={onClose}>
       <div className="relative z-10 w-full sm:w-[560px]">
-        <div className="mx-3 sm:mx-0 rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/70 shadow-[0_10px_30px_rgba(2,6,23,0.12),inset_0_1px_0_rgba(255,255,255,0.6)] p-6">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-6">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-xl font-semibold tracking-tight text-slate-900">Cancel booking</h3>
@@ -758,7 +870,7 @@ const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText,
   return (
     <Overlay onBackdropClick={onBack}>
       <div className="relative z-10 w-full sm:w-[560px]">
-        <div className="mx-3 sm:mx-0 rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200/70 shadow-[0_10px_30px_rgba(2,6,23,0.12),inset_0_1px_0_rgba(255,255,255,0.6)] p-6">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-6">
           <div className="flex items-start gap-3">
             <div className="shrink-0 grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-b from-rose-600 to-rose-800 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_20px_rgba(225,29,72,0.35)] ring-1 ring-white/10">
               <AlertTriangle size={20} className="text-white" />
@@ -977,9 +1089,9 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
           "relative w-full h-[100vh] sm:h-[90vh] sm:max-w-[1200px]",
           "grid grid-rows-[auto,1fr] md:grid-rows-1 md:grid-cols-2",
           "min-h-0 rounded-none sm:rounded-[2rem] overflow-hidden",
-          "bg-gradient-to-br from-blue-50/55 via-white/70 to-indigo-50/55",
-          "backdrop-blur-xl border border-white/60",
-          "shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_30px_60px_rgba(30,58,138,0.12)]",
+          "bg-white/60",
+          "backdrop-blur-sm border-2 border-white/60",
+          "shadow-md",
         ].join(" ")}
         onClick={(e) => e.stopPropagation()}
       >
@@ -1111,7 +1223,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
               </section>
 
               {/* Guest Information Section */}
-              <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
+              <section className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm p-4 sm:p-5 shadow-md">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative w-12 h-12 rounded-full bg-white/70 border border-white/60 overflow-hidden grid place-items-center text-gray-900 font-semibold ring-4 ring-white/60 shrink-0">
@@ -1205,7 +1317,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
               </section>
 
               {/* Booking Details Section */}
-              <section className="rounded-3xl bg-white/85 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-lg space-y-2">
+              <section className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm p-4 sm:p-5 shadow-md space-y-2">
                 {cat.startsWith("home") ? (
                   <>
                     <div className="flex items-center gap-2 text-sm">
@@ -1350,7 +1462,7 @@ export default function TodayTab() {
 
   const uid = authUser?.uid || null;
 
-  // Bookings subscription
+  // Bookings subscription - only fetch host bookings
   useEffect(() => {
     if (!uid) {
       setRows([]);
@@ -1359,34 +1471,111 @@ export default function TodayTab() {
     }
     
     setLoading(true);
-
-    const hostQuery = query(collection(database, "bookings"), where("hostId", "==", uid));
-    const guestQuery = query(collection(database, "bookings"), where("uid", "==", uid));
-
-    const currentBookings = new Map();
-
-    const applyBookings = (docs) => {
-      docs.forEach((doc) => currentBookings.set(doc.id, { id: doc.id, ...doc.data() }));
-      const merged = Array.from(currentBookings.values());
-      
-      merged.sort((a, b) => {
-        const aSeconds = a?.createdAt?.seconds || 0;
-        const bSeconds = b?.createdAt?.seconds || 0;
-        const aNanos = a?.createdAt?.nanoseconds || 0;
-        const bNanos = b?.createdAt?.nanoseconds || 0;
-        return bSeconds === aSeconds ? bNanos - aNanos : bSeconds - aSeconds;
-      });
-      
-      setRows(merged);
-      setLoading(false);
-    };
-
-    const unsubscribeHost = onSnapshot(hostQuery, (snapshot) => applyBookings(snapshot.docs));
-    const unsubscribeGuest = onSnapshot(guestQuery, (snapshot) => applyBookings(snapshot.docs));
-
+    
+    // Store unsubscribe functions
+    const unsubs = [];
+    let cancelled = false;
+    
+    // First, get all listing IDs owned by this host
+    (async () => {
+      try {
+        // Query listings by multiple fields to catch all host's listings
+        const q1 = query(collection(database, "listings"), where("uid", "==", uid));
+        const q2 = query(collection(database, "listings"), where("hostId", "==", uid));
+        const q3 = query(collection(database, "listings"), where("ownerId", "==", uid));
+        
+        const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+        
+        if (cancelled) return;
+        
+        const listingIdsSet = new Set();
+        [snap1, snap2, snap3].forEach((snap) => {
+          snap.docs.forEach((d) => listingIdsSet.add(d.id));
+        });
+        const listingIds = Array.from(listingIdsSet);
+        
+        // Query bookings by hostId, ownerId, and listingId
+        const bookingsMap = new Map();
+        
+        const processBookings = () => {
+          if (cancelled) return;
+          const rows = Array.from(bookingsMap.values());
+          
+          rows.sort((a, b) => {
+            const aSeconds = a?.createdAt?.seconds || 0;
+            const bSeconds = b?.createdAt?.seconds || 0;
+            const aNanos = a?.createdAt?.nanoseconds || 0;
+            const bNanos = b?.createdAt?.nanoseconds || 0;
+            return bSeconds === aSeconds ? bNanos - aNanos : bSeconds - aSeconds;
+          });
+          
+          setRows(rows);
+          setLoading(false);
+        };
+        
+        // Query bookings by hostId
+        const hostQuery = query(collection(database, "bookings"), where("hostId", "==", uid));
+        const unsubHost = onSnapshot(hostQuery, (snapshot) => {
+          if (cancelled) return;
+          snapshot.docs.forEach((d) => {
+            bookingsMap.set(d.id, { id: d.id, ...d.data() });
+          });
+          processBookings();
+        }, (err) => {
+          console.error("Host bookings query error:", err);
+          if (!cancelled) setLoading(false);
+        });
+        unsubs.push(unsubHost);
+        
+        // Query bookings by ownerId
+        const ownerQuery = query(collection(database, "bookings"), where("ownerId", "==", uid));
+        const unsubOwner = onSnapshot(ownerQuery, (snapshot) => {
+          if (cancelled) return;
+          snapshot.docs.forEach((d) => {
+            bookingsMap.set(d.id, { id: d.id, ...d.data() });
+          });
+          processBookings();
+        }, (err) => {
+          console.error("Owner bookings query error:", err);
+          if (!cancelled) setLoading(false);
+        });
+        unsubs.push(unsubOwner);
+        
+        // Query bookings by listingId (chunked due to Firestore's 'in' clause limit of 10)
+        if (listingIds.length > 0) {
+          const chunkSize = 10;
+          for (let i = 0; i < listingIds.length; i += chunkSize) {
+            const chunk = listingIds.slice(i, i + chunkSize);
+            const listingQuery = query(collection(database, "bookings"), where("listingId", "in", chunk));
+            const unsubListing = onSnapshot(listingQuery, (snapshot) => {
+              if (cancelled) return;
+              snapshot.docs.forEach((d) => {
+                const data = d.data();
+                // Only include if this listing is owned by the host (double-check)
+                if (listingIdsSet.has(data.listingId)) {
+                  bookingsMap.set(d.id, { id: d.id, ...data });
+                }
+              });
+              processBookings();
+            }, (err) => {
+              console.error("Listing bookings query error:", err);
+              if (!cancelled && i + chunkSize >= listingIds.length) setLoading(false);
+            });
+            unsubs.push(unsubListing);
+          }
+        } else {
+          // No listings, but we still want to process host/owner bookings
+          processBookings();
+        }
+      } catch (e) {
+        console.error("Failed to load listings for bookings:", e);
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    
     return () => {
-      unsubscribeHost();
-      unsubscribeGuest();
+      cancelled = true;
+      unsubs.forEach((unsub) => unsub());
     };
   }, [uid]);
 
@@ -1474,6 +1663,38 @@ export default function TodayTab() {
                         tab === "upcoming" ? upcomingBookings : 
                         cancelledBookings;
 
+  // Statistics calculations
+  // Note: rows now only contains host bookings (fetched by hostId, ownerId, and listingId)
+  const stats = useMemo(() => {
+    const totalBookings = rows.length;
+    const todayCount = todayBookings.length;
+    const upcomingCount = upcomingBookings.length;
+    const cancelledCount = cancelledBookings.length;
+    
+    // Calculate total revenue from confirmed/paid host bookings
+    const totalRevenue = rows
+      .filter((b) => {
+        const status = (b.status || "").toLowerCase();
+        const paymentStatus = (b.paymentStatus || "").toLowerCase();
+        return (
+          !["cancelled", "canceled", "rejected"].includes(status) &&
+          !["refunded", "failed"].includes(paymentStatus)
+        );
+      })
+      .reduce((sum, b) => {
+        const price = numberOr(b.totalPrice, 0);
+        return sum + price;
+      }, 0);
+
+    return {
+      totalBookings,
+      todayCount,
+      upcomingCount,
+      cancelledCount,
+      totalRevenue,
+    };
+  }, [rows, todayBookings, upcomingBookings, cancelledBookings]);
+
   // Cancel flow handlers
   const loadPolicyForBooking = async (booking) => {
     if (booking?.listing?.cancellationPolicy) {
@@ -1555,7 +1776,7 @@ export default function TodayTab() {
   // Render loading state
   if (authLoading) {
     return (
-      <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center">
+      <div className="rounded-2xl p-8 bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md text-center">
         Loading…
       </div>
     );
@@ -1572,11 +1793,11 @@ export default function TodayTab() {
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold text-foreground">Today</h2>
-          <p className="text-muted-foreground">Your bookings at a glance</p>
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Today</h2>
+          <p className="text-sm text-slate-600 mt-1">Your bookings at a glance</p>
         </div>
 
-        <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm self-start">
+        <div className="inline-flex rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm p-1 shadow-md self-start">
           {tabs.map((tabItem) => {
             const isActive = tab === tabItem.key;
             return (
@@ -1596,6 +1817,61 @@ export default function TodayTab() {
         </div>
       </div>
 
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        {/* Total Bookings */}
+        <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">Total Bookings</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">{stats.totalBookings}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-blue-100/80">
+              <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Today's Bookings */}
+        <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">Today</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">{stats.todayCount}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-emerald-100/80">
+              <CalIcon className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Upcoming Bookings */}
+        <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">Upcoming</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">{stats.upcomingCount}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-amber-100/80">
+              <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-amber-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Total Revenue */}
+        <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">Total Revenue</p>
+              <p className="text-xl sm:text-2xl font-bold text-slate-900 mt-1">{peso(stats.totalRevenue)}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-green-100/80">
+              <DollarSign className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Bookings Grid */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
@@ -1604,8 +1880,8 @@ export default function TodayTab() {
           ))}
         </div>
       ) : tabbedBookings.length === 0 ? (
-        <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center">
-          <p className="text-muted-foreground">No bookings found.</p>
+        <div className="rounded-2xl p-8 bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md text-center">
+          <p className="text-slate-600">No bookings found.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">

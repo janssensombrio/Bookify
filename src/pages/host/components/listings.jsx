@@ -257,8 +257,8 @@ function Listings(props) {
       <div className="max-w-7xl mx-auto mb-8">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-bold text-foreground">Your Listings</h2>
-            <p className="text-muted-foreground mt-1">
+            <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Your Listings</h2>
+            <p className="text-sm text-slate-600 mt-1">
               Manage and view all your property, experience, and service listings.
             </p>
           </div>
@@ -268,7 +268,7 @@ function Listings(props) {
             <button
               type="button"
               onClick={() => setPromoOpen(true)}
-              className="inline-flex items-center gap-2 h-10 px-4 rounded-full border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 shadow-sm"
+              className="inline-flex items-center gap-2 h-10 px-4 rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm text-blue-700 hover:bg-white/90 shadow-md"
               title="Create or manage promo codes and coupons"
             >
               <BadgePercent size={18} />
@@ -283,7 +283,7 @@ function Listings(props) {
                   const v = e.target.value;
                   setShowDrafts(v === "all" ? false : v);
                 }}
-                className="appearance-none h-10 pl-4 pr-9 rounded-full border border-gray-200 bg-white text-gray-800 hover:bg-gray-50 shadow-sm"
+                className="appearance-none h-10 pl-4 pr-9 rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm text-gray-800 hover:bg-white/90 shadow-md"
               >
                 <option value="all">All Listings</option>
                 <option value="published">Published</option>
@@ -298,7 +298,7 @@ function Listings(props) {
 
             {/* Add New */}
             <button
-              className="inline-flex items-center gap-2 px-4 h-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white border border-blue-600 shadow"
+              className="inline-flex items-center gap-2 px-4 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-md hover:shadow-lg transition-all duration-300 transform-gpu hover:-translate-y-0.5"
               onClick={openCategModal}
             >
               <Plus size={18} /> Add New
@@ -313,7 +313,7 @@ function Listings(props) {
           {Array.from({ length: 6 }).map((_, i) => (
             <div
               key={i}
-              className="h-64 rounded-3xl bg-white/80 border border-white/40 shadow overflow-hidden animate-pulse"
+              className="h-64 rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md overflow-hidden animate-pulse"
             />
           ))}
         </div>
@@ -333,7 +333,7 @@ function Listings(props) {
 
                 return (
                   <div key={item.id} className="group">
-                    <div className="relative rounded-[28px] overflow-hidden bg-gradient-to-b from-white to-slate-50 border border-slate-200 shadow-[0_12px_28px_rgba(2,6,23,0.10),inset_0_1px_0_rgba(255,255,255,0.6)] transition-all duration-300 hover:-translate-y-1.5 hover:shadow-[0_24px_48px_rgba(2,6,23,0.18)]">
+                    <div className="relative rounded-2xl overflow-hidden bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md hover:shadow-lg transition-all duration-300 transform-gpu hover:-translate-y-1 hover:scale-[1.02]">
                       <div className="relative h-48 sm:h-56 md:h-60 overflow-hidden">
                         {img ? (
                           <img
@@ -463,13 +463,13 @@ function Listings(props) {
               })}
             </div>
           ) : (
-            <p className="text-center text-muted-foreground mt-6">No listings available.</p>
+            <p className="text-center text-slate-600 mt-6">No listings available.</p>
           )}
         </div>
       )}
 
       {!showSkeletons && filtered.length === 0 && (
-        <p className="text-center text-muted-foreground mt-6">
+        <p className="text-center text-slate-600 mt-6">
           {showDrafts === "draft"
             ? "No draft listings available."
             : showDrafts === "published"

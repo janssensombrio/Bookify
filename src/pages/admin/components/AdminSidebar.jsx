@@ -103,7 +103,7 @@ const AdminSidebar = () => {
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 ${
                   isActive
                     ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
-                    : "text-foreground hover:bg-gray-100"
+                    : "text-slate-900 hover:bg-gray-100"
                 }`}
                 title={item.label}
                 aria-current={isActive ? "page" : undefined}
@@ -119,7 +119,7 @@ const AdminSidebar = () => {
         <div className="p-4 border-t border-gray-200">
           <button
             onClick={() => setIsLogoutModalOpen(true)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-foreground hover:bg-gray-100 transition-all duration-200"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-900 hover:bg-gray-100 transition-all duration-200"
           >
             <LogOut size={20} />
             {sidebarOpen && <span className="font-medium">Log Out</span>}

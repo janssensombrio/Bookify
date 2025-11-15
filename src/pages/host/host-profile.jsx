@@ -81,8 +81,7 @@ async function uploadToCloudinary(file) {
 /* ----------------------- Tiny UI atoms ----------------------- */
 function StatCard({ label, value, icon, accent = "from-blue-500 to-indigo-600" }) {
   return (
-    <div className="relative rounded-3xl border border-white/60 bg-gradient-to-br from-white to-slate-50 shadow-[0_12px_30px_rgba(2,6,23,0.06)] hover:shadow-[0_18px_50px_rgba(2,6,23,0.12)] transition-transform will-change-transform hover:-translate-y-0.5">
-      <div className="absolute -inset-px rounded-3xl bg-gradient-to-br from-white/30 to-white/5" />
+    <div className="relative rounded-2xl border-2 border-white/60 bg-white/60 backdrop-blur-sm shadow-md hover:shadow-lg transition-transform will-change-transform hover:-translate-y-0.5">
       <div className="p-4 sm:p-5 relative">
         <div className={`inline-flex items-center gap-2 rounded-2xl px-2.5 py-1 text-xs font-medium bg-gradient-to-r ${accent} text-white shadow`}>
           {icon}
@@ -204,7 +203,7 @@ function EditHostProfileModal({ open, onClose, onSave, defaults = {} }) {
     >
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-[101] flex min-h-full items-center justify-center p-3 sm:p-6">
-        <div className="relative flex w-full max-w-3xl max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-white/70 bg-gradient-to-br from-blue-50 via-white to-indigo-50 shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_40px_80px_rgba(30,58,138,0.12)]">
+        <div className="relative flex w-full max-w-3xl max-h-[92vh] flex-col overflow-hidden rounded-2xl border-2 border-white/60 bg-white/60 backdrop-blur-sm shadow-md">
           {/* Header */}
           <div className="sticky top-0 z-10 bg-white/85 backdrop-blur-md border-b border-white/60 px-4 sm:px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -668,8 +667,8 @@ export default function HostProfile() {
       {/* Page header + subheading */}
       <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Host Profile</h1>
-          <p className="text-sm text-gray-600">This is what guests see on your public profile. Keep it fresh and welcoming.</p>
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Host Profile</h2>
+          <p className="text-sm text-slate-600 mt-1">This is what guests see on your public profile. Keep it fresh and welcoming.</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -685,7 +684,7 @@ export default function HostProfile() {
       {/* Identity + About + Verified (separate badge card) */}
       <div className="grid gap-6 md:grid-cols-6">
         {/* Left: Identity */}
-        <div className="col-span-2 rounded-3xl border border-white/60 bg-gradient-to-br from-white to-slate-50 p-6 shadow-[0_12px_30px_rgba(2,6,23,0.06)]">
+        <div className="col-span-2 rounded-2xl border-2 border-white/60 bg-white/60 backdrop-blur-sm p-6 shadow-md">
           <div className="flex items-center gap-4">
             {/* Avatar now opens modal to edit/upload */}
             <button
@@ -742,7 +741,7 @@ export default function HostProfile() {
         </div>
 
         {/* Center: About (col-span-2) */}
-        <div className="col-span-3 rounded-3xl border border-white/60 bg-gradient-to-br from-white to-slate-50 p-6 shadow-[0_12px_30px_rgba(2,6,23,0.06)]">
+        <div className="col-span-3 rounded-2xl border-2 border-white/60 bg-white/60 backdrop-blur-sm p-6 shadow-md">
           <h2 className="text-base font-semibold flex items-center gap-2">
             <User className="w-4 h-4" /> About
           </h2>
@@ -771,10 +770,10 @@ export default function HostProfile() {
         <div className="col-span-1">
   <div
     className={[
-      "h-full rounded-3xl border p-6 shadow-[0_12px_30px_rgba(2,6,23,0.06)]",
+      "h-full rounded-2xl border-2 p-6 shadow-md backdrop-blur-sm",
       isVerified
-        ? "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-emerald-50/60"
-        : "border-gray-200 bg-gradient-to-br from-gray-50 via-white to-gray-50",
+        ? "border-emerald-200/60 bg-emerald-50/60"
+        : "border-white/60 bg-white/60",
     ].join(" ")}
   >
     {/* Center the whole content and give the card some height so it can center vertically */}
@@ -782,7 +781,7 @@ export default function HostProfile() {
       {/* Bigger badge icon */}
       <span
         className={[
-          "grid place-items-center w-24 h-24 rounded-3xl ring-8",
+          "grid place-items-center w-24 h-24 rounded-2xl ring-8",
           isVerified
             ? "bg-emerald-100 text-emerald-700 ring-white/70"
             : "bg-gray-100 text-gray-600 ring-white/70",

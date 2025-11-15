@@ -1122,11 +1122,11 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     setCurrentPhoto(0);
   }, [listingId]);
 
-  /* Subscribe wallet of current user */
+  /* Subscribe guest wallet of current user (for payments) */
   useEffect(() => {
     const u = auth.currentUser;
     if (!u) return;
-    const wref = doc(database, "wallets", u.uid);
+    const wref = doc(database, "guestWallets", u.uid);
     const unsub = onSnapshot(wref, (s) => {
       const d = s.data() || {};
       setWallet({ balance: Number(d.balance || 0), currency: d.currency || "PHP" });
@@ -1678,10 +1678,10 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         if (!hostUid) throw new Error("Listing host not found.");
 
         // Refs
-        const wrefGuest = doc(database, "wallets", user.uid);
-        const wrefHost  = doc(database, "wallets", hostUid);
-        const walletTxGuestRef = doc(collection(database, "wallets", user.uid, "transactions"));
-        const walletTxHostRef  = doc(collection(database, "wallets", hostUid, "transactions"));
+        const wrefGuest = doc(database, "guestWallets", user.uid);
+        const wrefHost  = doc(database, "hostWallets", hostUid);
+        const walletTxGuestRef = doc(collection(database, "guestWallets", user.uid, "transactions"));
+        const walletTxHostRef  = doc(collection(database, "hostWallets", hostUid, "transactions"));
 
         const pointsGuestRef = doc(database, "points", user.uid);
         const pointsHostRef  = doc(database, "points", hostUid);

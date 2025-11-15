@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Menu } from "lucide-react";
 import AdminSidebar from "./components/AdminSidebar.jsx";
+import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { database } from "../../config/firebase";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { collection, getDocs, query, where, documentId } from "firebase/firestore";
@@ -136,25 +137,34 @@ export default function AdminListingsPage() {
           };
         });
 
-        // bookings
-        const bookingsRef = collection(database, "bookings");
-        const bSnap = await getDocs(bookingsRef);
-        const bookCount = {};
-        bSnap.forEach((d) => {
-          const v = d.data() || {};
-          const lid = getListingIdFromBooking(v);
-          if (!lid) return;
-          bookCount[lid] = (bookCount[lid] || 0) + 1;
-        });
-
-        // ratings
+        // Optimize bookings and reviews - load in parallel and only for visible listings
         const ids = rows.map((r) => r.id).filter(Boolean);
+        const bookCount = {};
         const acc = new Map(); // id -> { sum, count }
-        const batches = chunk(ids, 10);
-        for (const b of batches) {
-          const q = query(collection(database, "reviews"), where("listingId", "in", b));
-          const rs = await getDocs(q);
-          rs.forEach((d) => {
+        
+        // Create parallel queries for reviews
+        const reviewBatches = chunk(ids, 10);
+        const reviewQueries = reviewBatches.map((b) =>
+          getDocs(query(collection(database, "reviews"), where("listingId", "in", b)))
+            .catch(() => ({ docs: [] }))
+        );
+
+        // Create parallel queries for bookings
+        const bookingBatches = chunk(ids, 10);
+        const bookingQueries = bookingBatches.map((b) =>
+          getDocs(query(collection(database, "bookings"), where("listingId", "in", b)))
+            .catch(() => ({ docs: [] }))
+        );
+
+        // Execute review and booking queries in parallel
+        const [reviewResults, bookingResults] = await Promise.all([
+          Promise.all(reviewQueries),
+          Promise.all(bookingQueries),
+        ]);
+
+        // Process review results
+        reviewResults.forEach((snap) => {
+          snap.docs.forEach((d) => {
             const v = d.data() || {};
             const lid = v?.listingId;
             const ratingNum = Number(v?.rating);
@@ -164,7 +174,17 @@ export default function AdminListingsPage() {
             cur.sum += ratingNum;
             cur.count += 1;
           });
-        }
+        });
+
+        // Process booking results - count bookings per listing
+        bookingResults.forEach((snap) => {
+          snap.docs.forEach((d) => {
+            const v = d.data() || {};
+            const lid = getListingIdFromBooking(v) || v?.listingId;
+            if (!lid) return;
+            bookCount[lid] = (bookCount[lid] || 0) + 1;
+          });
+        });
 
         // enrich rows
         rows = rows.map((r) => {
@@ -178,49 +198,41 @@ export default function AdminListingsPage() {
           };
         });
 
-        // resolve host names
+        // Optimize host name resolution - use parallel queries
         try {
           const hostUids = Array.from(new Set(rows.map((r) => r.hostUid).filter(Boolean)));
           if (hostUids.length) {
             const hostMap = {};
             const hbatches = chunk(hostUids, 10);
-            for (const hb of hbatches) {
-              try {
-                const qUid = query(collection(database, "hosts"), where("uid", "in", hb));
-                const sUid = await getDocs(qUid);
-                sUid.forEach((doc) => {
-                  const data = doc.data() || {};
-                  const uid = data.uid || doc.id;
-                  const name =
-                    data.displayName ||
-                    ((data.firstName || "") + " " + (data.lastName || "")).trim() ||
-                    data.email ||
-                    uid;
-                  hostMap[uid] = name;
-                  hostMap[doc.id] = name;
-                });
-              } catch (e) {
-                console.warn("hosts uid query failed", e);
-              }
+            const hostQueries = [];
 
-              try {
-                const qId = query(collection(database, "hosts"), where(documentId(), "in", hb));
-                const sId = await getDocs(qId);
-                sId.forEach((doc) => {
-                  const data = doc.data() || {};
-                  const uid = data.uid || doc.id;
-                  const name =
-                    data.displayName ||
-                    ((data.firstName || "") + " " + (data.lastName || "")).trim() ||
-                    data.email ||
-                    doc.id;
-                  hostMap[doc.id] = name;
-                  if (uid) hostMap[uid] = name;
-                });
-              } catch (e) {
-                console.warn("hosts id query failed", e);
-              }
+            // Create parallel queries for both uid and documentId
+            for (const hb of hbatches) {
+              hostQueries.push(
+                getDocs(query(collection(database, "hosts"), where("uid", "in", hb)))
+                  .catch(() => ({ docs: [] }))
+              );
+              hostQueries.push(
+                getDocs(query(collection(database, "hosts"), where(documentId(), "in", hb)))
+                  .catch(() => ({ docs: [] }))
+              );
             }
+
+            // Execute all host queries in parallel
+            const hostResults = await Promise.all(hostQueries);
+            hostResults.forEach((snap) => {
+              snap.docs.forEach((doc) => {
+                const data = doc.data() || {};
+                const uid = data.uid || doc.id;
+                const name =
+                  data.displayName ||
+                  ((data.firstName || "") + " " + (data.lastName || "")).trim() ||
+                  data.email ||
+                  uid;
+                hostMap[uid] = name;
+                hostMap[doc.id] = name;
+              });
+            });
             rows = rows.map((r) => ({
               ...r,
               hostName: hostMap[r.hostUid] || hostMap[r.hostUid] || null,
@@ -626,7 +638,7 @@ function escapeHtml(str) {
       <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ${sideOffset}`}>
         {/* Top bar — fixed */}
         <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
-          <div className="max-w-[1400px] mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -648,15 +660,16 @@ function escapeHtml(str) {
         <div className="h-[56px] md:h-[56px]" />
 
         {/* Main */}
-        <main className="flex-1 p-6 sm:p-8 max-w-[1400px] mx-auto">
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
 
         {/* Report Summary */}
-        <section className="mb-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
           {/* Total Listings */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Total Listings</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total}</p>
-            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
+            <div className="mt-2 sm:mt-3 flex items-center gap-2 text-xs text-slate-600">
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
                 {metrics.published} published
               </span>
@@ -670,14 +683,14 @@ function escapeHtml(str) {
           </div>
 
           {/* Bookings */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
               {metrics.totalBookings.toLocaleString()}
             </p>
-            <p className="mt-2 text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-600">
               Top listing:{" "}
-              <span className="font-medium text-slate-800 dark:text-slate-200">
+              <span className="font-medium text-slate-800">
                 {metrics.topBooked?.title || "—"}
               </span>{" "}
               ({metrics.topBooked?.bookingCount || 0})
@@ -685,12 +698,12 @@ function escapeHtml(str) {
           </div>
 
           {/* Ratings */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Avg Rating</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
               {metrics.avgRating ? metrics.avgRating.toFixed(1) : "—"}
             </p>
-            <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
+            <div className="mt-2 sm:mt-3 h-2 rounded-full bg-slate-100">
               <div
                 className="h-2 rounded-full bg-indigo-500"
                 style={{ width: `${(metrics.avgRating / 5) * 100}%` }}
@@ -699,17 +712,17 @@ function escapeHtml(str) {
           </div>
 
           {/* Pricing */}
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Avg Price</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
               {metrics.avgPrice ? `₱${Math.round(metrics.avgPrice).toLocaleString()}` : "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-500">Across priced listings</p>
+            <p className="mt-2 text-xs text-slate-600">Across priced listings</p>
           </div>
         </section>
 
         {/* Category distribution */}
-        <section className="mb-6 rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+        <section className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Category Breakdown</h3>
             <div className="flex flex-wrap gap-2">
@@ -728,7 +741,8 @@ function escapeHtml(str) {
         </section>
 
         {/* Controls */}
-        <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6 mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {/* Search and Category Filter */}
           <div className="lg:col-span-1 flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">
@@ -751,46 +765,41 @@ function escapeHtml(str) {
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
               />
             </div>
-            <select
+            <TailwindDropdown
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100 sm:min-w-[160px]"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All Categories" },
+                ...categories.map((cat) => ({ value: cat, label: cat })),
+              ]}
+              className="sm:min-w-[160px]"
+            />
           </div>
 
           {/* Sort & actions */}
           <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Sort by:</label>
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value)}
-                className="px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 min-w-0 flex-shrink"
-              >
-                <option value="createdAt">Newest</option>
-                <option value="price">Price</option>
-                <option value="bookingCount">Bookings</option>
-                <option value="ratingAvg">Rating</option>
-                <option value="title">Title</option>
-              </select>
-              <button
-                title="Toggle sort direction"
-                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
-              >
-                <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                  <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
-                </svg>
-                <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
-              </button>
-            </div>
+            <TailwindDropdown
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value)}
+              options={[
+                { value: "createdAt", label: "Newest" },
+                { value: "price", label: "Price" },
+                { value: "bookingCount", label: "Bookings" },
+                { value: "ratingAvg", label: "Rating" },
+                { value: "title", label: "Title" },
+              ]}
+              className="min-w-[120px]"
+            />
+            <button
+              title="Toggle sort direction"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
+            >
+              <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
+                <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
+              </svg>
+              <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
+            </button>
             <button
               title="Export CSV"
               onClick={exportCSV}
@@ -813,6 +822,7 @@ function escapeHtml(str) {
               </svg>
               <span className="hidden xs:inline">Export PDF</span><span className="xs:hidden">PDF</span>
             </button>
+          </div>
           </div>
         </div>
 
@@ -906,19 +916,20 @@ function escapeHtml(str) {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2">
                 <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Rows:</label>
-                <select
-                  value={pageSize}
+                <TailwindDropdown
+                  value={String(pageSize)}
                   onChange={(e) => {
                     setPageSize(Number(e.target.value));
                     setPage(1);
                   }}
-                  className="rounded-xl border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 min-w-0 flex-shrink"
-                >
-                  <option value={10}>10</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
+                  options={[
+                    { value: "10", label: "10" },
+                    { value: "25", label: "25" },
+                    { value: "50", label: "50" },
+                    { value: "100", label: "100" },
+                  ]}
+                  className="min-w-[80px]"
+                />
               </div>
               <div className="inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <button
@@ -970,6 +981,7 @@ function escapeHtml(str) {
             </div>
           </div>
         )}
+          </div>
         </main>
       </div>
     </div>

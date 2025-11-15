@@ -1,15 +1,19 @@
 // ./src/pages/host/index.jsx (a.k.a. HostPage.jsx)
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Menu } from "lucide-react";
 
 import Listings from "./components/listings.jsx";
 import MessagesPage from "../../components/messaging-page.jsx";
-import HostNavigation from "../../components/HostNav.jsx";
+import HostSidebar from "./components/HostSidebar.jsx";
 import TodayTab from "./today.jsx";
 import HostCalendar from "./host-calendar.jsx";
 import HostProfile from "./host-profile.jsx";
+import HostWalletPage from "./wallet-page.jsx";
+import BookifyLogo from "../../components/bookify-logo.jsx";
+import { useSidebar } from "../../context/SidebarContext";
 
-const VALID_PAGES = ["bookings", "messages", "listings", "calendar", "profile"];
+const VALID_PAGES = ["bookings", "messages", "listings", "calendar", "profile", "wallet"];
 const FALLBACK_PAGE = "bookings";
 
 function safePage(p) {
@@ -19,6 +23,7 @@ function safePage(p) {
 export default function HostPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { sidebarOpen, setSidebarOpen } = useSidebar();
 
   // 1) Seed from router state (Option A)
   const seedActive = safePage(location.state?.activePage || FALLBACK_PAGE);
@@ -26,7 +31,8 @@ export default function HostPage() {
 
   const [activePage, setActivePage] = useState(seedActive);
   const [showDrafts, setShowDrafts] = useState(seedShowDrafts);
-
+  
+  const sideOffset = sidebarOpen ? "md:ml-72" : "md:ml-20";
   // 2) If this page receives NEW state while already mounted, apply it once
   useEffect(() => {
     if (!location.state) return;
@@ -56,6 +62,8 @@ export default function HostPage() {
         return <HostCalendar />;
       case "profile":
         return <HostProfile />;
+      case "wallet":
+        return <HostWalletPage />;
       case "listings":
       default:
         return <Listings showDrafts={showDrafts} />;
@@ -63,17 +71,39 @@ export default function HostPage() {
   }, [activePage, showDrafts]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
-      {/* Fixed Host nav */}
-      <HostNavigation setActivePage={setActivePage} activePage={activePage} />
+    <div className="flex min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50 overflow-hidden">
+      <HostSidebar setActivePage={setActivePage} activePage={activePage} navigate={navigate} />
 
-      {/* Spacer to avoid content under fixed header */}
-      <div className="h-[34px] md:h-[44px]" />
+      {/* Content area wrapper */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ml-0 ${sideOffset}`}>
+        {/* Top bar — sticky */}
+        <header className={`fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0`}>
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+                aria-expanded={sidebarOpen}
+              >
+                <Menu size={22} />
+              </button>
+              <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none" onClick={() => navigate("/hostpage")}>
+                <BookifyLogo />
+                <span className="hidden sm:inline font-semibold text-gray-800 text-sm sm:text-base">Host Dashboard</span>
+              </div>
+            </div>
+          </div>
+        </header>
 
-      {/* Main Content area with desktop push, mobile no push */}
-      <main className="transition-[margin] duration-300 ml-0 md:ml-2 px-4 sm:px-6 lg:px-12 py-6 pb-24 md:pb-10">
-        <div className="max-w-7xl mx-auto space-y-8">{content}</div>
-      </main>
+        {/* Spacer */}
+        <div className="h-[56px] md:h-[56px]" />
+
+        {/* Main Content area */}
+        <main className="flex-1 px-4 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
+          {content}
+        </main>
+      </div>
     </div>
   );
 }

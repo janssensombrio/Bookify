@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "./components/AdminSidebar.jsx";
+import TailwindDropdown from "./components/TailwindDropdown.jsx";
+import HostProfileModal from "./components/HostProfileModal.jsx";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { database, auth } from "../../config/firebase";
-import { collection, getDocs, doc, updateDoc, setDoc, query, orderBy, getDoc } from "firebase/firestore";
+import { collection, getDocs, doc, setDoc, query, orderBy, getDoc } from "firebase/firestore";
 import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu, Settings, Save, Edit2, FileText, Percent } from "lucide-react";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
@@ -18,13 +20,50 @@ function formatDate(ts) {
   }
 }
 
+// Time filter helpers
+const getTimeRange = (filter) => {
+  const now = new Date();
+  switch (filter) {
+    case "today": {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisWeek": {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+      const start = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), diff + 6, 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisMonth": {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisYear": {
+      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      return { start, end };
+    }
+    default:
+      return { start: null, end: null };
+  }
+};
+
+const isInTimeRange = (date, range) => {
+  if (!range.start || !range.end) return true;
+  if (!date) return false;
+  const d = date?.toDate ? date.toDate() : new Date(date);
+  return d >= range.start && d <= range.end;
+};
+
 export default function AdminHostsPage() {
   const navigate = useNavigate();
   const { sidebarOpen, setSidebarOpen } = useSidebar() || {};
   const sideOffset = sidebarOpen === false ? "md:ml-20" : "md:ml-72";
   const [hosts, setHosts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busyId, setBusyId] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [page, setPage] = useState(1);
@@ -33,11 +72,8 @@ export default function AdminHostsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [verifiedFilter, setVerifiedFilter] = useState("all"); // all, verified, unverified
   const [activeFilter, setActiveFilter] = useState("all"); // all, active, inactive
+  const [timeFilter, setTimeFilter] = useState("all"); // all, today, thisWeek, thisMonth, thisYear
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [confirmHostId, setConfirmHostId] = useState(null);
-  const [confirmWant, setConfirmWant] = useState(false);
-  const [confirmText, setConfirmText] = useState("");
 
   // Service Fees & Policies state
   const [showSettings, setShowSettings] = useState(false);
@@ -60,6 +96,8 @@ export default function AdminHostsPage() {
   });
   const [editingSettings, setEditingSettings] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [selectedHostId, setSelectedHostId] = useState(null);
+  const [showHostModal, setShowHostModal] = useState(false);
 
   /* --- Load settings from Firestore --- */
   useEffect(() => {
@@ -166,6 +204,7 @@ export default function AdminHostsPage() {
   
   const filteredHosts = useMemo(() => {
     let filtered = hosts;
+    const timeRange = getTimeRange(timeFilter);
     
     // Search filter
     if (searchTerm) {
@@ -177,6 +216,11 @@ export default function AdminHostsPage() {
           String(h.id || "").toLowerCase().includes(t)
         );
       });
+    }
+    
+    // Time filter
+    if (timeFilter !== "all") {
+      filtered = filtered.filter((h) => isInTimeRange(h.createdAt, timeRange));
     }
     
     // Verified filter
@@ -215,7 +259,7 @@ export default function AdminHostsPage() {
     });
     
     return filtered;
-  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir]);
+  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir, timeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredHosts.length / pageSize));
   useEffect(() => {
@@ -450,40 +494,6 @@ export default function AdminHostsPage() {
     }
   };
 
-  /* --- confirm dialog (unchanged logic) --- */
-  const openConfirm = (hostId, current) => {
-    const want = !current;
-    const txt = want
-      ? "Are you sure you want to ACTIVATE this host account?"
-      : "Are you sure you want to DEACTIVATE this host account? This will prevent the host from creating or managing listings.";
-    setConfirmHostId(hostId);
-    setConfirmWant(want);
-    setConfirmText(txt);
-    setConfirmOpen(true);
-  };
-
-  const closeConfirm = () => {
-    setConfirmOpen(false);
-    setConfirmHostId(null);
-    setConfirmWant(false);
-    setConfirmText("");
-  };
-
-  const doToggleActive = async () => {
-    if (!confirmHostId) return closeConfirm();
-    try {
-      setBusyId(confirmHostId);
-      const ref = doc(database, "hosts", confirmHostId);
-      await updateDoc(ref, { active: confirmWant, updatedAt: new Date() });
-      setHosts((prev) => prev.map((h) => (h.id === confirmHostId ? { ...h, active: confirmWant } : h)));
-      closeConfirm();
-    } catch (e) {
-      console.error("Failed to update host active status:", e);
-      alert("Failed to update host status. See console for details.");
-    } finally {
-      setBusyId(null);
-    }
-  };
 
   /* --- Export Settings CSV --- */
   const exportSettingsCSV = () => {
@@ -668,14 +678,14 @@ export default function AdminHostsPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
+    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
       <AdminSidebar />
 
       {/* Content area wrapper */}
       <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ${sideOffset}`}>
-        {/* Top bar — fixed */}
+        {/* Top bar — sticky */}
         <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
-          <div className="max-w-[1400px] mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -697,10 +707,10 @@ export default function AdminHostsPage() {
         <div className="h-[56px] md:h-[56px]" />
 
         {/* Main */}
-        <main className="flex-1 min-w-0">
-          <div className="max-w-[1400px] mx-auto px-6 py-6 space-y-6">
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
           {/* Controls */}
-          <div className="glass rounded-2xl border border-white/40 bg-white/80 shadow-sm p-4 md:p-5">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <div className="flex flex-col gap-3">
               {/* Search and Filters Row */}
               <div className="flex flex-col sm:flex-row gap-3">
@@ -718,50 +728,67 @@ export default function AdminHostsPage() {
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-slate-600">Filter:</label>
-                  <select
+                  <TailwindDropdown
+                    value={timeFilter}
+                    onChange={(e) => {
+                      setTimeFilter(e.target.value);
+                      setPage(1);
+                    }}
+                    options={[
+                      { value: "all", label: "All Time" },
+                      { value: "today", label: "Today" },
+                      { value: "thisWeek", label: "This Week" },
+                      { value: "thisMonth", label: "This Month" },
+                      { value: "thisYear", label: "This Year" },
+                    ]}
+                    className="sm:min-w-[120px]"
+                  />
+                  <TailwindDropdown
                     value={verifiedFilter}
                     onChange={(e) => {
                       setVerifiedFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 sm:min-w-[140px]"
-                  >
-                    <option value="all">All Verification</option>
-                    <option value="verified">Verified</option>
-                    <option value="unverified">Unverified</option>
-                  </select>
-                  <select
+                    options={[
+                      { value: "all", label: "All Verification" },
+                      { value: "verified", label: "Verified" },
+                      { value: "unverified", label: "Unverified" },
+                    ]}
+                    className="sm:min-w-[140px]"
+                  />
+                  <TailwindDropdown
                     value={activeFilter}
                     onChange={(e) => {
                       setActiveFilter(e.target.value);
                       setPage(1);
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 sm:min-w-[120px]"
-                  >
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
+                    options={[
+                      { value: "all", label: "All Status" },
+                      { value: "active", label: "Active" },
+                      { value: "inactive", label: "Inactive" },
+                    ]}
+                    className="sm:min-w-[120px]"
+                  />
                 </div>
               </div>
               
               {/* Sort and Actions Row */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-slate-600">Sort by:</label>
-                  <select
+                  <label className="text-sm text-slate-600 whitespace-nowrap">Sort by:</label>
+                  <TailwindDropdown
                     value={sortKey}
                     onChange={(e) => {
                       setSortKey(e.target.value);
                       setPage(1);
                     }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="createdAt">Newest</option>
-                    <option value="name">Name</option>
-                    <option value="email">Email</option>
-                  </select>
+                    options={[
+                      { value: "createdAt", label: "Newest" },
+                      { value: "name", label: "Name" },
+                      { value: "email", label: "Email" },
+                    ]}
+                    className="min-w-[120px]"
+                  />
                   <button
                     title="Toggle sort direction"
                     onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
@@ -793,32 +820,186 @@ export default function AdminHostsPage() {
                     </svg>
                     <span className="hidden xs:inline">Export PDF</span><span className="xs:hidden">PDF</span>
                   </button>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">Rows</label>
-                    <select
-                      value={pageSize}
-                      onChange={(e) => {
-                        setPageSize(Number(e.target.value));
-                        setPage(1);
-                      }}
-                      className="rounded-xl border border-slate-200 bg-white px-2 sm:px-3 py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-w-0 flex-shrink"
-                    >
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                    </select>
-                  </div>
+                  <TailwindDropdown
+                    value={String(pageSize)}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    options={[
+                      { value: "10", label: "10" },
+                      { value: "25", label: "25" },
+                      { value: "50", label: "50" },
+                    ]}
+                    label="Rows"
+                    className="min-w-[80px]"
+                  />
                 </div>
               </div>
             </div>
           </div>
 
+          {/* Table */}
+          <div className="rounded-2xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg overflow-hidden">
+            {loading ? (
+              <div className="p-6 space-y-2">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-slate-100/80 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : filteredHosts.length === 0 ? (
+              <div className="p-10 text-center text-slate-500">No hosts found.</div>
+            ) : (
+              <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none sm:-mx-3 sm:mx-0 px-3 sm:px-0" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50/60 sticky top-0 z-10">
+                    <tr className="text-left text-slate-600 border-b">
+                      <th className="py-3 pl-4 sm:pl-6 pr-4 font-medium">Host</th>
+                      <th className="py-3 pr-4 font-medium">Email</th>
+                      <th className="py-3 pr-4 font-medium">Verified</th>
+                      <th className="py-3 pr-4 font-medium">Active</th>
+                      <th className="py-3 pr-4 font-medium">Joined</th>
+                      <th className="py-3 pr-4 sm:pr-6 font-medium text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedHosts.map((h, idx) => (
+                      <tr
+                        key={h.id}
+                        className={`border-b last:border-0 hover:bg-slate-50/60 transition cursor-pointer ${
+                          idx % 2 === 1 ? "bg-white" : "bg-white"
+                        }`}
+                        onClick={() => {
+                          setSelectedHostId(h.id);
+                          setShowHostModal(true);
+                        }}
+                      >
+                        <td className="py-3 pl-4 sm:pl-6 pr-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-100 shrink-0">
+                              {h.photoURL ? (
+                                <img
+                                  src={h.photoURL}
+                                  alt={h.name}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-gradient-to-br from-slate-200 to-slate-300" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900 truncate">{h.name}</div>
+                              <div className="text-[11px] text-slate-500 font-mono">
+                                {h.id.slice(0, 8)}…
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span className="truncate block max-w-[220px]">{h.email}</span>
+                        </td>
+                        <td className="py-3 pr-4">
+                          {h.isVerified ? (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              title="Verified host"
+                            >
+                              <CheckCircle2 size={12} /> Verified
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-slate-100 text-slate-700 border border-slate-200"
+                              title="Not verified"
+                            >
+                              <XCircle size={12} /> No
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${
+                              h.active
+                                ? "bg-green-50 text-emerald-700 border-emerald-200"
+                                : "bg-red-50 text-red-700 border-red-200"
+                            }`}
+                          >
+                            {h.active ? "Active" : "Inactive"}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-xs">{formatDate(h.createdAt)}</td>
+                        <td className="py-3 pr-4 sm:pr-6 text-right">
+                          <div className="inline-flex gap-2">
+                            <button
+                              className="px-3 py-1.5 rounded-full text-xs border border-slate-200 bg-white hover:bg-slate-50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedHostId(h.id);
+                                setShowHostModal(true);
+                              }}
+                            >
+                              View
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {filteredHosts.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 pt-1">
+              <div className="text-xs sm:text-sm text-slate-600">
+                Showing{" "}
+                <span className="font-medium text-slate-800">
+                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredHosts.length)}
+                </span>{" "}
+                of <span className="font-medium text-slate-800">{filteredHosts.length}</span>
+              </div>
+              <div className="inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage(1)}
+                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+                >
+                  <ChevronsLeft size={14} className="sm:w-4 sm:h-4 flex-shrink-0" /> <span className="hidden sm:inline">First</span>
+                </button>
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+                >
+                  <ChevronLeft size={14} className="sm:w-4 sm:h-4 flex-shrink-0" /> <span className="hidden sm:inline">Prev</span>
+                </button>
+                <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">Page {page} / {totalPages}</span>
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+                >
+                  <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                </button>
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(totalPages)}
+                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
+                >
+                  <span className="hidden sm:inline">Last</span> <ChevronsRight size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Service Fees & Policies Section */}
-          <div className="glass rounded-2xl border border-white/40 bg-white/80 shadow-lg overflow-hidden">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg overflow-hidden">
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
               <div className="flex items-center gap-2">
                 <Settings className="text-indigo-600 w-5 h-5" />
-                <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                   Service Fees & Policies
                 </h3>
               </div>
@@ -1017,217 +1198,20 @@ export default function AdminHostsPage() {
               )}
             </div>
           </div>
-
-          {/* Table */}
-          <div className="glass rounded-2xl border border-white/40 bg-white/80 shadow-lg overflow-hidden">
-            {loading ? (
-              <div className="p-6 space-y-2">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <div key={i} className="h-10 bg-slate-100/80 rounded animate-pulse" />
-                ))}
-              </div>
-            ) : filteredHosts.length === 0 ? (
-              <div className="p-10 text-center text-slate-500">No hosts found.</div>
-            ) : (
-              <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none sm:-mx-3 sm:mx-0 px-3 sm:px-0" style={{ WebkitOverflowScrolling: 'touch' }}>
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50/60 sticky top-0 z-10">
-                    <tr className="text-left text-slate-600 border-b">
-                      <th className="py-3 pl-4 sm:pl-6 pr-4 font-medium">Host</th>
-                      <th className="py-3 pr-4 font-medium">Email</th>
-                      <th className="py-3 pr-4 font-medium">Verified</th>
-                      <th className="py-3 pr-4 font-medium">Active</th>
-                      <th className="py-3 pr-4 font-medium">Joined</th>
-                      <th className="py-3 pr-4 sm:pr-6 font-medium text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedHosts.map((h, idx) => (
-                      <tr
-                        key={h.id}
-                        className={`border-b last:border-0 hover:bg-slate-50/60 transition ${
-                          idx % 2 === 1 ? "bg-white" : "bg-white"
-                        }`}
-                      >
-                        <td className="py-3 pl-4 sm:pl-6 pr-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-100 shrink-0">
-                              {h.photoURL ? (
-                                <img
-                                  src={h.photoURL}
-                                  alt={h.name}
-                                  className="w-full h-full object-cover"
-                                  loading="lazy"
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-gradient-to-br from-slate-200 to-slate-300" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="font-medium text-slate-900 truncate">{h.name}</div>
-                              <div className="text-[11px] text-slate-500 font-mono">
-                                {h.id.slice(0, 8)}…
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span className="truncate block max-w-[220px]">{h.email}</span>
-                        </td>
-                        <td className="py-3 pr-4">
-                          {h.isVerified ? (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              title="Verified host"
-                            >
-                              <CheckCircle2 size={12} /> Verified
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-slate-100 text-slate-700 border border-slate-200"
-                              title="Not verified"
-                            >
-                              <XCircle size={12} /> No
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3 pr-4">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${
-                              h.active
-                                ? "bg-green-50 text-emerald-700 border-emerald-200"
-                                : "bg-red-50 text-red-700 border-red-200"
-                            }`}
-                          >
-                            {h.active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-                        <td className="py-3 pr-4 text-xs">{formatDate(h.createdAt)}</td>
-                        <td className="py-3 pr-4 sm:pr-6 text-right">
-                          <div className="inline-flex gap-2">
-                            <button
-                              className="px-3 py-1.5 rounded-full text-xs border border-slate-200 bg-white hover:bg-slate-50"
-                              onClick={() => window.open(`/hosts/${h.id}`, "_self")}
-                            >
-                              View
-                            </button>
-                            <button
-                              disabled={busyId === h.id}
-                              className={`px-3 py-1.5 rounded-full text-xs border ${
-                                h.active
-                                  ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
-                                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                              } disabled:opacity-60`}
-                              onClick={() => openConfirm(h.id, h.active)}
-                            >
-                              {h.active ? "Deactivate" : "Activate"}
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Pagination */}
-          {filteredHosts.length > 0 && (
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 pt-1">
-              <div className="text-xs sm:text-sm text-slate-600">
-                Showing{" "}
-                <span className="font-medium text-slate-800">
-                  {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredHosts.length)}
-                </span>{" "}
-                of <span className="font-medium text-slate-800">{filteredHosts.length}</span>
-              </div>
-              <div className="inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage(1)}
-                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
-                >
-                  <ChevronsLeft size={14} className="sm:w-4 sm:h-4 flex-shrink-0" /> <span className="hidden sm:inline">First</span>
-                </button>
-                <button
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
-                >
-                  <ChevronLeft size={14} className="sm:w-4 sm:h-4 flex-shrink-0" /> <span className="hidden sm:inline">Prev</span>
-                </button>
-                <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">Page {page} / {totalPages}</span>
-                <button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
-                >
-                  <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                </button>
-                <button
-                  disabled={page >= totalPages}
-                  onClick={() => setPage(totalPages)}
-                  className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 whitespace-nowrap flex-shrink-0"
-                >
-                  <span className="hidden sm:inline">Last</span> <ChevronsRight size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
-                </button>
-              </div>
-            </div>
-          )}
           </div>
         </main>
       </div>
 
-      {/* Confirmation modal (same logic, polished UI) */}
-      {confirmOpen && (
-        <div className="fixed inset-0 z-50">
-          <div className="absolute inset-0 bg-black/50" onClick={closeConfirm} />
-          <div className="absolute inset-0 flex items-end sm:items-center justify-center p-4">
-            <div className="w-full sm:w-[520px] rounded-2xl bg-gradient-to-b from-white to-slate-50 border border-slate-200 shadow-xl">
-              <div className="p-6">
-                <div className="flex items-start gap-4">
-                  <div
-                    className={`shrink-0 grid place-items-center w-12 h-12 rounded-2xl text-white ${
-                      confirmWant
-                        ? "bg-gradient-to-b from-emerald-600 to-emerald-700"
-                        : "bg-gradient-to-b from-red-600 to-red-700"
-                    }`}
-                  >
-                    {confirmWant ? <CheckCircle2 size={20} /> : <XCircle size={20} />}
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-xl font-semibold tracking-tight text-slate-900">
-                      {confirmWant ? "Activate host?" : "Deactivate host?"}
-                    </h3>
-                    <p className="text-sm text-slate-600 mt-1">{confirmText}</p>
-                  </div>
-                </div>
-
-                <div className="mt-6 flex items-center justify-end gap-3">
-                  <button
-                    onClick={closeConfirm}
-                    className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={doToggleActive}
-                    disabled={busyId === confirmHostId}
-                    className={`h-10 px-4 rounded-xl text-white ${
-                      confirmWant
-                        ? "bg-gradient-to-b from-emerald-600 to-emerald-700 hover:brightness-105"
-                        : "bg-gradient-to-b from-red-600 to-red-700 hover:brightness-105"
-                    } disabled:opacity-60`}
-                  >
-                    {confirmWant ? "Activate" : "Deactivate"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Host Profile Modal */}
+      <HostProfileModal
+        open={showHostModal}
+        onClose={() => {
+          setShowHostModal(false);
+          setSelectedHostId(null);
+        }}
+        hostId={selectedHostId}
+        hostData={hosts.find((h) => h.id === selectedHostId)}
+      />
     </div>
   );
 }

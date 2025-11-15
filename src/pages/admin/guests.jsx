@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "./components/AdminSidebar.jsx";
+import TailwindDropdown from "./components/TailwindDropdown.jsx";
+import BookifyLogo from "../../components/bookify-logo.jsx";
 import { database } from "../../config/firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
+import { Menu } from "lucide-react";
 import BookifyIcon from "../../media/favorite.png";
+import { useSidebar } from "../../context/SidebarContext";
 
 const chunk = (arr, size = 10) => {
   const out = [];
@@ -17,14 +21,55 @@ function formatDate(dt) {
   return d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
 }
 
+// Time filter helpers
+const getTimeRange = (filter) => {
+  const now = new Date();
+  switch (filter) {
+    case "today": {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisWeek": {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
+      const start = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), diff + 6, 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisMonth": {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      return { start, end };
+    }
+    case "thisYear": {
+      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      return { start, end };
+    }
+    default:
+      return { start: null, end: null };
+  }
+};
+
+const isInTimeRange = (date, range) => {
+  if (!range.start || !range.end) return true;
+  if (!date) return false;
+  const d = date?.toDate ? date.toDate() : new Date(date);
+  return d >= range.start && d <= range.end;
+};
+
 export default function AdminGuestsPage() {
   const navigate = useNavigate();
+  const { sidebarOpen, setSidebarOpen } = useSidebar() || {};
+  const sideOffset = sidebarOpen === false ? "md:ml-20" : "md:ml-72";
   const [guests, setGuests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
   const [verifiedFilter, setVerifiedFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all"); // all, today, thisWeek, thisMonth, thisYear
 
   useEffect(() => {
     (async () => {
@@ -55,30 +100,57 @@ export default function AdminGuestsPage() {
             return role !== "admin" && role !== "host";
           });
 
+        // Optimize booking queries - use parallel queries for multiple field names
         const uniqueUIDs = [...new Set(rows.map((r) => r.uid).filter(Boolean))];
         const bookingCountMap = {};
+        const totalSpentMap = {};
         if (uniqueUIDs.length > 0) {
-          const guestFields = ["guestUid", "uid", "guestId", "guest.uid", "guest.id"];
           const seenBookingIds = new Set();
+          const bookingQueries = [];
 
+          // Create parallel queries for chunks using multiple field names (uid, userId, guestUid)
           for (const chunk_ids of chunk(uniqueUIDs, 10)) {
-            for (const f of guestFields) {
-              try {
-                const snaps = await getDocs(query(collection(database, "bookings"), where(f, "in", chunk_ids)));
-                snaps.forEach((doc) => {
-                  if (seenBookingIds.has(doc.id)) return;
-                  seenBookingIds.add(doc.id);
-                  const data = doc.data() || {};
-                  const guestUid = data.guestUid || data.uid || data.guestId || (data.guest && (data.guest.uid || data.guest.id)) || null;
-                  if (guestUid) bookingCountMap[guestUid] = (bookingCountMap[guestUid] || 0) + 1;
-                });
-              } catch (e) {
-                console.warn(`bookings query for field ${f} failed:`, e);
-              }
-            }
+            // Query by uid (most common)
+            bookingQueries.push(
+              getDocs(query(collection(database, "bookings"), where("uid", "in", chunk_ids)))
+                .catch(() => ({ docs: [] }))
+            );
+            // Query by userId (also common)
+            bookingQueries.push(
+              getDocs(query(collection(database, "bookings"), where("userId", "in", chunk_ids)))
+                .catch(() => ({ docs: [] }))
+            );
+            // Query by guestUid (less common but some bookings might use it)
+            bookingQueries.push(
+              getDocs(query(collection(database, "bookings"), where("guestUid", "in", chunk_ids)))
+                .catch(() => ({ docs: [] }))
+            );
           }
 
-          rows = rows.map((r) => ({ ...r, bookingCount: bookingCountMap[r.uid] || 0 }));
+          // Execute all queries in parallel
+          const results = await Promise.all(bookingQueries);
+          
+          // Process results - deduplicate by booking ID
+          results.forEach((snap) => {
+            snap.docs.forEach((doc) => {
+              if (seenBookingIds.has(doc.id)) return;
+              seenBookingIds.add(doc.id);
+              const data = doc.data() || {};
+              // Try multiple field names to find the guest UID
+              const guestUid = data.uid || data.userId || data.guestUid || data.guestId || null;
+              if (guestUid) {
+                bookingCountMap[guestUid] = (bookingCountMap[guestUid] || 0) + 1;
+                const totalPrice = Number(data.totalPrice || 0);
+                totalSpentMap[guestUid] = (totalSpentMap[guestUid] || 0) + totalPrice;
+              }
+            });
+          });
+
+          rows = rows.map((r) => ({ 
+            ...r, 
+            bookingCount: bookingCountMap[r.uid] || 0,
+            totalSpent: totalSpentMap[r.uid] || 0
+          }));
         }
 
         setGuests(rows);
@@ -93,8 +165,10 @@ export default function AdminGuestsPage() {
 
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
+    const timeRange = getTimeRange(timeFilter);
     const filtered = guests.filter((g) => {
       if (verifiedFilter !== "all" && g.verified !== (verifiedFilter === "verified")) return false;
+      if (timeFilter !== "all" && !isInTimeRange(g.createdAt, timeRange)) return false;
       if (s) {
         const hay = [g.firstName, g.lastName, g.email, g.id].filter(Boolean).join(" ").toLowerCase();
         return hay.includes(s);
@@ -123,7 +197,7 @@ export default function AdminGuestsPage() {
       const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
       return tb - ta;
     });
-  }, [guests, search, sortKey, sortDir, verifiedFilter]);
+  }, [guests, search, sortKey, sortDir, verifiedFilter, timeFilter]);
 
   const metrics = useMemo(() => {
     const nonAdmin = guests.filter((g) => String(g.role || "").toLowerCase() !== "admin");
@@ -139,7 +213,7 @@ export default function AdminGuestsPage() {
   const exportCSV = () => {
     try {
       const rows = sorted || [];
-      const headers = ["ID", "First Name", "Last Name", "Email", "Bookings", "Verified", "Created", "Last Login"];
+      const headers = ["ID", "First Name", "Last Name", "Email", "Bookings", "Total Spent", "Verified", "Created", "Last Login"];
       const lines = [headers.join(",")];
       for (const r of rows) {
         const cols = [
@@ -148,6 +222,7 @@ export default function AdminGuestsPage() {
           (r.lastName || "").replace(/"/g, '""'),
           r.email || "",
           r.bookingCount || 0,
+          r.totalSpent || 0,
           r.verified ? "Yes" : "No",
           r.createdAt ? new Date(r.createdAt?.toDate?.() || r.createdAt).toISOString() : "",
           r.lastLogin ? new Date(r.lastLogin?.toDate?.() || r.lastLogin).toISOString() : "",
@@ -213,23 +288,26 @@ export default function AdminGuestsPage() {
   <table>
     <thead>
       <tr>
-        <th style="width:12%">ID</th>
-        <th style="width:20%">Name</th>
-        <th style="width:28%">Email</th>
-        <th style="width:10%">Bookings</th>
-        <th style="width:15%">Status</th>
-        <th style="width:15%">Joined</th>
+        <th style="width:10%">ID</th>
+        <th style="width:18%">Name</th>
+        <th style="width:22%">Email</th>
+        <th style="width:8%">Bookings</th>
+        <th style="width:12%">Total Spent</th>
+        <th style="width:12%">Status</th>
+        <th style="width:18%">Joined</th>
       </tr>
     </thead>
     <tbody>
       ${rows.map((g) => {
         const fullName = [g.firstName, g.lastName].filter(Boolean).join(" ") || "—";
         const verifiedText = g.verified ? "Verified" : "Unverified";
+        const totalSpent = `₱${(g.totalSpent || 0).toLocaleString()}`;
         return `<tr>
           <td class="mono">${escapeHtml(String(g.id).slice(0, 8))}…</td>
           <td>${escapeHtml(fullName)}</td>
           <td>${escapeHtml(g.email)}</td>
           <td>${g.bookingCount || 0}</td>
+          <td>${escapeHtml(totalSpent)}</td>
           <td>${verifiedText}</td>
           <td>${formatDate(g.createdAt)}</td>
         </tr>`;
@@ -262,109 +340,131 @@ export default function AdminGuestsPage() {
       : "bg-red-100 text-red-700 ring-1 ring-inset ring-red-200";
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
+    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
       <AdminSidebar />
-      <main className="flex-1 p-6 sm:p-8 max-w-[1400px] mx-auto">
-        <div className="mb-4 sm:mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Guests</h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">View and manage all registered guest accounts.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/admin-dashboard")}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white text-sm font-medium shadow-sm hover:bg-slate-50 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
-                <path d="M11.707 15.707a1 1 0 0 1-1.414 0l-5-5a1 1 0 0 1 0-1.414l5-5A1 1 0 1 1 11.707 5.293L8.414 8.586H17a1 1 0 1 1 0 2H8.414l3.293 3.293a1 1 0 0 1 0 1.414z" />
-              </svg>
-              Back
-            </button>
-          </div>
-        </div>
 
-        <section className="mb-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+      {/* Content area wrapper */}
+      <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ${sideOffset}`}>
+        {/* Top bar — sticky */}
+        <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+                aria-expanded={sidebarOpen}
+              >
+                <Menu size={22} />
+              </button>
+              <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none" onClick={() => navigate("/admin-dashboard")}>
+                <BookifyLogo />
+                <span className="hidden sm:inline font-semibold text-gray-800 text-sm sm:text-base">Guests</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Spacer */}
+        <div className="h-[56px] md:h-[56px]" />
+
+        {/* Main */}
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
+
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total}</p>
-            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">{metrics.verified} verified</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">{metrics.unverified} unverified</span>
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
+            <div className="mt-2 sm:mt-3 flex items-center gap-2 text-xs text-slate-600">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{metrics.verified} verified</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700">{metrics.unverified} unverified</span>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.totalBookings.toLocaleString()}</p>
-            <p className="mt-2 text-xs text-slate-500">Average: {metrics.avgBookingsPerGuest} per guest</p>
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.totalBookings.toLocaleString()}</p>
+            <p className="mt-2 text-xs text-slate-600">Average: {metrics.avgBookingsPerGuest} per guest</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Most Active Guest</p>
-            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
+            <p className="mt-1 text-sm sm:text-base font-semibold text-slate-900 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
               {metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-500">{metrics.mostActive?.bookingCount || 0} bookings</p>
+            <p className="mt-2 text-xs text-slate-600">{metrics.mostActive?.bookingCount || 0} bookings</p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
             <p className="text-xs uppercase tracking-wide text-slate-500">Verification Rate</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
-            <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
+            <div className="mt-2 sm:mt-3 h-2 rounded-full bg-slate-100">
               <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${metrics.total ? (metrics.verified / metrics.total) * 100 : 0}%` }} />
             </div>
           </div>
         </section>
 
-        <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <div className="lg:col-span-1">
-            <div className="relative">
-              <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M9 3.5a5.5 5.5 0 1 0 3.89 9.39l3.61 3.6a1 1 0 0 0 1.42-1.42l-3.6-3.61A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0A4 4 0 0 1 5 9Z" />
-              </svg>
-              <input
-                type="search"
-                placeholder="Search by name, email or ID..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
-              />
+        {/* Controls */}
+        <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6 mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="lg:col-span-1">
+              <div className="relative">
+                <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M9 3.5a5.5 5.5 0 1 0 3.89 9.39l3.61 3.6a1 1 0 0 0 1.42-1.42l-3.6-3.61A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0A4 4 0 0 1 5 9Z" />
+                </svg>
+                <input
+                  type="search"
+                  placeholder="Search by name, email or ID..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500"
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-slate-600 dark:text-slate-400">Filter:</label>
-              <select
-                value={verifiedFilter}
-                onChange={(e) => setVerifiedFilter(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
-              >
-                <option value="all">All Guests</option>
-                <option value="verified">Verified Only</option>
-                <option value="unverified">Unverified Only</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-slate-600 dark:text-slate-400">Sort by:</label>
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
-              >
-                <option value="createdAt">Newest</option>
-                <option value="firstName">First Name</option>
-                <option value="email">Email</option>
-                <option value="bookingCount">Bookings</option>
-              </select>
-              <button
-                title="Toggle sort direction"
-                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
-              >
-                {sortDir === "asc" ? "Asc" : "Desc"}
-              </button>
-            </div>
+            <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
+            <TailwindDropdown
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Time" },
+                { value: "today", label: "Today" },
+                { value: "thisWeek", label: "This Week" },
+                { value: "thisMonth", label: "This Month" },
+                { value: "thisYear", label: "This Year" },
+              ]}
+              className="min-w-[120px]"
+            />
+            <TailwindDropdown
+              value={verifiedFilter}
+              onChange={(e) => setVerifiedFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Guests" },
+                { value: "verified", label: "Verified Only" },
+                { value: "unverified", label: "Unverified Only" },
+              ]}
+              className="min-w-[140px]"
+            />
+            <TailwindDropdown
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value)}
+              options={[
+                { value: "createdAt", label: "Newest" },
+                { value: "firstName", label: "First Name" },
+                { value: "email", label: "Email" },
+                { value: "bookingCount", label: "Bookings" },
+                { value: "totalSpent", label: "Total Spent" },
+              ]}
+              className="min-w-[130px]"
+            />
+            <button
+              title="Toggle sort direction"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              {sortDir === "asc" ? "Asc" : "Desc"}
+            </button>
             <button
               title="Export CSV"
               onClick={exportCSV}
@@ -379,6 +479,7 @@ export default function AdminGuestsPage() {
             >
               Export PDF
             </button>
+          </div>
           </div>
         </div>
 
@@ -406,6 +507,7 @@ export default function AdminGuestsPage() {
                     <th className="py-3 pr-4 font-semibold">Last Name</th>
                     <th className="py-3 pr-4 font-semibold">Email</th>
                     <th className="py-3 pr-4 font-semibold text-right">Bookings</th>
+                    <th className="py-3 pr-4 font-semibold text-right">Total Spent</th>
                     <th className="py-3 pr-4 font-semibold">Status</th>
                     <th className="py-3 pr-4 font-semibold">Joined</th>
                   </tr>
@@ -423,6 +525,7 @@ export default function AdminGuestsPage() {
                       <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.lastName || "—"}</td>
                       <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.email}</td>
                       <td className="py-3 pr-4 text-right text-slate-900 dark:text-slate-100">{g.bookingCount || 0}</td>
+                      <td className="py-3 pr-4 text-right text-slate-900 dark:text-slate-100 font-medium">₱{(g.totalSpent || 0).toLocaleString()}</td>
                       <td className="py-3 pr-4 text-xs">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${verificationBadgeClass(g.verified)}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${g.verified ? "bg-emerald-500" : "bg-red-500"}`} />
@@ -437,7 +540,9 @@ export default function AdminGuestsPage() {
             </div>
           </div>
         )}
-      </main>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

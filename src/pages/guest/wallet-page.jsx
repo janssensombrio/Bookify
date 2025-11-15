@@ -14,6 +14,10 @@ import {
   CheckCircle2,
   Search,
   Shield,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
 } from "lucide-react";
 
 import {
@@ -180,20 +184,21 @@ export default function WalletPage() {
   const [loadingWallet, setLoadingWallet] = useState(true);
 
   // Transactions state
-  const PAGE = 15;
-  const [txs, setTxs] = useState([]);
+  const PAGE_SIZE = 15;
+  const [allTxs, setAllTxs] = useState([]); // Store all loaded transactions
   const [txLoading, setTxLoading] = useState(true);
   const [txError, setTxError] = useState(null);
   const [lastCursor, setLastCursor] = useState(null);
   const [endReached, setEndReached] = useState(false);
   const [filter, setFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const uid = auth.currentUser?.uid;
 
-  // Ensure wallet exists + live balance
+  // Ensure guest wallet exists + live balance
   useEffect(() => {
     if (!uid) return;
-    const wref = doc(database, "wallets", uid);
+    const wref = doc(database, "guestWallets", uid);
 
     (async () => {
       try {
@@ -206,7 +211,7 @@ export default function WalletPage() {
           );
         }
       } catch (e) {
-        console.error("Ensure wallet failed", e);
+        console.error("Ensure guest wallet failed", e);
       }
     })();
 
@@ -219,29 +224,29 @@ export default function WalletPage() {
     return unsub;
   }, [uid]);
 
-  // Load first page of txs
-  const loadTxs = async (more = false) => {
-    if (!uid) return;
+  // Load more transactions from Firestore
+  const loadMoreTxs = async () => {
+    if (!uid || endReached || txLoading) return;
     setTxLoading(true);
     setTxError(null);
     try {
-      const tRef = collection(database, "wallets", uid, "transactions");
-      let qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE));
-      if (more && lastCursor) qy = query(tRef, orderBy("timestamp", "desc"), startAfter(lastCursor), limit(PAGE));
+      const tRef = collection(database, "guestWallets", uid, "transactions");
+      let qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
+      if (lastCursor) {
+        qy = query(tRef, orderBy("timestamp", "desc"), startAfter(lastCursor), limit(PAGE_SIZE));
+      }
 
       const snap = await getDocs(qy);
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (more) {
-        setTxs((prev) => [...prev, ...rows]);
-      } else {
-        setTxs(rows);
+      
+      if (rows.length > 0) {
+        setAllTxs((prev) => [...prev, ...rows]);
+        setLastCursor(snap.docs[snap.docs.length - 1]);
       }
-      if (snap.docs.length < PAGE) {
+      
+      if (snap.docs.length < PAGE_SIZE) {
         setEndReached(true);
-      } else {
-        setEndReached(false);
       }
-      setLastCursor(snap.docs[snap.docs.length - 1] || null);
     } catch (e) {
       console.error(e);
       setTxError(e?.message || "Failed to load transactions");
@@ -250,21 +255,102 @@ export default function WalletPage() {
     }
   };
 
+  // Load initial transactions
   useEffect(() => {
-    if (uid) loadTxs(false);
+    if (uid) {
+      setCurrentPage(1);
+      setLastCursor(null);
+      setEndReached(false);
+      setAllTxs([]);
+      setTxLoading(true);
+      setTxError(null);
+      
+      const loadInitial = async () => {
+        try {
+          const tRef = collection(database, "guestWallets", uid, "transactions");
+          const qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
+          const snap = await getDocs(qy);
+          const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          
+          setAllTxs(rows);
+          if (snap.docs.length > 0) {
+            setLastCursor(snap.docs[snap.docs.length - 1]);
+          }
+          if (snap.docs.length < PAGE_SIZE) {
+            setEndReached(true);
+          }
+        } catch (e) {
+          console.error(e);
+          setTxError(e?.message || "Failed to load transactions");
+        } finally {
+          setTxLoading(false);
+        }
+      };
+      
+      loadInitial();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
+
+  // Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(allTxs.length / PAGE_SIZE));
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const endIdx = startIdx + PAGE_SIZE;
+  const paginatedTxs = allTxs.slice(startIdx, endIdx);
+
+  // Handle page navigation
+  const nextPage = () => {
+    const nextPageNum = currentPage + 1;
+    const neededItems = nextPageNum * PAGE_SIZE;
+    
+    // If we need more data and haven't reached the end, load more
+    if (neededItems > allTxs.length && !endReached && !txLoading) {
+      loadMoreTxs().then(() => {
+        setCurrentPage(nextPageNum);
+      });
+    } else if (nextPageNum <= totalPages) {
+      setCurrentPage(nextPageNum);
+    }
+  };
+
+  const prevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
+
+  const goToPage = (pageNum) => {
+    if (pageNum >= 1 && pageNum <= totalPages) {
+      setCurrentPage(pageNum);
+    }
+  };
 
   // Filtered view (client side search by type/method/note)
   const filtered = useMemo(() => {
     const f = (filter || "").trim().toLowerCase();
-    if (!f) return txs;
-    return txs.filter((t) => {
+    if (!f) return allTxs; // No filter: search all loaded transactions
+    // Has filter: search through all loaded transactions
+    return allTxs.filter((t) => {
       const hay =
         `${t.type || ""} ${t.method || ""} ${t.note || ""} ${t?.counterparty?.email || ""}`.toLowerCase();
       return hay.includes(f);
     });
-  }, [txs, filter]);
+  }, [allTxs, filter]);
+
+  // Pagination for filtered results
+  const filteredTotalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const filteredStartIdx = filter ? (currentPage - 1) * PAGE_SIZE : startIdx;
+  const filteredEndIdx = filter ? filteredStartIdx + PAGE_SIZE : endIdx;
+  const paginatedFiltered = filter 
+    ? filtered.slice(filteredStartIdx, filteredEndIdx)
+    : paginatedTxs;
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    if (filter) {
+      setCurrentPage(1);
+    }
+  }, [filter]);
 
   /* ======================= Actions (Transactions) ======================= */
   const [busy, setBusy] = useState(false);
@@ -288,12 +374,12 @@ export default function WalletPage() {
     setBusy(true);
     try {
       await runTransaction(database, async (tx) => {
-        const wref = doc(database, "wallets", uid);
+        const wref = doc(database, "guestWallets", uid);
         const wSnap = await tx.get(wref);
         const wb = Number(wSnap.data()?.balance || 0);
         const nb = wb + amt;
 
-        const tref = doc(collection(database, "wallets", uid, "transactions"));
+        const tref = doc(collection(database, "guestWallets", uid, "transactions"));
         tx.set(tref, {
           uid, // <-- satisfy rules expecting ownership on transaction doc
           type: "topup",
@@ -345,13 +431,13 @@ export default function WalletPage() {
     setBusy(true);
     try {
       await runTransaction(database, async (tx) => {
-        const wref = doc(database, "wallets", uid);
+        const wref = doc(database, "guestWallets", uid);
         const wSnap = await tx.get(wref);
         const wb = Number(wSnap.data()?.balance || 0);
         if (amt > wb) throw new Error("Insufficient balance.");
         const nb = wb - amt;
 
-        const tref = doc(collection(database, "wallets", uid, "transactions"));
+        const tref = doc(collection(database, "guestWallets", uid, "transactions"));
         tx.set(tref, {
           uid, // <-- satisfy rules
           type: "withdraw",
@@ -412,8 +498,8 @@ export default function WalletPage() {
       if (rid === sid) throw new Error("You cannot transfer to yourself.");
 
       await runTransaction(database, async (tx) => {
-        const sref = doc(database, "wallets", sid);
-        const rref = doc(database, "wallets", rid);
+        const sref = doc(database, "guestWallets", sid);
+        const rref = doc(database, "guestWallets", rid);
 
         const sSnap = await tx.get(sref);
         const rSnap = await tx.get(rref);
@@ -444,7 +530,7 @@ export default function WalletPage() {
         };
 
         // Sender transaction (debit)
-        const sTxRef = doc(collection(database, "wallets", sid, "transactions"));
+        const sTxRef = doc(collection(database, "guestWallets", sid, "transactions"));
         tx.set(sTxRef, {
           uid: sid, // <-- satisfy rules on sender tx doc
           type: "transfer_out",
@@ -460,7 +546,7 @@ export default function WalletPage() {
         });
 
         // Recipient transaction (credit)
-        const rTxRef = doc(collection(database, "wallets", rid, "transactions"));
+        const rTxRef = doc(collection(database, "guestWallets", rid, "transactions"));
         tx.set(rTxRef, {
           uid: rid, // <-- satisfy rules on recipient tx doc
           type: "transfer_in",
@@ -507,7 +593,7 @@ export default function WalletPage() {
     ];
     const lines = [header.join(",")];
 
-    txs.forEach((t) => {
+    allTxs.forEach((t) => {
       const row = [
         JSON.stringify(formatDate(t.timestamp)),
         JSON.stringify(t.type || ""),
@@ -624,7 +710,7 @@ export default function WalletPage() {
                 />
               </div>
               <div className="hidden sm:block text-xs text-slate-500">
-                Showing {filtered.length} of {txs.length}
+                Showing {filtered.length} of {allTxs.length}
               </div>
             </div>
           </div>
@@ -644,9 +730,9 @@ export default function WalletPage() {
               <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 p-3 text-sm inline-flex items-center gap-2">
                 <AlertCircle size={16} /> {txError}
               </div>
-            ) : filtered.length ? (
+            ) : paginatedFiltered.length ? (
               <div className="divide-y divide-slate-100">
-                {filtered.map((t) => (
+                {paginatedFiltered.map((t) => (
                   <TxRow key={t.id} tx={t} />
                 ))}
               </div>
@@ -660,11 +746,77 @@ export default function WalletPage() {
               <p className="text-sm text-slate-600">No transactions yet.</p>
             )}
 
-            <div className="mt-4 flex items-center justify-center">
-              {!endReached && !txLoading ? (
-                <PillButton variant="ghost" label="Load more" onClick={() => loadTxs(true)} />
-              ) : null}
-            </div>
+            {/* Pagination */}
+            {allTxs.length > 0 && (
+              <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
+                <div className="text-xs sm:text-sm text-slate-600">
+                  {filter ? (
+                    <>
+                      Showing{" "}
+                      <span className="font-medium text-slate-800">
+                        {filteredStartIdx + 1}–{Math.min(filteredEndIdx, filtered.length)}
+                      </span>{" "}
+                      of <span className="font-medium text-slate-800">{filtered.length}</span> results
+                      {filtered.length < allTxs.length && (
+                        <> (from {allTxs.length} loaded)</>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Showing{" "}
+                      <span className="font-medium text-slate-800">
+                        {startIdx + 1}–{Math.min(endIdx, allTxs.length)}
+                      </span>{" "}
+                      of <span className="font-medium text-slate-800">{allTxs.length}</span> loaded
+                      {!endReached && " (more available)"}
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  {filter ? (
+                    <>
+                      <button
+                        disabled={currentPage <= 1}
+                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                        className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        <ChevronLeft size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Prev</span>
+                      </button>
+                      <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">
+                        Page {currentPage} / {filteredTotalPages}
+                      </span>
+                      <button
+                        disabled={currentPage >= filteredTotalPages}
+                        onClick={() => setCurrentPage((p) => Math.min(filteredTotalPages, p + 1))}
+                        className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        disabled={currentPage <= 1}
+                        onClick={prevPage}
+                        className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        <ChevronLeft size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Prev</span>
+                      </button>
+                      <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">
+                        Page {currentPage} / {totalPages}
+                      </span>
+                      <button
+                        disabled={currentPage >= totalPages && endReached}
+                        onClick={nextPage}
+                        className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                      >
+                        <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </main>

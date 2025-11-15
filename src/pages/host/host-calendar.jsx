@@ -154,12 +154,22 @@ export default function HostCalendar() {
     if (!user) return;
     (async () => {
       try {
-        const q = query(
-          collection(database, "listings"),
-          where("uid", "==", user.uid)
-        );
-        const snap = await getDocs(q);
-        const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
+        // Query listings by multiple fields to catch all host's listings
+        const q1 = query(collection(database, "listings"), where("uid", "==", user.uid));
+        const q2 = query(collection(database, "listings"), where("hostId", "==", user.uid));
+        const q3 = query(collection(database, "listings"), where("ownerId", "==", user.uid));
+        
+        const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+        
+        // Merge and deduplicate by listing ID
+        const listingsMap = new Map();
+        [snap1, snap2, snap3].forEach((snap) => {
+          snap.docs.forEach((d) => {
+            listingsMap.set(d.id, { id: d.id, ...(d.data() || {}) });
+          });
+        });
+        
+        const rows = Array.from(listingsMap.values());
         setListings(
           rows.map((r) => ({
             id: r.id,
@@ -177,114 +187,205 @@ export default function HostCalendar() {
     const user = auth.currentUser;
     if (!user) return;
     setLoading(true);
-    const q = query(
-      collection(database, "bookings"),
-      where("hostId", "==", user.uid)
-    );
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() || {}) }));
+    
+    // Store unsubscribe functions
+    const unsubs = [];
+    let cancelled = false;
+    
+    // First, get all listing IDs owned by this host
+    (async () => {
+      try {
+        // Query listings by multiple fields
+        const q1 = query(collection(database, "listings"), where("uid", "==", user.uid));
+        const q2 = query(collection(database, "listings"), where("hostId", "==", user.uid));
+        const q3 = query(collection(database, "listings"), where("ownerId", "==", user.uid));
+        
+        const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
+        
+        if (cancelled) return;
+        
+        const listingIdsSet = new Set();
+        [snap1, snap2, snap3].forEach((snap) => {
+          snap.docs.forEach((d) => listingIdsSet.add(d.id));
+        });
+        const listingIds = Array.from(listingIdsSet);
+        
+        // Query bookings by hostId, ownerId, and listingId
+        const bookingsMap = new Map();
+        
+        const processBookings = () => {
+          if (cancelled) return;
+          const rows = Array.from(bookingsMap.values());
 
-        // normalize into ranged "events"
-        const normalized = rows
-          .map((b) => {
-            const rawCategory =
-              (b.listingCategory || b.category || "").toLowerCase();
-            const paymentStatus = (b.paymentStatus || "paid").toLowerCase();
-            const totalPrice =
-              typeof b.totalPrice === "number" ? b.totalPrice : undefined;
-            const createdAt = toDate(b.createdAt);
+          // normalize into ranged "events"
+          const normalized = rows
+            .map((b) => {
+              const rawCategory =
+                (b.listingCategory || b.category || "").toLowerCase();
+              const paymentStatus = (b.paymentStatus || "paid").toLowerCase();
+              const totalPrice =
+                typeof b.totalPrice === "number" ? b.totalPrice : undefined;
+              const createdAt = toDate(b.createdAt);
 
-            // Homes: date range [checkIn, checkOut)
-            if (b.checkIn && b.checkOut) {
-              const start = toDate(b.checkIn);
-              const end = toDate(b.checkOut);
-              if (!start || !end) return null;
-              return {
-                id: b.id,
-                listingId: b.listingId || b.listingRef?.id || "",
-                listingTitle: b.listingTitle || "Untitled",
-                guestName: b.guestName || b.guestEmail || "Guest",
-                status: (b.status || "booked").toLowerCase(),
-                channel: b.channel || b.source || "direct",
-                category: rawCategory || "homes",
-                start,
-                end, // exclusive
-                nights: Math.max(0, Math.round((end - start) / 86400000)),
-                adults:
-                  Number.isFinite(+b.adults) && +b.adults >= 0
-                    ? +b.adults
+              // Homes: date range [checkIn, checkOut)
+              if (b.checkIn && b.checkOut) {
+                const start = toDate(b.checkIn);
+                const checkoutDate = toDate(b.checkOut);
+                if (!start || !checkoutDate) return null;
+                // Store checkout date as exclusive (day after checkout) for calendar display
+                // The checkout date in Firestore is the actual checkout date, so we add 1 day to make it exclusive
+                const end = addDays(checkoutDate, 1);
+                return {
+                  id: b.id,
+                  listingId: b.listingId || b.listingRef?.id || "",
+                  listingTitle: b.listingTitle || "Untitled",
+                  guestName: b.guestName || b.guestEmail || "Guest",
+                  status: (b.status || "booked").toLowerCase(),
+                  channel: b.channel || b.source || "direct",
+                  category: rawCategory || "homes",
+                  start,
+                  end, // exclusive (day after checkout)
+                  checkoutDate, // actual checkout date for display
+                  nights: Math.max(0, Math.round((checkoutDate - start) / 86400000)),
+                  adults:
+                    Number.isFinite(+b.adults) && +b.adults >= 0
+                      ? +b.adults
+                      : undefined,
+                  children:
+                    Number.isFinite(+b.children) && +b.children >= 0
+                      ? +b.children
+                      : undefined,
+                  infants:
+                    Number.isFinite(+b.infants) && +b.infants >= 0
+                      ? +b.infants
+                      : undefined,
+                  address: b.listingAddress || b.address || "",
+                  // new:
+                  paymentStatus,
+                  totalPrice,
+                  createdAt,
+                };
+              }
+
+              // Experiences / Services: single-day schedule
+              if (b.schedule?.date) {
+                const start =
+                  toDate(b.schedule.date) ||
+                  new Date(`${b.schedule.date}T00:00:00`);
+                const end = addDays(start, 1);
+                const category = ["experiences", "experience"].includes(
+                  rawCategory
+                )
+                  ? "experiences"
+                  : ["services", "service"].includes(rawCategory)
+                  ? "services"
+                  : "experiences";
+                return {
+                  id: b.id,
+                  listingId: b.listingId || b.listingRef?.id || "",
+                  listingTitle: b.listingTitle || "Untitled",
+                  guestName: b.guestName || b.guestEmail || "Guest",
+                  status: (b.status || "booked").toLowerCase(),
+                  channel: b.channel || b.source || "direct",
+                  category,
+                  start,
+                  end, // one day
+                  nights: 1,
+                  scheduleDate: b.schedule?.date || null,
+                  scheduleTime: b.schedule?.time || b.schedule?.startTime || null,
+                  quantity: Number.isFinite(+b.quantity)
+                    ? +b.quantity
+                    : Number.isFinite(+b.participants)
+                    ? +b.participants
                     : undefined,
-                children:
-                  Number.isFinite(+b.children) && +b.children >= 0
-                    ? +b.children
-                    : undefined,
-                infants:
-                  Number.isFinite(+b.infants) && +b.infants >= 0
-                    ? +b.infants
-                    : undefined,
-                address: b.listingAddress || b.address || "",
-                // new:
-                paymentStatus,
-                totalPrice,
-                createdAt,
-              };
-            }
+                  duration: b.duration || b.experienceDuration || null,
+                  address: b.listingAddress || b.address || b.location || "",
+                  // new:
+                  paymentStatus,
+                  totalPrice,
+                  createdAt,
+                };
+              }
 
-            // Experiences / Services: single-day schedule
-            if (b.schedule?.date) {
-              const start =
-                toDate(b.schedule.date) ||
-                new Date(`${b.schedule.date}T00:00:00`);
-              const end = addDays(start, 1);
-              const category = ["experiences", "experience"].includes(
-                rawCategory
-              )
-                ? "experiences"
-                : ["services", "service"].includes(rawCategory)
-                ? "services"
-                : "experiences";
-              return {
-                id: b.id,
-                listingId: b.listingId || b.listingRef?.id || "",
-                listingTitle: b.listingTitle || "Untitled",
-                guestName: b.guestName || b.guestEmail || "Guest",
-                status: (b.status || "booked").toLowerCase(),
-                channel: b.channel || b.source || "direct",
-                category,
-                start,
-                end, // one day
-                nights: 1,
-                scheduleDate: b.schedule?.date || null,
-                scheduleTime: b.schedule?.time || b.schedule?.startTime || null,
-                quantity: Number.isFinite(+b.quantity)
-                  ? +b.quantity
-                  : Number.isFinite(+b.participants)
-                  ? +b.participants
-                  : undefined,
-                duration: b.duration || b.experienceDuration || null,
-                address: b.listingAddress || b.address || b.location || "",
-                // new:
-                paymentStatus,
-                totalPrice,
-                createdAt,
-              };
-            }
+              return null;
+            })
+            .filter(Boolean);
 
-            return null;
-          })
-          .filter(Boolean);
-
-        setBookings(normalized);
-        setLoading(false);
-      },
-      (err) => {
-        console.error("Failed to load bookings:", err);
+          setBookings(normalized);
+          setLoading(false);
+        };
+        
+        // Query by hostId
+        const qHost = query(collection(database, "bookings"), where("hostId", "==", user.uid));
+        const unsubHost = onSnapshot(qHost, (snap) => {
+          if (cancelled) return;
+          snap.docs.forEach((d) => {
+            const data = { id: d.id, ...(d.data() || {}) };
+            bookingsMap.set(d.id, data);
+          });
+          processBookings();
+        }, (err) => {
+          if (cancelled) return;
+          console.error("Failed to load bookings (hostId):", err);
+          setLoading(false);
+        });
+        unsubs.push(unsubHost);
+        
+        // Query by ownerId
+        const qOwner = query(collection(database, "bookings"), where("ownerId", "==", user.uid));
+        const unsubOwner = onSnapshot(qOwner, (snap) => {
+          if (cancelled) return;
+          snap.docs.forEach((d) => {
+            const data = { id: d.id, ...(d.data() || {}) };
+            bookingsMap.set(d.id, data);
+          });
+          processBookings();
+        }, (err) => {
+          if (cancelled) return;
+          console.error("Failed to load bookings (ownerId):", err);
+          setLoading(false);
+        });
+        unsubs.push(unsubOwner);
+        
+        // Query by listingId (chunked if needed)
+        if (listingIds.length > 0) {
+          // Firestore 'in' clause limit is 10
+          const chunks = [];
+          for (let i = 0; i < listingIds.length; i += 10) {
+            chunks.push(listingIds.slice(i, i + 10));
+          }
+          
+          chunks.forEach((chunk) => {
+            const qListing = query(collection(database, "bookings"), where("listingId", "in", chunk));
+            const unsub = onSnapshot(qListing, (snap) => {
+              if (cancelled) return;
+              snap.docs.forEach((d) => {
+                const data = { id: d.id, ...(d.data() || {}) };
+                // Only include if the listing belongs to this host
+                if (listingIdsSet.has(data.listingId)) {
+                  bookingsMap.set(d.id, data);
+                }
+              });
+              processBookings();
+            }, (err) => {
+              if (cancelled) return;
+              console.error("Failed to load bookings (listingId):", err);
+            });
+            unsubs.push(unsub);
+          });
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.error("Failed to setup bookings listeners:", e);
         setLoading(false);
       }
-    );
-    return () => unsub();
+    })();
+    
+    // Return cleanup function
+    return () => {
+      cancelled = true;
+      unsubs.forEach((unsub) => unsub());
+    };
   }, []);
 
   // filter by listing
@@ -332,9 +433,16 @@ export default function HostCalendar() {
   });
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50 p-1 sm:p-1 lg:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50 pb-1 sm:pb-1 lg:pb-8 px-1 sm:px-1 lg:px-8">
       {/* Main Calendar Container */}
       <div className="max-w-7xl mx-auto">
+        {/* Page Title - Outside the card */}
+        <div className="mb-6">
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Calendar</h2>
+          <p className="text-sm text-slate-600 mt-1">Manage your property bookings and availability</p>
+        </div>
+
+        {/* Calendar Card */}
         <div className={[
           "rounded-[2.5rem] p-6 sm:p-8 lg:p-10",
           // Modern 3D glass effect with enhanced depth
@@ -428,10 +536,9 @@ export default function HostCalendar() {
                 <CalendarDays className="w-6 h-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
+                <h3 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                   {monthLabel}
-                </h1>
-                <p className="text-sm text-gray-600 mt-1">Manage your property bookings and availability</p>
+                </h3>
               </div>
             </div>
 
@@ -642,7 +749,12 @@ export default function HostCalendar() {
                           const cat = (ev.category || "").toLowerCase();
                           const styles = stylesForEvent(ev.category, ev.status);
                           const when = ev.start.toLocaleDateString();
-                          const lastNight = addDays(ev.end, -1).toLocaleDateString();
+                          // Use checkoutDate if available (actual checkout date), otherwise calculate from exclusive end
+                          const checkoutDate = cat === "homes" 
+                            ? (ev.checkoutDate 
+                                ? ev.checkoutDate.toLocaleDateString()
+                                : addDays(ev.end, -1).toLocaleDateString())
+                            : ev.start.toLocaleDateString();
                           const bookedOn = ev.createdAt
                             ? ev.createdAt.toLocaleString()
                             : "—";
@@ -714,7 +826,7 @@ export default function HostCalendar() {
                                         </div>
                                         <div>
                                           <p className="text-xs text-gray-500 font-medium">Check-out</p>
-                                          <p className="text-sm font-semibold text-gray-900">{lastNight}</p>
+                                          <p className="text-sm font-semibold text-gray-900">{checkoutDate}</p>
                                         </div>
                                       </div>
                                     </div>

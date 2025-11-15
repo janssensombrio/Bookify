@@ -539,6 +539,7 @@ export default function PromoCouponsModal({ open, onClose }) {
 
   /* ------------------------ Lists & UI ------------------------ */
   const [statusFilter, setStatusFilter] = useState("all"); // 'all'|'active'|'paused'
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const statusLabel = statusFilter === "all" ? "All" : statusFilter === "active" ? "Active" : "Paused";
 
   const visibleCoupons = useMemo(() => {
@@ -607,27 +608,37 @@ export default function PromoCouponsModal({ open, onClose }) {
 
             {/* Status filter */}
             <div className="relative">
-              <details className="group">
-                <summary className="list-none">
-                  <button className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow hover:bg-slate-50">
-                    Status: {statusLabel}
-                    <ChevronDown className="w-4 h-4" />
-                  </button>
-                </summary>
-                <div className="absolute right-0 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                  {["all", "active", "paused"].map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => setStatusFilter(v)}
-                      className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-slate-50 ${
-                        statusFilter === v ? "bg-slate-50" : ""
-                      }`}
-                    >
-                      {v === "all" ? "All" : v === "active" ? "Active" : "Paused"}
-                    </button>
-                  ))}
-                </div>
-              </details>
+              <button
+                onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow hover:bg-slate-50"
+              >
+                Status: {statusLabel}
+                <ChevronDown className={`w-4 h-4 transition-transform ${statusDropdownOpen ? "rotate-180" : ""}`} />
+              </button>
+              {statusDropdownOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-[112]"
+                    onClick={() => setStatusDropdownOpen(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-40 rounded-xl border border-slate-200 bg-white p-1 shadow-lg z-[113]">
+                    {["all", "active", "paused"].map((v) => (
+                      <button
+                        key={v}
+                        onClick={() => {
+                          setStatusFilter(v);
+                          setStatusDropdownOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-slate-50 transition-colors ${
+                          statusFilter === v ? "bg-blue-50 text-blue-700 font-medium" : "text-slate-700"
+                        }`}
+                      >
+                        {v === "all" ? "All" : v === "active" ? "Active" : "Paused"}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -790,6 +801,17 @@ export default function PromoCouponsModal({ open, onClose }) {
                       </div>
                     </Field>
                   </div>
+
+                  <Field label="Status">
+                    <select
+                      value={couponForm.status}
+                      onChange={(e) => setCouponForm((p) => ({ ...p, status: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    >
+                      <option value="active">Active</option>
+                      <option value="paused">Paused</option>
+                    </select>
+                  </Field>
 
                   <div className="flex items-center gap-3">
                     <button
@@ -1023,6 +1045,17 @@ export default function PromoCouponsModal({ open, onClose }) {
                       </div>
                     </Field>
                   </div>
+
+                  <Field label="Status">
+                    <select
+                      value={promoForm.status}
+                      onChange={(e) => setPromoForm((p) => ({ ...p, status: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    >
+                      <option value="active">Active</option>
+                      <option value="paused">Paused</option>
+                    </select>
+                  </Field>
 
                   <div className="flex items-center gap-3">
                     <button

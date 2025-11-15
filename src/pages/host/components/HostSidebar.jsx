@@ -1,19 +1,21 @@
-// src/pages/.../components/sidebar.jsx
+// src/pages/host/components/HostSidebar.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
 import {
   Menu,
   X,
-  Home,
-  Compass,
-  Calendar,
-  Heart,
-  Wallet,
-  LogOut,
-  User,
+  CalendarDays,
   MessageSquareText,
+  List,
+  Calendar,
+  User,
+  LogOut,
+  Compass,
+  Wallet,
 } from "lucide-react";
+
 import { auth } from "../../../config/firebase";
+import { useSidebar } from "../../../context/SidebarContext";
+import LogoutConfirmationModal from "./logout-confirmation-modal";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -23,8 +25,6 @@ import {
   where,
 } from "firebase/firestore";
 import { database } from "../../../config/firebase";
-import { useSidebar } from "../../../context/SidebarContext";
-import LogoutConfirmationModal from "../../host/components/logout-confirmation-modal";
 
 const tsToMs = (ts) => {
   if (!ts) return 0;
@@ -33,9 +33,7 @@ const tsToMs = (ts) => {
   return sec * 1000 + Math.floor(ns / 1e6);
 };
 
-const Sidebar = () => {
-  const navigate = useNavigate();
-  const location = useLocation();
+const HostSidebar = ({ setActivePage, activePage, navigate }) => {
   const { sidebarOpen, setSidebarOpen } = useSidebar();
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
 
@@ -46,8 +44,22 @@ const Sidebar = () => {
     return () => unsub();
   }, []);
 
-  const handleNavClick = (path) => {
-    navigate(path);
+  // Navigation items
+  const navItems = [
+    { icon: CalendarDays, label: "Bookings", page: "bookings" },
+    { icon: MessageSquareText, label: "Messages", page: "messages" },
+    { icon: List, label: "Listings", page: "listings" },
+    { icon: Calendar, label: "Calendar", page: "calendar" },
+    { icon: Wallet, label: "Wallet", page: "wallet" },
+    { icon: User, label: "Profile", page: "profile" },
+  ];
+
+  const messagesIndex = navItems.findIndex((item) => item.page === "messages");
+
+  const handleNavClick = (page) => {
+    if (setActivePage) {
+      setActivePage(page);
+    }
     // close drawer on mobile
     const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
     if (isMobile) setSidebarOpen(false);
@@ -66,23 +78,25 @@ const Sidebar = () => {
     try {
       await auth.signOut();
       localStorage.removeItem("isHost");
-      navigate("/");
+      if (navigate) {
+        navigate("/");
+      } else {
+        window.location.href = "/";
+      }
     } catch (err) {
-      console.error("Logout error:", err.message);
+      console.error("Logout error:", err?.message);
       alert("Failed to logout. Try again.");
     }
   };
 
-  const onMessagesPage = location.pathname.startsWith("/guest-messages");
-
-  // ---------------- Unread indicator data ----------------
+  // ---------- Unread indicator sources ----------
   const [lastSeenAtMs, setLastSeenAtMs] = useState(0);
   const [lastSeenLoaded, setLastSeenLoaded] = useState(false);
 
   const [latestInboundMs, setLatestInboundMs] = useState(0);
   const [inboundLoaded, setInboundLoaded] = useState(false);
 
-  // Watch user's lastSeenAt from users/{uid}.messagesLastSeenAt
+  // Watch users/{uid}.messagesLastSeenAt
   useEffect(() => {
     setLastSeenLoaded(false);
     setLastSeenAtMs(0);
@@ -106,7 +120,7 @@ const Sidebar = () => {
     return () => unsub();
   }, [currentUid]);
 
-  // Watch inbound messages (receiverId == uid) and compute latest inbound ms
+  // Watch inbound messages (receiverId == uid) → compute latest inbound ms
   useEffect(() => {
     setInboundLoaded(false);
     setLatestInboundMs(0);
@@ -136,23 +150,25 @@ const Sidebar = () => {
     return () => unsub();
   }, [currentUid]);
 
-  // ---------------- Optimistic "seen" grace window (anti-flicker) ----------------
-  const optimisticSeenRef = useRef(0);                  // max seen ms we trust locally
-  const [optimisticUntil, setOptimisticUntil] = useState(0); // epoch ms until trust ends
+  // ---------- Anti-flicker optimistic "seen" window ----------
+  const optimisticSeenRef = useRef(0);
+  const [optimisticUntil, setOptimisticUntil] = useState(0);
   const prevOnMessagesRef = useRef(false);
 
-  // Listen for optimistic pings from Messages page
+  // Listen to optimistic pings from MessagesPage
   useEffect(() => {
     const handler = (e) => {
       const ms = e?.detail?.ms || Date.now();
       optimisticSeenRef.current = Math.max(optimisticSeenRef.current, ms);
-      setOptimisticUntil(Date.now() + 2500); // 2.5s grace
+      setOptimisticUntil(Date.now() + 2500); // 2.5s grace window
     };
     window.addEventListener("messages:optimistic-seen", handler);
     return () => window.removeEventListener("messages:optimistic-seen", handler);
   }, []);
 
-  // When leaving the Messages page, begin short optimistic window
+  const onMessagesPage = activePage === "messages";
+
+  // When leaving the Messages page, start a short optimistic window
   useEffect(() => {
     const wasOn = prevOnMessagesRef.current;
     if (wasOn && !onMessagesPage) {
@@ -165,7 +181,7 @@ const Sidebar = () => {
     prevOnMessagesRef.current = onMessagesPage;
   }, [onMessagesPage, latestInboundMs]);
 
-  // Clear the optimistic window after TTL
+  // Clear optimistic window after TTL
   useEffect(() => {
     if (!optimisticUntil) return;
     const delay = Math.max(0, optimisticUntil - Date.now());
@@ -229,22 +245,11 @@ const Sidebar = () => {
     effectiveLastSeenMs,
   ]);
 
-  // ✅ Profile is now a normal nav item
-  const navItems = [
-    { icon: Home, label: "Dashboard", path: "/dashboard" },
-    { icon: Compass, label: "Explore", path: "/explore" },
-    { icon: Calendar, label: "Bookings", path: "/bookings" },
-    { icon: MessageSquareText, label: "Messages", path: "/guest-messages" },
-    { icon: Heart, label: "Favorites", path: "/favorites" },
-    { icon: User, label: "Profile", path: "/profile" }, // ← added
-    { icon: Wallet, label: "E-Wallet", path: "/wallet" },
-  ];
-
   return (
     <>
       <aside
-        id="app-sidebar"
-        aria-label="Sidebar"
+        id="host-sidebar"
+        aria-label="Host Sidebar"
         className={`
           fixed inset-y-0 left-0 z-50
           flex flex-col overflow-hidden
@@ -258,14 +263,14 @@ const Sidebar = () => {
           ${sidebarOpen ? "md:w-72" : "md:w-20"}
         `}
       >
-        {/* Top bar with toggle (works for mobile + desktop) */}
+        {/* Top bar with toggle */}
         <div className="flex justify-end p-3 border-b border-gray-200">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
             aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             aria-expanded={sidebarOpen}
-            aria-controls="app-sidebar"
+            aria-controls="host-sidebar"
           >
             {sidebarOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
@@ -274,13 +279,14 @@ const Sidebar = () => {
         {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent">
           {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
+            const isActive = activePage === item.page;
+            const isMessages = item.page === "messages";
 
             const iconNode = (
               <div className="relative inline-flex">
                 <item.icon size={20} />
                 {/* Red dot for Messages only */}
-                {item.path === "/guest-messages" && hasUnread && (
+                {isMessages && hasUnread && (
                   <span
                     aria-hidden="true"
                     className="absolute -top-1 -right-1 inline-block w-2.5 h-2.5 rounded-full bg-red-500 ring-2 ring-white"
@@ -291,12 +297,12 @@ const Sidebar = () => {
 
             return (
               <button
-                key={item.path}
-                onClick={() => handleNavClick(item.path)}
+                key={item.page}
+                onClick={() => handleNavClick(item.page)}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200 ${
                   isActive
                     ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30"
-                    : "text-foreground hover:bg-gray-100"
+                    : "text-slate-900 hover:bg-gray-100"
                 }`}
                 title={item.label}
                 aria-current={isActive ? "page" : undefined}
@@ -308,11 +314,24 @@ const Sidebar = () => {
           })}
         </nav>
 
-        {/* Logout */}
-        <div className="p-4 border-t border-gray-200">
+        {/* Bottom actions */}
+        <div className="p-4 border-t border-gray-200 space-y-2">
+          {/* Switch to Travelling */}
+          {navigate && (
+            <button
+              onClick={() => navigate("/explore")}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-900 hover:bg-gray-100 transition-all duration-200"
+              title="Switch to Travelling"
+            >
+              <Compass size={20} />
+              {sidebarOpen && <span className="font-medium">Switch to Travelling</span>}
+            </button>
+          )}
+          
+          {/* Logout */}
           <button
             onClick={() => setIsLogoutModalOpen(true)}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-foreground hover:bg-gray-100 transition-all duration-200"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-900 hover:bg-gray-100 transition-all duration-200"
           >
             <LogOut size={20} />
             {sidebarOpen && <span className="font-medium">Log Out</span>}
@@ -338,4 +357,5 @@ const Sidebar = () => {
   );
 };
 
-export default Sidebar;
+export default HostSidebar;
+

@@ -9,7 +9,6 @@ import {
   Building2,
   CalendarDays,
   Coins,
-  TrendingUp,
   Search,
   Download,
   AlertTriangle,
@@ -28,6 +27,7 @@ import { auth, database } from "../../config/firebase";
 import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from "firebase/firestore";
 
 import AdminSidebar from "./components/AdminSidebar.jsx";
+import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { useSidebar } from "../../context/SidebarContext";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 
@@ -717,24 +717,12 @@ export default function AdminDashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <select
-                className="h-9 sm:h-11 rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 px-2 sm:px-3 text-xs sm:text-sm shadow-sm transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 min-w-[100px] sm:min-w-[150px] max-w-full"
+              <TailwindDropdown
                 value={rangeKey}
                 onChange={(e) => setRangeKey(e.target.value)}
-              >
-                {FILTERS.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                onClick={() => navigate("/explore")}
-                className="inline-flex h-9 sm:h-11 items-center justify-center gap-1.5 sm:gap-2 rounded-xl sm:rounded-2xl bg-blue-600 px-3 sm:px-4 text-xs sm:text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 whitespace-nowrap flex-shrink-0"
-              >
-                <TrendingUp size={14} className="sm:w-[17px] sm:h-[17px] flex-shrink-0" /> <span className="hidden sm:inline">Marketplace</span>
-              </button>
+                options={FILTERS.map((f) => ({ value: f, label: f }))}
+                className="min-w-[120px] sm:min-w-[150px]"
+              />
             </div>
           </div>
         </header>
@@ -746,20 +734,20 @@ export default function AdminDashboard() {
         <main className="flex-1 flex flex-col min-w-0">
         <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
           {/* Welcome / hero */}
-          <div className="glass rounded-4xl p-3 sm:p-4 bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-600/10 border-white/30 shadow-lg hover:shadow-xl transition-all">
+          <div className="rounded-3xl p-3 sm:p-4 bg-gradient-to-r from-blue-500/10 via-indigo-500/10 to-blue-600/10 border border-white/30 backdrop-blur-sm bg-white/80 shadow-lg hover:shadow-xl transition-all">
             <div className="flex flex-col gap-4 sm:gap-6 p-4 sm:p-6 lg:p-8 md:flex-row md:items-center md:justify-between">
               <div className="space-y-3 sm:space-y-4">
                 <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-2.5 sm:px-3 py-1 text-xs font-semibold text-blue-700">
                   <Sparkles size={12} className="sm:w-[14px] sm:h-[14px]" /> <span className="hidden xs:inline">Overview{labelSuffix}</span><span className="xs:hidden">Overview</span>
                 </div>
                 <div className="space-y-2 sm:space-y-3">
-                  <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-foreground mb-1 sm:mb-2">
+                  <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-slate-900 mb-1 sm:mb-2">
                     {loading ? "Loading…" : `Welcome back, ${adminName}! 👋`}
                   </h2>
                   {errMsg ? (
                     <p className="text-xs sm:text-sm text-amber-700">{errMsg}</p>
                   ) : (
-                    <p className="text-muted-foreground text-sm sm:text-base lg:text-lg">
+                    <p className="text-slate-600 text-sm sm:text-base lg:text-lg">
                       Keep an eye on bookings, revenue, and host performance with a refreshed dashboard experience.
                     </p>
                   )}
@@ -875,17 +863,17 @@ export default function AdminDashboard() {
           {/* Ratings highlight sections */}
           <section className="grid grid-cols-1 gap-6">
             {/* Top-Rated */}
-            <div className="glass rounded-3xl border border-white/40 bg-white/80 shadow-lg">
+            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
                 <div className="flex items-center gap-2 sm:gap-3">
                   <div className="grid h-9 w-9 sm:h-11 sm:w-11 place-items-center rounded-lg sm:rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-sm flex-shrink-0">
                     <Star size={16} className="sm:w-[18px] sm:h-[18px]" />
                   </div>
                   <div>
-                    <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                    <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                       Top-Rated Listings
                     </h3>
-                    <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">
+                    <p className="text-[10px] sm:text-xs text-slate-600 hidden sm:block">
                       Avg ≥ 4.5 with ≥ 5 reviews (fallback shows highest-rated)
                     </p>
                   </div>
@@ -943,17 +931,17 @@ export default function AdminDashboard() {
             </div>
 
             {/* Needs Love */}
-            <div className="glass rounded-3xl border border-white/40 bg-white/80 shadow-lg">
+            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
                 <div className="flex items-center gap-2 sm:gap-3">
                   <div className="grid h-9 w-9 sm:h-11 sm:w-11 place-items-center rounded-lg sm:rounded-xl bg-gradient-to-br from-slate-300 to-slate-500 text-white shadow-sm flex-shrink-0">
                     <StarHalf size={16} className="sm:w-[18px] sm:h-[18px]" />
                   </div>
                   <div>
-                    <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                    <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                       Needs Love
                     </h3>
-                    <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">
+                    <p className="text-[10px] sm:text-xs text-slate-600 hidden sm:block">
                       Listings with little to no ratings
                     </p>
                   </div>
@@ -1014,9 +1002,9 @@ export default function AdminDashboard() {
           {/* Data: Bookings + Hosts TABLE (replaces Hosts cards) */}
           <section className="grid grid-cols-1 xl:grid-cols-2 gap-4 sm:gap-6">
             {/* Bookings table */}
-            <div className="glass rounded-2xl sm:rounded-3xl border border-white/40 bg-white/80 shadow-lg">
+            <div className="rounded-2xl sm:rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
-                <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                   Recent Bookings
                 </h3>
                 <div className="flex items-center gap-2 text-xs sm:text-sm self-end sm:self-auto">
@@ -1091,11 +1079,11 @@ export default function AdminDashboard() {
             </div>
 
             {/* Hosts TABLE */}
-            <div className="glass rounded-2xl sm:rounded-3xl border border-white/40 bg-white/80 shadow-lg">
+            <div className="rounded-2xl sm:rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 border-b border-slate-200/70 px-4 sm:px-6 py-4 sm:py-5">
                 <div className="flex items-center gap-2">
                   <Building2 className="text-violet-600 w-[18px] h-[18px] sm:w-5 sm:h-5" />
-                  <h3 className="text-base sm:text-lg font-semibold text-foreground">
+                  <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                     Hosts
                   </h3>
                 </div>
@@ -1185,15 +1173,15 @@ export default function AdminDashboard() {
 /* ---------------- components ---------------- */
 function KPI({ loading, icon: Icon, label, value, color }) {
   return (
-    <div className="glass rounded-2xl sm:rounded-3xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-all group">
+    <div className="rounded-2xl sm:rounded-3xl p-4 sm:p-6 bg-white/80 backdrop-blur-sm border border-white/40 shadow-lg hover:shadow-xl transition-all group">
       <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-gradient-to-br ${color} flex items-center justify-center text-white mb-3 sm:mb-4 group-hover:scale-110 transition-transform`}>
         <Icon size={20} className="sm:w-6 sm:h-6" />
       </div>
-      <p className="text-muted-foreground text-xs sm:text-sm mb-1">{label}</p>
+      <p className="text-slate-600 text-xs sm:text-sm mb-1">{label}</p>
       {loading ? (
         <div className="h-6 sm:h-7 w-20 sm:w-24 animate-pulse rounded bg-slate-100" />
       ) : (
-        <p className="text-2xl sm:text-3xl font-bold text-foreground">{value}</p>
+        <p className="text-2xl sm:text-3xl font-bold text-slate-900">{value}</p>
       )}
     </div>
   );
@@ -1235,7 +1223,7 @@ function CardRowSkeleton({ cards = 9 }) {
 function EmptyState({ text }) {
   return (
     <div className="px-6 py-8">
-      <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center text-muted-foreground">
+      <div className="rounded-3xl p-8 bg-white/70 backdrop-blur-sm border border-white/40 shadow text-center text-slate-500">
         {text}
       </div>
     </div>
@@ -1250,7 +1238,7 @@ function ListingCard({ data, muted = false }) {
       : "bg-slate-100 text-slate-700 border-slate-200";
 
   return (
-    <div className="glass rounded-3xl overflow-hidden border border-white/40 bg-white/80 shadow-lg hover:shadow-xl transition-all group cursor-pointer hover:-translate-y-2">
+    <div className="rounded-3xl overflow-hidden border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all group cursor-pointer hover:-translate-y-2">
       <div className="h-40 relative overflow-hidden bg-slate-200">
         {cover ? (
           <>
@@ -1278,31 +1266,31 @@ function ListingCard({ data, muted = false }) {
       <div className="p-6">
         <h4
           className={`font-bold text-lg ${
-            muted ? "text-slate-700" : "text-foreground"
+            muted ? "text-slate-700" : "text-slate-900"
           } line-clamp-1 mb-1`}
         >
           {title}
         </h4>
         {ratingCount > 0 ? (
-          <div className="flex items-center gap-1.5 text-sm text-foreground mb-2">
+          <div className="flex items-center gap-1.5 text-sm text-slate-900 mb-2">
             <Star size={16} className="text-amber-500" />
             <span className="font-semibold">{ratingAvg.toFixed(1)}</span>
-            <span className="text-muted-foreground">({ratingCount})</span>
+            <span className="text-slate-600">({ratingCount})</span>
           </div>
         ) : (
-          <div className="text-sm text-muted-foreground mb-2">No ratings yet</div>
+          <div className="text-sm text-slate-600 mb-2">No ratings yet</div>
         )}
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-1 mb-2">
+        <p className="mt-1 text-xs text-slate-600 line-clamp-1 mb-2">
           Host: {hostName}
         </p>
         {description && (
-          <p className="mt-2 text-xs text-muted-foreground line-clamp-2 mb-2">
+          <p className="mt-2 text-xs text-slate-600 line-clamp-2 mb-2">
             {description}
           </p>
         )}
         <div className="mt-2 flex flex-col gap-1.5 mb-4">
           {location && location !== "—" && (
-            <div className="flex items-center gap-2 text-muted-foreground text-sm">
+            <div className="flex items-center gap-2 text-slate-600 text-sm">
               <MapPin size={16} className="flex-shrink-0" />
               <span className="line-clamp-1">{location}</span>
             </div>
@@ -1311,7 +1299,7 @@ function ListingCard({ data, muted = false }) {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Coins size={12} className="text-amber-600 flex-shrink-0" />
-                <span className="text-xs text-muted-foreground">Price</span>
+                <span className="text-xs text-slate-600">Price</span>
               </div>
               <span className="font-bold text-blue-600">
                 {peso(Number(price))}

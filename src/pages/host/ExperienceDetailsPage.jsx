@@ -1122,7 +1122,7 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
   useEffect(() => {
     const u = auth.currentUser;
     if (!u) return;
-    const wref = doc(database, "wallets", u.uid);
+    const wref = doc(database, "guestWallets", u.uid);
     const unsub = onSnapshot(wref, (s) => {
       const d = s.data() || {};
       setWallet({ balance: Number(d.balance || 0), currency: d.currency || "PHP" });
@@ -1521,11 +1521,11 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
 
         const participants = Number(payment.participants || 1);
 
-        // Refs
-        const wrefGuest = doc(database, "wallets", user.uid);
-        const wrefHost = doc(database, "wallets", hostUid);
-        const walletTxGuestRef = doc(collection(database, "wallets", user.uid, "transactions"));
-        const walletTxHostRef = doc(collection(database, "wallets", hostUid, "transactions"));
+        // Refs - use guestWallets for guest, hostWallets for host
+        const wrefGuest = doc(database, "guestWallets", user.uid);
+        const wrefHost = doc(database, "hostWallets", hostUid);
+        const walletTxGuestRef = doc(collection(database, "guestWallets", user.uid, "transactions"));
+        const walletTxHostRef = doc(collection(database, "hostWallets", hostUid, "transactions"));
 
         const pointsGuestRef = doc(database, "points", user.uid);
         const pointsHostRef = doc(database, "points", hostUid);
@@ -1670,12 +1670,11 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
         // ---------- HOST wallet: credit SUBTOTAL (no service fee) ----------
         tx.set(
           wrefHost,
-          // NOTE: to satisfy your rules, we set uid to the *writer* (guest) here and also store ownerUid for clarity
-          { uid: user.uid, ownerUid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
+          { uid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
           { merge: true }
         );
         tx.set(walletTxHostRef, {
-          uid: user.uid, // writer
+          uid: hostUid,
           type: "booking_income",
           delta: +subtotal,
           amount: subtotal,

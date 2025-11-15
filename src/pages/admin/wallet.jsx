@@ -13,6 +13,8 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Menu,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 
 import {
@@ -135,13 +137,14 @@ export default function AdminWalletPage() {
   const [loadingWallet, setLoadingWallet] = useState(true);
 
   // Transactions state
-  const PAGE = 15;
-  const [txs, setTxs] = useState([]);
+  const PAGE_SIZE = 15;
+  const [allTxs, setAllTxs] = useState([]); // Store all loaded transactions
   const [txLoading, setTxLoading] = useState(true);
   const [txError, setTxError] = useState(null);
   const [lastCursor, setLastCursor] = useState(null);
   const [endReached, setEndReached] = useState(false);
   const [filter, setFilter] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Ensure admin wallet exists + live balance
   useEffect(() => {
@@ -171,28 +174,29 @@ export default function AdminWalletPage() {
     return unsub;
   }, []);
 
-  // Load first page of txs
-  const loadTxs = async (more = false) => {
+  // Load more transactions from Firestore
+  const loadMoreTxs = async () => {
+    if (endReached || txLoading) return;
     setTxLoading(true);
     setTxError(null);
     try {
       const tRef = collection(database, "wallets", ADMIN_WALLET_ID, "transactions");
-      let qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE));
-      if (more && lastCursor) qy = query(tRef, orderBy("timestamp", "desc"), startAfter(lastCursor), limit(PAGE));
+      let qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
+      if (lastCursor) {
+        qy = query(tRef, orderBy("timestamp", "desc"), startAfter(lastCursor), limit(PAGE_SIZE));
+      }
 
       const snap = await getDocs(qy);
       const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      if (more) {
-        setTxs((prev) => [...prev, ...rows]);
-      } else {
-        setTxs(rows);
+      
+      if (rows.length > 0) {
+        setAllTxs((prev) => [...prev, ...rows]);
+        setLastCursor(snap.docs[snap.docs.length - 1]);
       }
-      if (snap.docs.length < PAGE) {
+      
+      if (snap.docs.length < PAGE_SIZE) {
         setEndReached(true);
-      } else {
-        setEndReached(false);
       }
-      setLastCursor(snap.docs[snap.docs.length - 1] || null);
     } catch (e) {
       console.error(e);
       setTxError(e?.message || "Failed to load transactions");
@@ -201,21 +205,94 @@ export default function AdminWalletPage() {
     }
   };
 
+  // Load initial transactions
   useEffect(() => {
-    loadTxs(false);
+    setCurrentPage(1);
+    setLastCursor(null);
+    setEndReached(false);
+    setAllTxs([]);
+    setTxLoading(true);
+    setTxError(null);
+    
+    const loadInitial = async () => {
+      try {
+        const tRef = collection(database, "wallets", ADMIN_WALLET_ID, "transactions");
+        const qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
+        const snap = await getDocs(qy);
+        const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        
+        setAllTxs(rows);
+        if (snap.docs.length > 0) {
+          setLastCursor(snap.docs[snap.docs.length - 1]);
+        }
+        if (snap.docs.length < PAGE_SIZE) {
+          setEndReached(true);
+        }
+      } catch (e) {
+        console.error(e);
+        setTxError(e?.message || "Failed to load transactions");
+      } finally {
+        setTxLoading(false);
+      }
+    };
+    
+    loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(allTxs.length / PAGE_SIZE));
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const endIdx = startIdx + PAGE_SIZE;
+  const paginatedTxs = allTxs.slice(startIdx, endIdx);
+
+  // Handle page navigation
+  const nextPage = () => {
+    const nextPageNum = currentPage + 1;
+    const neededItems = nextPageNum * PAGE_SIZE;
+    
+    // If we need more data and haven't reached the end, load more
+    if (neededItems > allTxs.length && !endReached && !txLoading) {
+      loadMoreTxs().then(() => {
+        setCurrentPage(nextPageNum);
+      });
+    } else if (nextPageNum <= totalPages) {
+      setCurrentPage(nextPageNum);
+    }
+  };
+
+  const prevPage = () => {
+    if (currentPage > 1) {
+      setCurrentPage(currentPage - 1);
+    }
+  };
 
   // Filtered view (client side search by type/method/note)
   const filtered = useMemo(() => {
     const f = (filter || "").trim().toLowerCase();
-    if (!f) return txs;
-    return txs.filter((t) => {
+    if (!f) return allTxs; // No filter: search all loaded transactions
+    // Has filter: search through all loaded transactions
+    return allTxs.filter((t) => {
       const hay =
         `${t.type || ""} ${t.method || ""} ${t.note || ""} ${t?.metadata?.bookingId || ""}`.toLowerCase();
       return hay.includes(f);
     });
-  }, [txs, filter]);
+  }, [allTxs, filter]);
+
+  // Pagination for filtered results
+  const filteredTotalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const filteredStartIdx = filter ? (currentPage - 1) * PAGE_SIZE : startIdx;
+  const filteredEndIdx = filter ? filteredStartIdx + PAGE_SIZE : endIdx;
+  const paginatedFiltered = filter 
+    ? filtered.slice(filteredStartIdx, filteredEndIdx)
+    : paginatedTxs;
+
+  // Reset to page 1 when filter changes
+  useEffect(() => {
+    if (filter) {
+      setCurrentPage(1);
+    }
+  }, [filter]);
 
   // CSV export
   const exportCSV = () => {
@@ -231,7 +308,7 @@ export default function AdminWalletPage() {
     ];
     const lines = [header.join(",")];
 
-    txs.forEach((t) => {
+    allTxs.forEach((t) => {
       const row = [
         JSON.stringify(formatDate(t.timestamp)),
         JSON.stringify(t.type || ""),
@@ -268,7 +345,7 @@ export default function AdminWalletPage() {
 
   /* ======================= Render ======================= */
   const balanceCard = (
-    <div className="glass rounded-3xl border border-white/40 bg-white/80 shadow-lg p-5">
+    <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
@@ -338,13 +415,13 @@ export default function AdminWalletPage() {
         <div className="h-[56px] md:h-[56px]" />
 
         {/* Main */}
-        <main className="flex-1 flex flex-col min-w-0 px-4 sm:px-6 lg:px-12 py-6">
-          <div className="max-w-7xl mx-auto w-full space-y-6">
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
             {/* Balance + actions */}
             {balanceCard}
 
             {/* Search */}
-            <div className="glass rounded-3xl border border-white/40 bg-white/80 shadow-lg p-4">
+            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
@@ -358,13 +435,13 @@ export default function AdminWalletPage() {
                   />
                 </div>
                 <div className="hidden sm:block text-xs text-slate-500">
-                  Showing {filtered.length} of {txs.length}
+                  Showing {filtered.length} of {allTxs.length}
                 </div>
               </div>
             </div>
 
             {/* Transactions */}
-            <div className="glass rounded-3xl border border-white/40 bg-white/80 shadow-lg p-4">
+            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
               <div className="flex items-center justify-between mb-2">
                 <h4 className="font-semibold text-slate-900">Service Fee Transactions</h4>
                 {txLoading && (
@@ -378,9 +455,9 @@ export default function AdminWalletPage() {
                 <div className="rounded-xl border border-rose-200 bg-rose-50 text-rose-700 p-3 text-sm inline-flex items-center gap-2">
                   <AlertCircle size={16} /> {txError}
                 </div>
-              ) : filtered.length ? (
+              ) : paginatedFiltered.length ? (
                 <div className="divide-y divide-slate-100">
-                  {filtered.map((t) => (
+                  {paginatedFiltered.map((t) => (
                     <TxRow key={t.id} tx={t} />
                   ))}
                 </div>
@@ -394,16 +471,77 @@ export default function AdminWalletPage() {
                 <p className="text-sm text-slate-600">No transactions yet.</p>
               )}
 
-              <div className="mt-4 flex items-center justify-center">
-                {!endReached && !txLoading ? (
-                  <button
-                    onClick={() => loadTxs(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-white hover:bg-slate-50 text-slate-800 border border-slate-200"
-                  >
-                    <span className="font-medium text-sm">Load more</span>
-                  </button>
-                ) : null}
-              </div>
+              {/* Pagination */}
+              {allTxs.length > 0 && (
+                <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
+                  <div className="text-xs sm:text-sm text-slate-600">
+                    {filter ? (
+                      <>
+                        Showing{" "}
+                        <span className="font-medium text-slate-800">
+                          {filteredStartIdx + 1}–{Math.min(filteredEndIdx, filtered.length)}
+                        </span>{" "}
+                        of <span className="font-medium text-slate-800">{filtered.length}</span> results
+                        {filtered.length < allTxs.length && (
+                          <> (from {allTxs.length} loaded)</>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        Showing{" "}
+                        <span className="font-medium text-slate-800">
+                          {startIdx + 1}–{Math.min(endIdx, allTxs.length)}
+                        </span>{" "}
+                        of <span className="font-medium text-slate-800">{allTxs.length}</span> loaded
+                        {!endReached && " (more available)"}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 sm:gap-2">
+                    {filter ? (
+                      <>
+                        <button
+                          disabled={currentPage <= 1}
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          <ChevronLeft size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Prev</span>
+                        </button>
+                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">
+                          Page {currentPage} / {filteredTotalPages}
+                        </span>
+                        <button
+                          disabled={currentPage >= filteredTotalPages}
+                          onClick={() => setCurrentPage((p) => Math.min(filteredTotalPages, p + 1))}
+                          className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4" />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          disabled={currentPage <= 1}
+                          onClick={prevPage}
+                          className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          <ChevronLeft size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Prev</span>
+                        </button>
+                        <span className="px-2 sm:px-3 py-1 text-xs sm:text-sm whitespace-nowrap">
+                          Page {currentPage} / {totalPages}
+                        </span>
+                        <button
+                          disabled={currentPage >= totalPages && endReached}
+                          onClick={nextPage}
+                          className="inline-flex items-center gap-1 px-2 sm:px-3 py-1.5 rounded-full border border-slate-200 bg-white text-xs sm:text-sm hover:bg-slate-50 disabled:opacity-50 disabled:pointer-events-none"
+                        >
+                          <span className="hidden sm:inline">Next</span> <ChevronRight size={14} className="sm:w-4 sm:h-4" />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>

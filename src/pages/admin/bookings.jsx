@@ -2,11 +2,13 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Menu } from "lucide-react";
 import AdminSidebar from "./components/AdminSidebar.jsx";
+import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { database } from "../../config/firebase";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { collection, getDocs, query, where, documentId } from "firebase/firestore";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
+import { getTimeRange, isInTimeRange } from "../../utils/timeFilters";
 
 // small helpers
 const chunk = (arr, size = 10) => {
@@ -63,6 +65,7 @@ export default function AdminBookingsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, confirmed, cancelled
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all"); // all, today, thisWeek, thisMonth, thisYear
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
@@ -93,32 +96,41 @@ export default function AdminBookingsPage() {
           };
         });
 
-        // Try to batch-resolve listing titles and guest info
+        // Optimize listing queries - use parallel queries
         const uniqueListingIds = [...new Set(rows.map((r) => r.listingId).filter(Boolean))];
         if (uniqueListingIds.length > 0) {
           const listingMap = {};
-          for (const chunk_ids of chunk(uniqueListingIds)) {
-            try {
-              const listingDocs = await getDocs(
+          const listingQueries = [];
+
+          // Create parallel queries for chunks
+          for (const chunk_ids of chunk(uniqueListingIds, 10)) {
+            listingQueries.push(
+              getDocs(
                 query(collection(database, "listings"), where(documentId(), "in", chunk_ids))
-              );
-              listingDocs.forEach((doc) => {
-                const data = doc.data() || {};
-                const rawCategory = data.category ?? data.listingCategory ?? null;
-                const category =
-                  typeof rawCategory === "string"
-                    ? rawCategory
-                    : rawCategory?.name ||
-                      (data.experienceType ? "Experiences" : data.serviceType || data.type ? "Services" : "Homes");
-                listingMap[doc.id] = {
-                  title: data.title || "—",
-                  category: category || "Uncategorized",
-                };
-              });
-            } catch (e) {
-              console.warn("listings query failed", e);
-            }
+              ).catch(() => ({ docs: [] })) // Return empty on error
+            );
           }
+
+          // Execute all queries in parallel
+          const results = await Promise.all(listingQueries);
+          
+          // Process results
+          results.forEach((listingDocs) => {
+            listingDocs.docs.forEach((doc) => {
+              const data = doc.data() || {};
+              const rawCategory = data.category ?? data.listingCategory ?? null;
+              const category =
+                typeof rawCategory === "string"
+                  ? rawCategory
+                  : rawCategory?.name ||
+                    (data.experienceType ? "Experiences" : data.serviceType || data.type ? "Services" : "Homes");
+              listingMap[doc.id] = {
+                title: data.title || "—",
+                category: category || "Uncategorized",
+              };
+            });
+          });
+
           rows = rows.map((r) => {
             const listingData = listingMap[r.listingId];
             const isObject = listingData && typeof listingData === "object";
@@ -152,7 +164,10 @@ export default function AdminBookingsPage() {
   // SORTED & FILTERED
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
+    const timeRange = getTimeRange(timeFilter);
     const filtered = bookings.filter((b) => {
+      // time filter
+      if (timeFilter !== "all" && !isInTimeRange(b.createdAt, timeRange)) return false;
       // status filter
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       // category filter
@@ -196,7 +211,7 @@ export default function AdminBookingsPage() {
       const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
       return tb - ta;
     });
-  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter]);
+  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter, timeFilter]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -445,18 +460,34 @@ export default function AdminBookingsPage() {
       const html2pdf = await loadHtml2Pdf();
       const element = document.createElement("div");
       element.innerHTML = html.join("");
+      
+      // Hide the element to prevent layout shifts/glitching
+      element.style.position = "absolute";
+      element.style.left = "-9999px";
+      element.style.top = "-9999px";
+      element.style.width = "210mm"; // A4 width
+      element.style.visibility = "hidden";
+      element.style.opacity = "0";
+      element.style.pointerEvents = "none";
+      
       document.body.appendChild(element);
 
       const opt = {
         margin: [18, 18],
         filename: `bookings_export_${new Date().toISOString().slice(0, 10)}.pdf`,
         image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       };
 
       await html2pdf().set(opt).from(element).save();
-      document.body.removeChild(element);
+      
+      // Remove element after a short delay to ensure PDF generation is complete
+      setTimeout(() => {
+        if (element.parentNode) {
+          document.body.removeChild(element);
+        }
+      }, 100);
     } catch (err) {
       // Fallback to print dialog if library fails
       const win = window.open("", "_blank");
@@ -504,7 +535,7 @@ export default function AdminBookingsPage() {
       <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ${sideOffset}`}>
         {/* Top bar — fixed */}
         <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
-          <div className="max-w-[1400px] mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -526,15 +557,16 @@ export default function AdminBookingsPage() {
         <div className="h-[56px] md:h-[56px]" />
 
         {/* Main */}
-        <main className="flex-1 p-3 sm:p-6 lg:p-8 max-w-[1400px] mx-auto">
+        <main className="flex-1 flex flex-col min-w-0">
+          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
 
         {/* Report Summary */}
-        <section className="mb-4 sm:mb-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-3">
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
           {/* Total Bookings */}
-          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 p-3 sm:p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
-            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total}</p>
-            <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2 text-[10px] sm:text-xs text-slate-500">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
+            <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-600">
               <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
                 {metrics.confirmed} confirmed
               </span>
@@ -545,44 +577,45 @@ export default function AdminBookingsPage() {
           </div>
 
           {/* Revenue */}
-          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 p-3 sm:p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
-            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-slate-500">Total Revenue</p>
-            <p className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Total Revenue</p>
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
               {formatPeso(metrics.totalRevenue) || "—"}
             </p>
-            <p className="mt-1.5 sm:mt-2 text-[10px] sm:text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-600">
               From {metrics.paid} paid bookings
             </p>
           </div>
 
           {/* Guests & Nights */}
-          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 p-3 sm:p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
-            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
-            <p className="mt-1 text-xl sm:text-2xl font-semibold text-slate-900 dark:text-slate-100">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
+            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
               {metrics.totalGuests.toLocaleString()}
             </p>
-            <p className="mt-1.5 sm:mt-2 text-[10px] sm:text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-600">
               {metrics.totalNights.toLocaleString()} total nights
             </p>
           </div>
 
           {/* Top Listing */}
-          <div className="rounded-xl sm:rounded-2xl border border-slate-200 bg-white/80 p-3 sm:p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
-            <p className="text-[10px] sm:text-xs uppercase tracking-wide text-slate-500">Most Booked</p>
-            <p className="mt-1 text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate" title={metrics.topListing?.listingTitle}>
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Most Booked</p>
+            <p className="mt-1 text-sm sm:text-base font-semibold text-slate-900 truncate" title={metrics.topListing?.listingTitle}>
               {metrics.topListing?.listingTitle || "—"}
             </p>
-            <p className="mt-1.5 sm:mt-2 text-[10px] sm:text-xs text-slate-500">
+            <p className="mt-2 text-xs text-slate-600">
               {metrics.topListing?.count || 0} bookings
             </p>
           </div>
         </section>
 
         {/* Controls */}
-        <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {/* Search and Category Filter */}
-          <div className="lg:col-span-1 flex flex-col sm:flex-row gap-3">
-            <div className="flex-1 relative">
+        <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6 mb-6">
+          <div className="flex flex-col gap-3">
+          {/* First Row: Search and Category */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative" style={{ maxWidth: '280px', width: '100%' }}>
               <svg
                 className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400"
                 viewBox="0 0 20 20"
@@ -596,87 +629,95 @@ export default function AdminBookingsPage() {
               </svg>
               <input
                 type="search"
-                placeholder="Search by guest, email, listing or booking ID..."
+                placeholder="Search bookings..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
               />
             </div>
-            <select
+            <TailwindDropdown
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="px-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100 sm:min-w-[160px]"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "all", label: "All Categories" },
+                ...categories.map((cat) => ({ value: cat, label: cat })),
+              ]}
+              className="sm:min-w-[160px]"
+            />
           </div>
 
-          {/* Sort & Filters */}
-          <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Filter:</label>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 min-w-0 flex-shrink"
-              >
-                <option value="all">All Statuses</option>
-                <option value="pending">Pending</option>
-                <option value="confirmed">Confirmed</option>
-                <option value="cancelled">Cancelled</option>
-              </select>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Sort by:</label>
-              <select
-                value={sortKey}
-                onChange={(e) => setSortKey(e.target.value)}
-                className="px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 min-w-0 flex-shrink"
-              >
-                <option value="createdAt">Newest</option>
-                <option value="totalPrice">Price</option>
-                <option value="guestName">Guest</option>
-                <option value="listingTitle">Listing</option>
-              </select>
-              <button
-                title="Toggle sort direction"
-                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
-              >
-                <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                  <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
-                </svg>
-                <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
-              </button>
-            </div>
+          {/* Second Row: Time, Status, Sort & Export */}
+          <div className="flex flex-wrap items-center gap-2">
+            <TailwindDropdown
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Time" },
+                { value: "today", label: "Today" },
+                { value: "thisWeek", label: "This Week" },
+                { value: "thisMonth", label: "This Month" },
+                { value: "thisYear", label: "This Year" },
+              ]}
+              className="min-w-[120px]"
+            />
+            <TailwindDropdown
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Statuses" },
+                { value: "pending", label: "Pending" },
+                { value: "confirmed", label: "Confirmed" },
+                { value: "cancelled", label: "Cancelled" },
+              ]}
+              className="min-w-[130px]"
+            />
+            <TailwindDropdown
+              value={sortKey}
+              onChange={(e) => setSortKey(e.target.value)}
+              options={[
+                { value: "createdAt", label: "Newest" },
+                { value: "totalPrice", label: "Price" },
+                { value: "guestName", label: "Guest" },
+                { value: "listingTitle", label: "Listing" },
+              ]}
+              className="min-w-[110px]"
+            />
             <button
-              title="Export CSV"
-              onClick={exportCSV}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
-            >
-              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
-                <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
-                <path d="M10 14a1 1 0 0 1-1-1V7a1 1 0 1 1 2 0v6a1 1 0 0 1-1 1Z" />
-                <path d="M7.293 11.707a1 1 0 0 1 0-1.414l2-2a1 1 0 1 1 1.414 1.414L9.414 10l1.293 1.293a1 1 0 0 1-1.414 1.414l-2-2Z" />
-              </svg>
-              Export CSV
-            </button>
-            <button
-              title="Export PDF"
-              onClick={exportPDF}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+              title="Toggle sort direction"
+              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+              className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
             >
               <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
+                <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
               </svg>
-              <span className="hidden xs:inline">Export PDF</span><span className="xs:hidden">PDF</span>
+              <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
             </button>
+            <div className="flex items-center gap-2 ml-auto">
+              <button
+                title="Export CSV"
+                onClick={exportCSV}
+                className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
+              >
+                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
+                  <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
+                  <path d="M10 14a1 1 0 0 1-1-1V7a1 1 0 1 1 2 0v6a1 1 0 0 1-1 1Z" />
+                  <path d="M7.293 11.707a1 1 0 0 1 0-1.414l2-2a1 1 0 1 1 1.414 1.414L9.414 10l1.293 1.293a1 1 0 0 1-1.414 1.414l-2-2Z" />
+                </svg>
+                <span className="hidden sm:inline">CSV</span>
+              </button>
+              <button
+                title="Export PDF"
+                onClick={exportPDF}
+                className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+              >
+                <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
+                  <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
+                </svg>
+                <span className="hidden sm:inline">PDF</span>
+              </button>
+            </div>
           </div>
+        </div>
         </div>
 
         {/* Content */}
@@ -781,19 +822,20 @@ export default function AdminBookingsPage() {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2">
                 <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Rows:</label>
-                <select
-                  value={pageSize}
+                <TailwindDropdown
+                  value={String(pageSize)}
                   onChange={(e) => {
                     setPageSize(Number(e.target.value));
                     setPage(1);
                   }}
-                  className="rounded-xl border border-slate-200 bg-white px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 min-w-0 flex-shrink"
-                >
-                  <option value={10}>10</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                </select>
+                  options={[
+                    { value: "10", label: "10" },
+                    { value: "25", label: "25" },
+                    { value: "50", label: "50" },
+                    { value: "100", label: "100" },
+                  ]}
+                  className="min-w-[80px]"
+                />
               </div>
               <div className="inline-flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <button
@@ -845,6 +887,7 @@ export default function AdminBookingsPage() {
             </div>
           </div>
         )}
+          </div>
         </main>
       </div>
     </div>
