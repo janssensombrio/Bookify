@@ -1565,7 +1565,10 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
     setShowPayPal(true);
   };
 
-  const onClose = () => navigate(-1);
+  const onClose = () => {
+    const category = experience?.category || "Experiences";
+    navigate(`/explore?category=${category}`);
+  };
 
   const dt = experience?.discountType || "none";
   const dv = numberOr(experience?.discountValue);
@@ -2716,15 +2719,22 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
                     onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
                   />
                 ) : (
+                  (() => {
+                    const currentUser = auth.currentUser;
+                    const hostUid = experience?.uid || experience?.ownerId || experience?.hostId;
+                    const isHost = currentUser && hostUid && currentUser.uid === hostUid;
+                    return (
                   <button
                     type="button"
-                    disabled={!payment || !selectedSchedule}
-                    aria-disabled={!payment || !selectedSchedule}
+                        disabled={!payment || !selectedSchedule || isHost}
+                        aria-disabled={!payment || !selectedSchedule || isHost}
                     onClick={handleBookNow}
                     className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                   >
                     Book Now
                   </button>
+                    );
+                  })()
                 )}
               </div>
             </div>
@@ -2771,15 +2781,22 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
             />
           ) : (
             <>
+              {(() => {
+                const currentUser = auth.currentUser;
+                const hostUid = experience?.uid || experience?.ownerId || experience?.hostId;
+                const isHost = currentUser && hostUid && currentUser.uid === hostUid;
+                return (
               <button
                 type="button"
-                disabled={!payment || !selectedSchedule}
-                aria-disabled={!payment || !selectedSchedule}
+                    disabled={!payment || !selectedSchedule || isHost}
+                    aria-disabled={!payment || !selectedSchedule || isHost}
                 onClick={handleBookNow}
-                className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text.white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                    className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
               >
                 Book Now
               </button>
+                );
+              })()}
               <button
                 type="button"
                 onClick={onClose}

@@ -1,7 +1,7 @@
 import { auth, database } from "../../config/firebase";
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { collection, query, where, getDocs } from "firebase/firestore";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { collection, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import Search from "../../components/search.jsx";
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
@@ -49,22 +49,50 @@ function useBodyScrollLock(locked) {
 
 export const Explore = () => {
   const { sidebarOpen, setSidebarOpen } = useSidebar();
+  const [searchParams, setSearchParamsURL] = useSearchParams();
 
   const [isHost, setIsHost] = useState(localStorage.getItem("isHost") === "true");
 
   const [showPoliciesModal, setShowPoliciesModal] = useState(false);
   const [showHostModal, setShowHostModal] = useState(false);
 
-  const [selectedCategory, setSelectedCategory] = useState("Homes");
+  // Get category from URL params, default to "Homes"
+  const categoryFromURL = searchParams.get("category");
+  const validCategories = ["Homes", "Experiences", "Services"];
+  const initialCategory = categoryFromURL && validCategories.includes(categoryFromURL) 
+    ? categoryFromURL 
+    : "Homes";
+  
+  const [selectedCategory, setSelectedCategory] = useState(initialCategory);
   const [listings, setListings] = useState([]);
   const [allListings, setAllListings] = useState([]); // Store all listings for filtering
   const [loading, setLoading] = useState(true);
-  const [searchParams, setSearchParams] = useState({
+  const [searchParamsState, setSearchParams] = useState({
     destination: "",
     dates: { start: "", end: "" },
     guests: { adults: 0, children: 0, infants: 0 },
   });
+  const [bookedListings, setBookedListings] = useState([]); // Listings from guest's bookings
+  const [recommendedListings, setRecommendedListings] = useState([]); // Recommended listings
   const navigate = useNavigate();
+
+  // Update category when URL param changes (only on mount or when URL changes externally)
+  useEffect(() => {
+    const catFromURL = searchParams.get("category");
+    if (catFromURL && validCategories.includes(catFromURL) && catFromURL !== selectedCategory) {
+      setSelectedCategory(catFromURL);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  // Update URL when category changes (but not if it's already set in URL)
+  useEffect(() => {
+    const catFromURL = searchParams.get("category");
+    if (selectedCategory && selectedCategory !== catFromURL) {
+      setSearchParamsURL({ category: selectedCategory });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory]);
 
   useBodyScrollLock(showHostModal || showPoliciesModal);
 
@@ -81,6 +109,166 @@ export const Explore = () => {
     };
     checkIfHost();
   }, []);
+
+  // Fetch guest's bookings and extract listing details
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) {
+      setBookedListings([]);
+      return;
+    }
+
+    const fetchBookedListings = async () => {
+      try {
+        const bookingsRef = collection(database, "bookings");
+        const uid = user.uid;
+        
+        // Query bookings by multiple fields to catch all guest bookings
+        const queries = [
+          query(bookingsRef, where("uid", "==", uid)),
+          query(bookingsRef, where("userId", "==", uid)),
+          query(bookingsRef, where("guestUid", "==", uid)),
+        ];
+
+        const snapshots = await Promise.all(queries.map((q) => getDocs(q)));
+        const allBookings = new Map();
+
+        snapshots.forEach((snapshot) => {
+          snapshot.docs.forEach((doc) => {
+            if (!allBookings.has(doc.id)) {
+              allBookings.set(doc.id, { id: doc.id, ...doc.data() });
+            }
+          });
+        });
+
+        const bookings = Array.from(allBookings.values());
+        const listingIds = new Set();
+        
+        // Extract listing IDs from bookings
+        bookings.forEach((booking) => {
+          const listingId = booking.listingId || 
+                           (booking.listingRefPath ? booking.listingRefPath.split('/').pop() : null);
+          if (listingId) {
+            listingIds.add(listingId);
+          }
+        });
+
+        // Fetch listing details
+        const listingPromises = Array.from(listingIds).map(async (listingId) => {
+          try {
+            const listingDoc = await getDoc(doc(database, "listings", listingId));
+            if (listingDoc.exists()) {
+              return { id: listingDoc.id, ...listingDoc.data() };
+            }
+          } catch (error) {
+            console.error(`Error fetching listing ${listingId}:`, error);
+          }
+          return null;
+        });
+
+        const fetchedListings = (await Promise.all(listingPromises)).filter(Boolean);
+        setBookedListings(fetchedListings);
+      } catch (error) {
+        console.error("Error fetching booked listings:", error);
+        setBookedListings([]);
+      }
+    };
+
+    fetchBookedListings();
+  }, []);
+
+  // Calculate recommended listings based on similarity
+  useEffect(() => {
+    if (bookedListings.length === 0 || allListings.length === 0) {
+      setRecommendedListings([]);
+      return;
+    }
+
+    const calculateSimilarity = (listing, bookedListing) => {
+      let score = 0;
+
+      // Same category gets highest weight
+      if (listing.category === bookedListing.category) {
+        score += 50;
+      } else {
+        return 0; // Only recommend within same category
+      }
+
+      // Location similarity (30 points)
+      const listingLoc = (listing.location || "").toLowerCase();
+      const bookedLoc = (bookedListing.location || "").toLowerCase();
+      if (listingLoc && bookedLoc) {
+        // Check if locations share common words (city names, etc.)
+        const listingWords = listingLoc.split(/[\s,]+/);
+        const bookedWords = bookedLoc.split(/[\s,]+/);
+        const commonWords = listingWords.filter((w) => bookedWords.includes(w) && w.length > 2);
+        if (commonWords.length > 0) {
+          score += 30;
+        } else if (listingLoc.includes(bookedLoc) || bookedLoc.includes(listingLoc)) {
+          score += 20;
+        }
+      }
+
+      // Price similarity (15 points) - within 30% price range
+      const listingPrice = Number(listing.price || 0);
+      const bookedPrice = Number(bookedListing.price || 0);
+      if (listingPrice > 0 && bookedPrice > 0) {
+        const priceDiff = Math.abs(listingPrice - bookedPrice) / bookedPrice;
+        if (priceDiff <= 0.3) {
+          score += 15;
+        } else if (priceDiff <= 0.5) {
+          score += 8;
+        }
+      }
+
+      // Property type similarity for homes (5 points)
+      if (listing.category === "Homes" && bookedListing.category === "Homes") {
+        if (listing.propertyType === bookedListing.propertyType) {
+          score += 5;
+        }
+      }
+
+      // Experience/Service type similarity (5 points)
+      if (listing.category === "Experiences" && bookedListing.category === "Experiences") {
+        if (listing.experienceType === bookedListing.experienceType) {
+          score += 5;
+        }
+      }
+      if (listing.category === "Services" && bookedListing.category === "Services") {
+        if (listing.serviceType === bookedListing.serviceType) {
+          score += 5;
+        }
+      }
+
+      return score;
+    };
+
+    // Calculate similarity scores for all listings in the current category
+    const categoryListings = allListings.filter(
+      (l) => l.category === selectedCategory && l.status === "published"
+    );
+
+    const scoredListings = categoryListings
+      .map((listing) => {
+        // Don't recommend listings the guest already booked
+        if (bookedListings.some((bl) => bl.id === listing.id)) {
+          return null;
+        }
+
+        // Calculate max similarity score across all booked listings
+        const maxScore = Math.max(
+          ...bookedListings.map((booked) => calculateSimilarity(listing, booked))
+        );
+
+        return { listing, score: maxScore };
+      })
+      .filter((item) => item && item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8) // Top 8 recommendations
+      .map((item) => item.listing);
+
+    setRecommendedListings(scoredListings);
+  }, [bookedListings, allListings, selectedCategory]);
 
   const handleOpenHostModal = () => setShowHostModal(true);
   const handleCloseHostModal = () => setShowHostModal(false);
@@ -108,7 +296,7 @@ export const Explore = () => {
       const snapshot = await getDocs(listingsRef);
       const listingsData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       setAllListings(listingsData); // Store all listings
-      applyFilters(listingsData, category, searchParams);
+      applyFilters(listingsData, category, searchParamsState);
     } catch (error) {
       console.error("Error fetching listings:", error);
     } finally {
@@ -183,10 +371,10 @@ export const Explore = () => {
   // Re-apply filters when search params change
   useEffect(() => {
     if (allListings.length > 0) {
-      applyFilters(allListings, selectedCategory, searchParams);
+      applyFilters(allListings, selectedCategory, searchParamsState);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, selectedCategory]);
+  }, [searchParamsState, selectedCategory]);
 
   const SearchSkeleton = () => (
     <div className="
@@ -353,7 +541,25 @@ export const Explore = () => {
           </video>
 
           <div className="relative z-[10] flex items-center justify-center h-[400px] sm:h-[500px]">
-            {loading ? <SearchSkeleton /> : <Search onSearch={handleSearch} />}
+            {loading ? (
+              <SearchSkeleton />
+            ) : (
+              <Search
+                onSearch={handleSearch}
+                initialDestination={searchParamsState.destination}
+                initialDates={searchParamsState.dates}
+                initialGuests={searchParamsState.guests}
+                onClear={() => {
+                  const cleared = {
+                    destination: "",
+                    dates: { start: "", end: "" },
+                    guests: { adults: 0, children: 0, infants: 0 },
+                  };
+                  setSearchParams(cleared);
+                  applyFilters(allListings, selectedCategory, cleared);
+                }}
+              />
+            )}
           </div>
         </section>
 
@@ -368,7 +574,38 @@ export const Explore = () => {
               </div>
             </>
           ) : (
-            <ListingCardContainer category={selectedCategory} items={listings} />
+            <>
+              {/* Recommended for you section */}
+              {recommendedListings.length > 0 && (
+                <div className="mb-10">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="h-1 w-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full" />
+                    <h2 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-700 bg-clip-text text-transparent">
+                      Recommended for you
+                    </h2>
+                    <div className="h-1 flex-1 bg-gradient-to-r from-indigo-600 to-transparent rounded-full" />
+                  </div>
+                  <p className="text-slate-600 text-sm mb-6">
+                    Based on your previous bookings, we think you'll love these {selectedCategory.toLowerCase()}
+                  </p>
+                  <ListingCardContainer category={selectedCategory} items={recommendedListings} hideTitle={true} />
+                </div>
+              )}
+
+              {/* Regular listings */}
+              <div className={recommendedListings.length > 0 ? "mt-12" : ""}>
+                {recommendedListings.length > 0 && (
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="h-1 w-12 bg-gradient-to-r from-slate-400 to-slate-500 rounded-full" />
+                    <h2 className="text-2xl sm:text-3xl font-bold text-slate-800">
+                      All {selectedCategory}
+                    </h2>
+                    <div className="h-1 flex-1 bg-gradient-to-r from-slate-500 to-transparent rounded-full" />
+                  </div>
+                )}
+                <ListingCardContainer category={selectedCategory} items={listings} />
+              </div>
+            </>
           )}
         </main>
 

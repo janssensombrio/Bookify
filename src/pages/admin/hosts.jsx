@@ -822,10 +822,10 @@ export default function AdminHostsPage() {
                   </button>
                   <TailwindDropdown
                     value={String(pageSize)}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value));
-                      setPage(1);
-                    }}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                      }}
                     options={[
                       { value: "10", label: "10" },
                       { value: "25", label: "25" },
@@ -887,14 +887,14 @@ export default function AdminHostsPage() {
                               ) : (
                                 <div className="w-full h-full bg-gradient-to-br from-slate-200 to-slate-300" />
                               )}
-                            </div>
+                  </div>
                             <div className="min-w-0">
                               <div className="font-medium text-slate-900 truncate">{h.name}</div>
                               <div className="text-[11px] text-slate-500 font-mono">
                                 {h.id.slice(0, 8)}…
-                              </div>
-                            </div>
-                          </div>
+                </div>
+              </div>
+            </div>
                         </td>
                         <td className="py-3 pr-4">
                           <span className="truncate block max-w-[220px]">{h.email}</span>

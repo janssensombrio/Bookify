@@ -38,7 +38,7 @@ const Stars = ({ value = 0, size = 14 }) => {
   );
 };
 
-const ListingCardContainer = ({ category, items }) => {
+const ListingCardContainer = ({ category, items, hideTitle = false }) => {
   const navigate = useNavigate();
 
   const [favorites, setFavorites] = useState([]);
@@ -319,15 +319,17 @@ const ListingCardContainer = ({ category, items }) => {
   };
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 pt-8">
-      <div className="text-left mb-6">
-        <h2 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-500 to-indigo-600 bg-clip-text text-transparent drop-shadow-sm">
-          {category}
-        </h2>
-        <p className="text-muted-foreground text-sm mt-1">
-          Discover our curated {category.toLowerCase()} just for you.
-        </p>
-      </div>
+    <div className={hideTitle ? "" : "px-4 sm:px-6 lg:px-8 pt-8"}>
+      {!hideTitle && (
+        <div className="text-left mb-6">
+          <h2 className="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-blue-500 to-indigo-600 bg-clip-text text-transparent drop-shadow-sm">
+            {category}
+          </h2>
+          <p className="text-muted-foreground text-sm mt-1">
+            Discover our curated {category.toLowerCase()} just for you.
+          </p>
+        </div>
+      )}
 
       {publishedItems.length > 0 ? (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">

@@ -1615,7 +1615,10 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
     }
     setShowPayPal(true);
   };
-  const onClose = () => navigate(-1);
+  const onClose = () => {
+    const category = service?.category || "Services";
+    navigate(`/explore?category=${category}`);
+  };
 
   /* ==================== E-Wallet payment flow ==================== */
   const payWithWallet = async () => {
@@ -2854,14 +2857,21 @@ A confirmation email will follow shortly.`
                     onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
                   />
                 ) : (
-                  <button
-                    type="button"
-                    onClick={handleBookNow}
-                    disabled={!payment || !selectedSchedule}
-                    className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-                  >
-                    Book Now
-                  </button>
+                  (() => {
+                    const currentUser = auth.currentUser;
+                    const hostUid = service?.uid || service?.ownerId || service?.hostId;
+                    const isHost = currentUser && hostUid && currentUser.uid === hostUid;
+                    return (
+                      <button
+                        type="button"
+                        onClick={handleBookNow}
+                        disabled={!payment || !selectedSchedule || isHost}
+                        className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                      >
+                        Book Now
+                      </button>
+                    );
+                  })()
                 )}
               </div>
             </div>
@@ -2905,14 +2915,21 @@ A confirmation email will follow shortly.`
             />
           ) : (
             <>
-              <button
-                type="button"
-                onClick={handleBookNow}
-                disabled={!payment || !selectedSchedule}
-                className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none"
-              >
-                Book Now
-              </button>
+              {(() => {
+                const currentUser = auth.currentUser;
+                const hostUid = service?.uid || service?.ownerId || service?.hostId;
+                const isHost = currentUser && hostUid && currentUser.uid === hostUid;
+                return (
+                  <button
+                    type="button"
+                    onClick={handleBookNow}
+                    disabled={!payment || !selectedSchedule || isHost}
+                    className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none"
+                  >
+                    Book Now
+                  </button>
+                );
+              })()}
               <button
                 type="button"
                 onClick={onClose}

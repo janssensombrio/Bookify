@@ -30,6 +30,8 @@ import AddListingsPage from "./pages/admin/add-listings-page.jsx";
 import AddExperiencesPage from "./pages/admin/add-experiences-page.jsx";
 import AddServicesPage from "./pages/admin/add-services-page.jsx";
 import AddSchedulesPage from "./pages/admin/add-schedules-page.jsx";
+import AddReviewsPage from "./pages/admin/add-reviews-page.jsx";
+import AddAvailabilityPage from "./pages/admin/add-availability-page.jsx";
 
 function App() {
   return (
@@ -68,6 +70,8 @@ function App() {
             <Route path="/admin/add-experiences" element={<AddExperiencesPage />} />
             <Route path="/admin/add-services" element={<AddServicesPage />} />
             <Route path="/admin/add-schedules" element={<AddSchedulesPage />} />
+            <Route path="/admin/add-reviews" element={<AddReviewsPage />} />
+            <Route path="/admin/add-availability" element={<AddAvailabilityPage />} />
             <Route path="/admin/users" />
           </Routes>
       </SidebarProvider>

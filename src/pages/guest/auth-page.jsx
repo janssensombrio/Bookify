@@ -332,7 +332,7 @@ export const AuthPage = () => {
         }
 
         const result = await getRedirectResult(auth);
-        
+
         if (result && result.user) {
           handledRedirectRef.current = true;
           const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
@@ -397,7 +397,7 @@ export const AuthPage = () => {
         handledRedirectRef.current = true;
         // Don't show error if it's just "no redirect result" (normal case)
         if (err?.code !== "auth/no-auth-event" && err?.code !== "auth/unauthorized-domain") {
-          reportAuthError(err);
+        reportAuthError(err);
         }
       }
     })();
@@ -695,10 +695,10 @@ export const AuthPage = () => {
           // If popup fails on mobile, fall back to redirect
           if (isMobile && (popupErr?.code === "auth/popup-blocked" || popupErr?.code === "auth/popup-closed-by-user")) {
             const flow = "login";
-            sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
-            await signInWithRedirect(auth, provider);
-            return;
-          }
+        sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
+        await signInWithRedirect(auth, provider);
+        return;
+      }
           throw popupErr;
         }
       }
@@ -747,9 +747,9 @@ export const AuthPage = () => {
                   transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
                   className="absolute inset-0"
                 >
-                  <h2 className="text-2xl font-semibold text-gray-800">
+            <h2 className="text-2xl font-semibold text-gray-800">
                     Welcome Back!
-                  </h2>
+            </h2>
                   <p className="text-gray-500 text-sm mt-1">
                     We're happy to see you again.
                   </p>
@@ -768,7 +768,7 @@ export const AuthPage = () => {
                   </h2>
                   <p className="text-gray-500 text-sm mt-1">
                     Join us and explore the world of Bookify.
-                  </p>
+            </p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -814,9 +814,9 @@ export const AuthPage = () => {
           >
             <div className="relative">
               <AnimatePresence mode="wait" initial={false}>
-                {mode === "login" ? (
-                  <motion.div
-                    key="login"
+              {mode === "login" ? (
+                <motion.div
+                  key="login"
                     initial={{ opacity: 0, x: 20, y: 10, scale: 0.98 }}
                     animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
                     exit={{ opacity: 0, x: -20, y: -10, scale: 0.98 }}
@@ -824,8 +824,8 @@ export const AuthPage = () => {
                       duration: 0.35,
                       ease: [0.4, 0, 0.2, 1]
                     }}
-                    className="space-y-4"
-                  >
+                  className="space-y-4"
+                >
                   <input
                     name="email"
                     type="email"
@@ -866,10 +866,10 @@ export const AuthPage = () => {
                   >
                     Log In
                   </button>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="signup"
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="signup"
                     initial={{ opacity: 0, x: -20, y: 10, scale: 0.98 }}
                     animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
                     exit={{ opacity: 0, x: 20, y: -10, scale: 0.98 }}
@@ -877,8 +877,8 @@ export const AuthPage = () => {
                       duration: 0.35,
                       ease: [0.4, 0, 0.2, 1]
                     }}
-                    className="space-y-4"
-                  >
+                  className="space-y-4"
+                >
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input
                       name="firstName"
@@ -1002,9 +1002,9 @@ export const AuthPage = () => {
                   >
                     Sign Up
                   </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                </motion.div>
+              )}
+            </AnimatePresence>
             </div>
           </form>
 
@@ -1174,11 +1174,11 @@ export const AuthPage = () => {
                         } catch (popupErr) {
                           // If popup fails on mobile, fall back to redirect
                           if (isMobile && (popupErr?.code === "auth/popup-blocked" || popupErr?.code === "auth/popup-closed-by-user")) {
-                            sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
-                            await signInWithRedirect(auth, provider);
+                          sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
+                          await signInWithRedirect(auth, provider);
                           } else {
                             throw popupErr;
-                          }
+                        } 
                         }
                       } catch (err) {
                         console.error("Google sign-up error:", err);

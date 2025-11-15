@@ -1668,7 +1668,10 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const isDisabledDay = (date) =>
     bookedIntervals.some(({ start, end }) => dayBetweenInclusive(startOfDay(date), start, end));
 
-  const onClose = () => navigate(-1);
+  const onClose = () => {
+    const category = listing?.category || "Homes";
+    navigate(`/explore?category=${category}`);
+  };
 
   const hasDiscount = !!(listing.discountType && numberOr(listing.discountValue) > 0);
   const discountText =
@@ -2656,6 +2659,11 @@ function BookingSidebar(props) {
     couponInput, setCouponInput, couponErr, appliedCoupon, applyCouponCode, clearCoupon, autoPromo,
   } = props;
 
+  // Check if current user is the host
+  const currentUser = auth.currentUser;
+  const hostUid = listing?.uid || listing?.ownerId || listing?.hostId;
+  const isHost = currentUser && hostUid && currentUser.uid === hostUid;
+
   const nAdultsCap = numberOr(listing?.guests?.adults, NaN);
   const nChildrenCap = numberOr(listing?.guests?.children, NaN);
   const nInfantsCap = numberOr(listing?.guests?.infants, NaN);
@@ -3000,8 +3008,8 @@ function BookingSidebar(props) {
           ) : (
             <button
               type="button"
-              disabled={!payment}
-              aria-disabled={!payment}
+              disabled={!payment || isHost}
+              aria-disabled={!payment || isHost}
               onClick={handleBookNow}
               className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >
@@ -3061,6 +3069,10 @@ function FooterActions({
   isPayingWallet,
   onPointsAwarded,
 }) {
+  // Check if current user is the host
+  const currentUser = auth.currentUser;
+  const hostUid = listing?.uid || listing?.ownerId || listing?.hostId;
+  const isHost = currentUser && hostUid && currentUser.uid === hostUid;
   return (
     <div
       className="w-full bg-white/80 backdrop-blur supports-[backdrop-filter]:bg-white/70 border-t border-slate-200 px-4 pt-4 pb-6 lg:hidden"
@@ -3089,8 +3101,8 @@ function FooterActions({
           <>
             <button
               type="button"
-              disabled={!payment}
-              aria-disabled={!payment}
+              disabled={!payment || isHost}
+              aria-disabled={!payment || isHost}
               onClick={handleBookNow}
               className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
             >

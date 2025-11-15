@@ -450,12 +450,12 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
               {/* Avatar preview with enhanced styling */}
               <div className="relative shrink-0">
                 <div className="h-20 w-20 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden ring-4 ring-white shadow-lg">
-                  {photoURL ? (
-                    <img src={photoURL} alt="Avatar preview" className="h-full w-full object-cover" />
-                  ) : (
+                {photoURL ? (
+                  <img src={photoURL} alt="Avatar preview" className="h-full w-full object-cover" />
+                ) : (
                     <div className="h-full w-full grid place-items-center bg-gradient-to-br from-blue-400 to-indigo-500">
                       <User className="text-white w-8 h-8" />
-                    </div>
+                  </div>
                   )}
                 </div>
                 {photoURL && (
@@ -465,39 +465,39 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
 
               {/* Upload controls */}
               <div className="flex-1 flex flex-col sm:flex-row items-start sm:items-center gap-3 min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    id="avatar-upload"
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={onPickAvatar}
-                  />
-                  <label
-                    htmlFor="avatar-upload"
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  id="avatar-upload"
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={onPickAvatar}
+                />
+                <label
+                  htmlFor="avatar-upload"
                     className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer disabled:opacity-60 font-medium"
-                  >
-                    {uploadingAvatar ? (
+                >
+                  {uploadingAvatar ? (
                       <Loader2 size={18} className="animate-spin shrink-0" />
-                    ) : (
+                  ) : (
                       <UploadCloud size={18} className="shrink-0" />
-                    )}
-                    {uploadingAvatar ? "Uploading…" : "Upload new photo"}
-                  </label>
-
-                  {photoURL && (
-                    <button
-                      type="button"
-                      onClick={() => setPhotoURL("")}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 font-medium"
-                    >
-                      <X size={18} className="shrink-0" /> Remove
-                    </button>
                   )}
-                </div>
-                <p className="text-xs text-slate-500 mt-2 sm:mt-0">JPEG/PNG • up to 10MB • Stored via Cloudinary</p>
+                  {uploadingAvatar ? "Uploading…" : "Upload new photo"}
+                </label>
+
+                {photoURL && (
+                  <button
+                    type="button"
+                    onClick={() => setPhotoURL("")}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 font-medium"
+                  >
+                      <X size={18} className="shrink-0" /> Remove
+                  </button>
+                )}
               </div>
+                <p className="text-xs text-slate-500 mt-2 sm:mt-0">JPEG/PNG • up to 10MB • Stored via Cloudinary</p>
+            </div>
             </div>
           </div>
 
@@ -518,7 +518,7 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
                     ? "bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default"
                     : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400 disabled:opacity-60"
                 }`}
-              >
+                >
                 {emailVerified ? (
                   <>
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
@@ -530,9 +530,9 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
                   <>
                     <Mail size={18} className="shrink-0" /> Send verification
                   </>
-                )}
-              </button>
-            </div>
+                    )}
+                  </button>
+                </div>
           </div>
 
           {/* Actions — Enhanced button styling */}
@@ -562,7 +562,7 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
 
           {saveMsg && (
             <div className="pt-2">
-              <SettingsAlert kind={saveMsg.type === "success" ? "success" : "error"}>{saveMsg.text}</SettingsAlert>
+            <SettingsAlert kind={saveMsg.type === "success" ? "success" : "error"}>{saveMsg.text}</SettingsAlert>
             </div>
           )}
         </div>
@@ -1668,32 +1668,32 @@ export default function ProfilePage() {
               <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-indigo-50/30 to-purple-50/20 pointer-events-none" />
               
               <div className="relative p-6 sm:p-8">
-                <div className="flex flex-col items-center text-center">
+              <div className="flex flex-col items-center text-center">
                   {/* Avatar with enhanced styling */}
                   <div className="relative">
-                    {profileView?.photoURL ? (
+                {profileView?.photoURL ? (
                       <div className="relative">
-                        <img
-                          src={profileView.photoURL}
-                          alt="Avatar"
+                  <img
+                    src={profileView.photoURL}
+                    alt="Avatar"
                           className="w-28 h-28 rounded-full object-cover shadow-xl ring-4 ring-white/80"
-                          loading="lazy"
-                        />
+                    loading="lazy"
+                  />
                         <div className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/20 pointer-events-none" />
                       </div>
-                    ) : (
+                ) : (
                       <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-xl ring-4 ring-white/80">
                         <User className="text-white w-12 h-12" />
-                      </div>
-                    )}
+                  </div>
+                )}
                     {/* Status indicator */}
                     <div className="absolute bottom-0 right-0 w-5 h-5 bg-emerald-500 rounded-full border-4 border-white shadow-md" />
                   </div>
 
                   {/* Name with better typography */}
                   <h3 className="mt-6 text-xl font-bold text-slate-900 tracking-tight">
-                    {profileView?.displayName || "Guest User"}
-                  </h3>
+                  {profileView?.displayName || "Guest User"}
+                </h3>
                   
                   {/* Email with improved styling */}
                   <div className="mt-2 flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-slate-50/80 border border-slate-200/60 max-w-full">
@@ -1701,7 +1701,7 @@ export default function ProfilePage() {
                     <span className="text-sm text-slate-600 break-words truncate max-w-full">
                       {profileView?.email || "—"}
                     </span>
-                  </div>
+                </div>
 
                   {/* Stats cards with enhanced design */}
                   <div className="mt-6 grid grid-cols-2 gap-3 w-full">
@@ -1709,9 +1709,9 @@ export default function ProfilePage() {
                       <div className="flex items-center gap-2 text-slate-600 mb-2">
                         <div className="p-1.5 rounded-lg bg-blue-100/80">
                           <CalendarDays size={14} className="text-blue-600 shrink-0" />
-                        </div>
+                    </div>
                         <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Joined</span>
-                      </div>
+                  </div>
                       <p className="text-sm font-semibold text-slate-900">{createdAtText(profileView)}</p>
                     </div>
                     <div className="rounded-2xl border border-slate-200/60 bg-gradient-to-br from-white to-slate-50/50 p-4 min-w-0 shadow-sm hover:shadow-md transition-shadow">
@@ -1722,27 +1722,27 @@ export default function ProfilePage() {
                         <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Last Login</span>
                       </div>
                       <p className="text-sm font-semibold text-slate-900 truncate">{lastLoginText(profileView)}</p>
-                    </div>
                   </div>
+                </div>
 
                   {/* Action buttons with enhanced styling */}
                   <div className="mt-6 flex flex-col gap-2 w-full">
-                    <button
-                      onClick={() => setTab("settings")}
+                  <button
+                    onClick={() => setTab("settings")}
                       className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all duration-200 font-medium"
-                    >
+                  >
                       <Edit3 size={18} className="shrink-0" />
-                      Edit Account
-                    </button>
+                    Edit Account
+                  </button>
                     {/* Points Button with enhanced styling */}
-                    <button
-                      onClick={() => setShowPoints(true)}
+                  <button
+                    onClick={() => setShowPoints(true)}
                       className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-amber-700 bg-gradient-to-br from-amber-50 to-amber-100/80 border-2 border-amber-200/60 hover:from-amber-100 hover:to-amber-200 hover:border-amber-300 transition-all duration-200 font-medium shadow-sm hover:shadow-md"
-                    >
+                  >
                       <Coins size={18} className="shrink-0" />
                       <span>Points</span>
                       <span className="font-bold">{points.toLocaleString()}</span>
-                    </button>
+                  </button>
                   </div>
                 </div>
               </div>
@@ -1857,9 +1857,9 @@ export default function ProfilePage() {
                                 item={item}
                                 kind={item.kind}
                                 onClick={() => setModal({ type: item.kind, id: item.id })}
-                              />
+                      />
                             ))}
-                          </div>
+                    </div>
                         ) : null;
                       })()
                     )}
@@ -1914,39 +1914,39 @@ export default function ProfilePage() {
 
           {/* Preferences Card - Visible only on "Account Settings" tab */}
           {tab === "settings" && (
-            <div
-              id="settings-prefs"
-              ref={prefSectionRef}
-              className="mt-6 rounded-3xl border border-slate-200 bg-white/80 shadow p-6"
-            >
-            <div className="space-y-6">
-              <SectionTitle icon={Settings}>Preferences</SectionTitle>
+                    <div
+                      id="settings-prefs"
+                      ref={prefSectionRef}
+                      className="mt-6 rounded-3xl border border-slate-200 bg-white/80 shadow p-6"
+                    >
+                      <div className="space-y-6">
+                        <SectionTitle icon={Settings}>Preferences</SectionTitle>
 
-              {/* Category chooser */}
-              <div className="flex flex-wrap gap-2 -mx-1">
-                <div className="px-1">
-                  <ChipToggle selected={prefCategory === "homes"} onClick={() => setPrefCategory("homes")}>
-                    <Building2 size={16} className="shrink-0" /> Homes
-                  </ChipToggle>
-                </div>
-                <div className="px-1">
-                  <ChipToggle
-                    selected={prefCategory === "experiences"}
-                    onClick={() => setPrefCategory("experiences")}
-                  >
-                    <Sparkles size={16} className="shrink-0" /> Experiences
-                  </ChipToggle>
-                </div>
-                <div className="px-1">
-                  <ChipToggle selected={prefCategory === "services"} onClick={() => setPrefCategory("services")}>
-                    <Handshake size={16} className="shrink-0" /> Services
-                  </ChipToggle>
-                </div>
-              </div>
+                        {/* Category chooser */}
+                        <div className="flex flex-wrap gap-2 -mx-1">
+                          <div className="px-1">
+                            <ChipToggle selected={prefCategory === "homes"} onClick={() => setPrefCategory("homes")}>
+                              <Building2 size={16} className="shrink-0" /> Homes
+                            </ChipToggle>
+                          </div>
+                          <div className="px-1">
+                            <ChipToggle
+                              selected={prefCategory === "experiences"}
+                              onClick={() => setPrefCategory("experiences")}
+                            >
+                              <Sparkles size={16} className="shrink-0" /> Experiences
+                            </ChipToggle>
+                          </div>
+                          <div className="px-1">
+                            <ChipToggle selected={prefCategory === "services"} onClick={() => setPrefCategory("services")}>
+                              <Handshake size={16} className="shrink-0" /> Services
+                            </ChipToggle>
+                          </div>
+                        </div>
 
-              {/* HOMES */}
-              {prefCategory === "homes" && (
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+                        {/* HOMES */}
+                        {prefCategory === "homes" && (
+                          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
                             <SectionTitle icon={Building2}>Home Preferences (quality &amp; expectations)</SectionTitle>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2922,9 +2922,9 @@ export default function ProfilePage() {
                             )}
                           </div>
                         )}
-            </div>
-          </div>
-          )}
+                      </div>
+                    </div>
+                )}
         </div>
       </main>
 
