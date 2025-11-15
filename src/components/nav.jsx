@@ -128,7 +128,7 @@ function Navigation({ onOpenHostModal, onCategorySelect }) {
               onClick={handleHostClick}
               className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-md shadow-blue-500/30 transition-all"
             >
-              <PlusCircleIcon className="w-5 h-5" />
+              <HomeModernIcon className="w-5 h-5" />
               {isHost ? "Switch to Hosting" : "Become a Host"}
             </button>
           </div>

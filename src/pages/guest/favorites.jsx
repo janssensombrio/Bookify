@@ -22,7 +22,7 @@ import HomeDetailsModal from "../../components/HomeDetailsModal";
 import ExperienceDetailsModal from "../../components/ExperienceDetailsModal";
 import ServiceDetailsModal from "../../components/ServiceDetailsModal";
 
-import { Menu, Heart, Compass } from "lucide-react";
+import { Menu, Heart, Compass, Home } from "lucide-react";
 
 const FavoritesPage = () => {
   const navigate = useNavigate();
@@ -176,7 +176,7 @@ const FavoritesPage = () => {
             onClick={handleHostClick}
             className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
           >
-            <Compass size={18} />
+            <Home size={18} />
             {isHost ? "Switch to Hosting" : "Become a Host"}
           </button>
         </div>

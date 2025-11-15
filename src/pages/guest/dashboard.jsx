@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import {
   Menu,
   ChevronRight,
@@ -12,6 +12,7 @@ import {
   Heart,
   Star,
   Coins,
+  Home,
 } from "lucide-react";
 
 import Sidebar from "./components/sidebar.jsx";
@@ -33,6 +34,7 @@ import {
 
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
+import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
 
 /* ---------------- utils ---------------- */
 const peso = (n) =>
@@ -100,6 +102,7 @@ const getListingIdFromBooking = (b) =>
 /* ---------------- component ---------------- */
 export default function Dashboard() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
   const [user, setUser] = useState(() => auth.currentUser);
@@ -127,6 +130,9 @@ export default function Dashboard() {
   const [totalSpentYTD, setTotalSpentYTD] = useState(0);
   const [totalPoints, setTotalPoints] = useState(0);
 
+  // Points modal for signup bonus
+  const [pointsModal, setPointsModal] = useState({ open: false, points: 0, reason: "" });
+
   /* auth watch */
   useEffect(() => auth.onAuthStateChanged((u) => setUser(u || null)), []);
 
@@ -149,6 +155,43 @@ export default function Dashboard() {
     const key = user?.uid ? `hostPoliciesAccepted:${user.uid}` : null;
     if (key) setPoliciesAccepted(localStorage.getItem(key) === "true");
   }, [user?.uid]);
+
+  // Check for signup points award when dashboard loads
+  useEffect(() => {
+    const checkSignupPoints = () => {
+      const signupPointsData = sessionStorage.getItem("signupPointsAwarded");
+      console.log("Checking for signup points:", signupPointsData, "User:", user?.uid);
+      
+      if (signupPointsData && user?.uid) {
+        try {
+          const data = JSON.parse(signupPointsData);
+          console.log("Showing signup points modal:", data);
+          setPointsModal({
+            open: true,
+            points: data.points,
+            reason: data.reason
+          });
+          // Clear from sessionStorage after showing
+          sessionStorage.removeItem("signupPointsAwarded");
+        } catch (err) {
+          console.error("Error parsing signup points data:", err);
+          sessionStorage.removeItem("signupPointsAwarded");
+        }
+      }
+    };
+
+    // Check immediately if user is already set
+    if (user?.uid) {
+      checkSignupPoints();
+    }
+    
+    // Also check after a delay to catch cases where user loads after component mount
+    const timer = setTimeout(() => {
+      checkSignupPoints();
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [user?.uid, location.pathname]); // Check when user or route changes
 
   const handleHostClick = () => {
     if (isHost) navigate("/hostpage");
@@ -464,7 +507,7 @@ export default function Dashboard() {
       <main className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ml-0 ${sidebarOpen ? "md:ml-72" : "md:ml-20"}`}>
         {/* Navbar */}
         <header className={`fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"}`}>
-          <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-0 py-3">
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -485,7 +528,7 @@ export default function Dashboard() {
               onClick={handleHostClick}
               className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
             >
-              <Compass size={18} />
+              <Home size={18} />
               {isHost ? "Switch to Hosting" : "Become a Host"}
             </button>
           </div>
@@ -651,6 +694,15 @@ export default function Dashboard() {
         {/* Host Modals */}
         {showPoliciesModal && <HostPoliciesModal onClose={() => setShowPoliciesModal(false)} onAgree={handleAgreePolicies} />}
         {showHostModal && <HostCategModal onClose={() => setShowHostModal(false)} onSelectCategory={() => setShowHostModal(false)} />}
+        
+        {/* Points Notification Modal */}
+        <PointsNotificationModal
+          open={pointsModal.open}
+          onClose={() => setPointsModal({ open: false, points: 0, reason: "" })}
+          points={pointsModal.points}
+          reason={pointsModal.reason}
+          title="Points Earned!"
+        />
       </main>
     </div>
   );

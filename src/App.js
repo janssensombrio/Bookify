@@ -14,6 +14,7 @@ import Dashboard from "./pages/guest/dashboard.jsx";
 import { SidebarProvider } from "./context/SidebarContext";
 import ProfilePage from "./pages/guest/profile.jsx";
 import WalletPage from "./pages/guest/wallet-page.jsx";
+import PointsPage from "./pages/guest/points-page.jsx";
 
 // ⬇️ Import the new page
 import HomeDetailsPage from "./pages/host/HomeDetailsPage";
@@ -25,6 +26,10 @@ import AdminListingsPage from "./pages/admin/listings.jsx";
 import AdminBookingsPage from "./pages/admin/bookings.jsx";
 import AdminWalletPage from "./pages/admin/wallet.jsx";
 import AdminGuestsPage from "./pages/admin/guests.jsx";
+import AddListingsPage from "./pages/admin/add-listings-page.jsx";
+import AddExperiencesPage from "./pages/admin/add-experiences-page.jsx";
+import AddServicesPage from "./pages/admin/add-services-page.jsx";
+import AddSchedulesPage from "./pages/admin/add-schedules-page.jsx";
 
 function App() {
   return (
@@ -45,6 +50,7 @@ function App() {
             <Route path="/guest-messages" element={<GuestMessagesPage />} />
             <Route path="/profile" element={<ProfilePage />} />
             <Route path="/wallet" element={<WalletPage />} />
+            <Route path="/points" element={<PointsPage />} />
 
             {/* ⬇️ New route for the full-page details */}
             <Route path="/homes/:listingId" element={<HomeDetailsPage />} />
@@ -58,6 +64,10 @@ function App() {
             <Route path="/admin/listings" element={<AdminListingsPage />} />
             <Route path="/admin/bookings" element={<AdminBookingsPage />} />
             <Route path="/admin/wallet" element={<AdminWalletPage />} />
+            <Route path="/admin/add-listings" element={<AddListingsPage />} />
+            <Route path="/admin/add-experiences" element={<AddExperiencesPage />} />
+            <Route path="/admin/add-services" element={<AddServicesPage />} />
+            <Route path="/admin/add-schedules" element={<AddSchedulesPage />} />
             <Route path="/admin/users" />
           </Routes>
       </SidebarProvider>

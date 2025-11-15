@@ -1,6 +1,7 @@
 // src/pages/profile/ProfilePage.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { createPortal } from "react-dom";
 import {
   collection,
   getDocs,
@@ -44,7 +45,6 @@ import {
   Shield,
   ShieldCheck,
   Key,
-  Phone,
   Heart,
   BedDouble,
   MapPin,
@@ -76,6 +76,7 @@ import {
   Utensils,
   Menu,
   Compass,
+  Home,
   UploadCloud,
   Coins,
   Wallet,
@@ -293,11 +294,6 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
   const [photoURL, setPhotoURL] = useState("");
   const [emailVerified, setEmailVerified] = useState(!!user?.emailVerified);
 
-  const [phoneNumber, setPhoneNumber] = useState(user?.phoneNumber || "");
-  const [verificationId, setVerificationId] = useState(null);
-  const [smsCode, setSmsCode] = useState("");
-  const [verifyingPhone, setVerifyingPhone] = useState(false);
-  const recaptchaRef = useRef(null);
 
   // Avatar upload state
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -307,18 +303,14 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
     let alive = true;
     const run = async () => {
       try {
-        if (!user) return;
+        if (!user) {
+          if (alive) setLoading(false);
+          return;
+        }
+        // Set initial values immediately from user object to prevent flash
         setDisplayName(user.displayName || "");
         setPhotoURL(user.photoURL || "");
         setEmailVerified(!!user.emailVerified);
-
-        const uref = doc(database, "users", user.uid);
-        const usnap = await getDoc(uref);
-        if (!alive) return;
-        if (usnap.exists()) {
-          const d = usnap.data();
-          setPhoneNumber(d?.phoneNumber || user.phoneNumber || "");
-        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -354,7 +346,6 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
         {
           uid: user.uid,
           email: user.email || "",
-          phoneNumber: phoneNumber || "",
           displayName: displayName || "",
           photoURL: photoURL || "",
           updatedAt: serverTimestamp(),
@@ -379,70 +370,6 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
       setSaveMsg({ type: "success", text: "Verification email sent." });
     } catch (e) {
       setSaveMsg({ type: "error", text: e?.message || "Failed to send verification email." });
-    }
-  };
-
-  const ensureRecaptcha = () => {
-    if (recaptchaRef.current) return recaptchaRef.current;
-    const { RecaptchaVerifier } = require("firebase/auth");
-    const verifier = new RecaptchaVerifier(auth, "recaptcha-container", { size: "invisible" });
-    recaptchaRef.current = verifier;
-    return verifier;
-  };
-
-  const startPhoneVerification = async () => {
-    if (!user) return;
-    if (!phoneNumber || phoneNumber.length < 8) {
-      return setSaveMsg({ type: "error", text: "Enter a valid phone number with country code, e.g. +63…" });
-    }
-    setSaveMsg(null);
-    setVerifyingPhone(true);
-    try {
-      const { linkWithPhoneNumber, PhoneAuthProvider } = require("firebase/auth");
-      const appVerifier = ensureRecaptcha();
-      try {
-        const confirmation = await linkWithPhoneNumber(user, phoneNumber, appVerifier);
-        setVerificationId(confirmation.verificationId);
-        setSaveMsg({ type: "success", text: "SMS sent. Enter the 6-digit code to verify." });
-      } catch (err) {
-        if (err?.code === "auth/provider-already-linked" || err?.code === "auth/credential-already-in-use") {
-          const provider = new PhoneAuthProvider(auth);
-          const vid = await provider.verifyPhoneNumber(phoneNumber, appVerifier);
-          setVerificationId(vid);
-          setSaveMsg({ type: "success", text: "SMS sent. Enter the 6-digit code to verify." });
-        } else {
-          throw err;
-        }
-      }
-    } catch (e) {
-      console.error(e);
-      setSaveMsg({ type: "error", text: e?.message || "Failed to start phone verification." });
-    } finally {
-      setVerifyingPhone(false);
-    }
-  };
-
-  const confirmPhoneCode = async () => {
-    const { updatePhoneNumber, PhoneAuthProvider } = require("firebase/auth");
-    if (!auth.currentUser || !verificationId || !smsCode) return;
-    setSaveMsg(null);
-    setVerifyingPhone(true);
-    try {
-      const cred = PhoneAuthProvider.credential(verificationId, smsCode);
-      await updatePhoneNumber(auth.currentUser, cred);
-      await setDoc(
-        doc(database, "users", auth.currentUser.uid),
-        { uid: auth.currentUser.uid, phoneNumber, phoneVerifiedAt: serverTimestamp() },
-        { merge: true }
-      );
-      setSaveMsg({ type: "success", text: "Phone number verified." });
-      setVerificationId(null);
-      setSmsCode("");
-    } catch (e) {
-      console.error(e);
-      setSaveMsg({ type: "error", text: e?.message || "Invalid code or expired. Try again." });
-    } finally {
-      setVerifyingPhone(false);
     }
   };
 
@@ -485,179 +412,158 @@ function AccountSettingsCard({ user, onProfilePatched, showResetPassword = true 
   };
 
   if (!user) return <div className="text-sm text-slate-600">Signing out…</div>;
-  if (loading) return <div className="text-sm text-slate-600">Loading settings…</div>;
+  if (loading) return <div className="text-sm text-slate-600 animate-pulse">Loading settings…</div>;
 
   // CHANGED LAYOUT: full-width stack (no Security column)
   return (
     <div className="space-y-6">
       {/* Profile */}
       <div>
-        <h4 className="font-semibold mb-4 flex items-center gap-2">
-          <Shield size={18} className="shrink-0" /> Account Settings — Profile
-        </h4>
-        <div className="space-y-4">
-          {/* Display name */}
+        {/* Enhanced header with icon background */}
+        <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-200/60">
+          <div className="p-2 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-md">
+            <Shield size={20} className="text-white shrink-0" />
+          </div>
+          <div>
+            <h4 className="text-lg font-bold text-slate-900">Account Settings</h4>
+            <p className="text-xs text-slate-500 mt-0.5">Manage your profile and account information</p>
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          {/* Display name with enhanced styling */}
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Display name</span>
+            <span className="block text-sm font-semibold text-slate-700 mb-2">Display name</span>
             <input
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 outline-none focus:ring-4 focus:ring-blue-100"
-              placeholder="Your name"
+              className="w-full rounded-xl border-2 border-slate-200 bg-white px-4 py-3 text-slate-900 placeholder:text-slate-400 outline-none transition-all focus:border-blue-500 focus:ring-4 focus:ring-blue-100 hover:border-slate-300"
+              placeholder="Enter your display name"
             />
           </label>
 
-          {/* Profile photo — Cloudinary upload */}
+          {/* Profile photo — Enhanced with better layout */}
           <div className="block">
-            <span className="text-sm font-medium text-slate-700">Profile photo</span>
-            <div className="mt-2 flex items-center gap-3">
-              <div className="h-16 w-16 rounded-full bg-slate-200 overflow-hidden ring-2 ring-white shadow">
-                {photoURL ? (
-                  <img src={photoURL} alt="Avatar preview" className="h-full w-full object-cover" />
-                ) : (
-                  <div className="h-full w-full grid place-items-center">
-                    <ImageIcon className="text-slate-500" />
-                  </div>
+            <span className="block text-sm font-semibold text-slate-700 mb-3">Profile photo</span>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-2xl border-2 border-slate-200/60 bg-gradient-to-br from-slate-50/50 to-white">
+              {/* Avatar preview with enhanced styling */}
+              <div className="relative shrink-0">
+                <div className="h-20 w-20 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 overflow-hidden ring-4 ring-white shadow-lg">
+                  {photoURL ? (
+                    <img src={photoURL} alt="Avatar preview" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="h-full w-full grid place-items-center bg-gradient-to-br from-blue-400 to-indigo-500">
+                      <User className="text-white w-8 h-8" />
+                    </div>
+                  )}
+                </div>
+                {photoURL && (
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full border-2 border-white shadow-md" />
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={fileInputRef}
-                  id="avatar-upload"
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onPickAvatar}
-                />
-                <label
-                  htmlFor="avatar-upload"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow cursor-pointer disabled:opacity-60"
-                >
-                  {uploadingAvatar ? (
-                    <Loader2 size={16} className="animate-spin shrink-0" />
-                  ) : (
-                    <UploadCloud size={16} className="shrink-0" />
-                  )}
-                  {uploadingAvatar ? "Uploading…" : "Upload new photo"}
-                </label>
-
-                {photoURL && (
-                  <button
-                    type="button"
-                    onClick={() => setPhotoURL("")}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50"
+              {/* Upload controls */}
+              <div className="flex-1 flex flex-col sm:flex-row items-start sm:items-center gap-3 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={fileInputRef}
+                    id="avatar-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={onPickAvatar}
+                  />
+                  <label
+                    htmlFor="avatar-upload"
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all duration-200 cursor-pointer disabled:opacity-60 font-medium"
                   >
-                    <X size={16} className="shrink-0" /> Remove
-                  </button>
-                )}
+                    {uploadingAvatar ? (
+                      <Loader2 size={18} className="animate-spin shrink-0" />
+                    ) : (
+                      <UploadCloud size={18} className="shrink-0" />
+                    )}
+                    {uploadingAvatar ? "Uploading…" : "Upload new photo"}
+                  </label>
+
+                  {photoURL && (
+                    <button
+                      type="button"
+                      onClick={() => setPhotoURL("")}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border-2 border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 font-medium"
+                    >
+                      <X size={18} className="shrink-0" /> Remove
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-2 sm:mt-0">JPEG/PNG • up to 10MB • Stored via Cloudinary</p>
               </div>
             </div>
-            <p className="mt-1 text-xs text-slate-500">JPEG/PNG • up to 10MB • Stored via Cloudinary</p>
           </div>
 
-          {/* Primary email + verify */}
+          {/* Primary email + verify — Enhanced styling */}
           <div>
-            <span className="text-sm font-medium text-slate-700">Primary email</span>
-            <div className="mt-1 flex items-center gap-2">
+            <span className="block text-sm font-semibold text-slate-700 mb-2">Primary email</span>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <input
                 disabled
                 value={auth.currentUser?.email || ""}
-                className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700"
+                className="flex-1 rounded-xl border-2 border-slate-200 bg-slate-50/80 px-4 py-3 text-slate-700 cursor-not-allowed"
               />
               <button
                 onClick={sendVerifyEmail}
                 disabled={emailVerified}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-60"
+                className={`inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl border-2 transition-all duration-200 font-medium ${
+                  emailVerified
+                    ? "bg-emerald-50 text-emerald-700 border-emerald-200 cursor-default"
+                    : "bg-white text-slate-700 border-slate-300 hover:bg-slate-50 hover:border-slate-400 disabled:opacity-60"
+                }`}
               >
-                <Mail size={16} className="shrink-0" /> {emailVerified ? "Verified" : "Send verification"}
+                {emailVerified ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                      <path d="M20 6 9 17l-5-5"></path>
+                    </svg>
+                    Verified
+                  </>
+                ) : (
+                  <>
+                    <Mail size={18} className="shrink-0" /> Send verification
+                  </>
+                )}
               </button>
             </div>
           </div>
 
-          {/* Phone + verify */}
-          <div>
-            <span className="text-sm font-medium text-slate-700">Phone (verify)</span>
-            <div className="mt-1 flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1 min-w-0">
-                <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                  <Phone size={16} />
-                </div>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
-                  className="pl-9 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 outline-none focus:ring-4 focus:ring-blue-100"
-                  placeholder="e.g. +63 912 345 6789"
-                />
-              </div>
-              {!verificationId ? (
-                <button
-                  onClick={startPhoneVerification}
-                  disabled={verifyingPhone || !phoneNumber}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow disabled:opacity-60"
-                >
-                  {verifyingPhone ? <Loader2 size={16} className="animate-spin shrink-0" /> : <Shield size={16} className="shrink-0" />}
-                  Verify phone
-                </button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={smsCode}
-                    onChange={(e) => setSmsCode(e.target.value)}
-                    className="w-40 rounded-xl border border-slate-300 bg-white px-3 py-2 outline-none focus:ring-4 focus:ring-blue-100"
-                    placeholder="6-digit code"
-                    aria-label="SMS verification code"
-                  />
-                  <button
-                    onClick={confirmPhoneCode}
-                    disabled={verifyingPhone || !smsCode}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow disabled:opacity-60"
-                  >
-                    {verifyingPhone ? (
-                      <Loader2 size={16} className="animate-spin shrink-0" />
-                    ) : (
-                      <CheckCircle2 size={16} className="shrink-0" />
-                    )}
-                    Confirm
-                  </button>
-                </div>
-              )}
-            </div>
-            <div id="recaptcha-container" />
-          </div>
-
-          {/* Actions */}
-          <div className="flex flex-wrap gap-3 pt-2">
+          {/* Actions — Enhanced button styling */}
+          <div className="flex flex-wrap gap-3 pt-4 border-t border-slate-200/60">
             <button
               onClick={saveProfile}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all duration-200 font-medium"
             >
-              <Save size={16} className="shrink-0" /> Save changes
+              <Save size={18} className="shrink-0" /> Save changes
             </button>
             <button
               onClick={resetProfile}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50"
+              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl border-2 border-slate-300 bg-white hover:bg-slate-50 hover:border-slate-400 transition-all duration-200 font-medium"
             >
-              <RotateCcw size={16} className="shrink-0" /> Reset
+              <RotateCcw size={18} className="shrink-0" /> Reset
             </button>
             {showResetPassword && (
               <button
                 onClick={resetPassword}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white bg-blue-600 hover:bg-blue-700 shadow"
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-xl text-white bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 shadow-md hover:shadow-lg transition-all duration-200 font-medium"
               >
-                <Key size={16} className="shrink-0" /> Reset Password
+                <Key size={18} className="shrink-0" /> Reset Password
               </button>
             )}
             {/* Logout button removed as requested */}
           </div>
 
           {saveMsg && (
-            <SettingsAlert kind={saveMsg.type === "success" ? "success" : "error"}>{saveMsg.text}</SettingsAlert>
+            <div className="pt-2">
+              <SettingsAlert kind={saveMsg.type === "success" ? "success" : "error"}>{saveMsg.text}</SettingsAlert>
+            </div>
           )}
         </div>
       </div>
@@ -821,6 +727,159 @@ function AccessibilityFallback(props) {
 }
 function Eye(props) {
   return <Users {...props} />;
+}
+
+/* ======================= Array Preference Tooltip ======================= */
+function ArrayPrefTooltip({ label, items, x, y, onClose }) {
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const tooltipRef = useRef(null);
+
+  useEffect(() => {
+    if (!tooltipRef.current) return;
+    const rect = tooltipRef.current.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    let tooltipX = x;
+    let tooltipY = y - rect.height - 10;
+    
+    // Adjust if tooltip goes off screen
+    if (tooltipX - rect.width / 2 < 10) tooltipX = rect.width / 2 + 10;
+    if (tooltipX + rect.width / 2 > viewportWidth - 10) tooltipX = viewportWidth - rect.width / 2 - 10;
+    if (tooltipY < 10) tooltipY = y + 30; // Show below if not enough space above
+    if (tooltipY + rect.height > viewportHeight - 10) tooltipY = viewportHeight - rect.height - 10;
+    
+    setPosition({ x: tooltipX, y: tooltipY });
+  }, [x, y]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (tooltipRef.current && !tooltipRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    const handleEscape = (e) => {
+      if (e.key === "Escape") onClose();
+    };
+    
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      ref={tooltipRef}
+      className="fixed z-[9999] bg-white rounded-xl border border-slate-200 shadow-2xl p-4 max-w-sm"
+      style={{
+        left: `${position.x}px`,
+        top: `${position.y}px`,
+        transform: "translateX(-50%)",
+      }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold text-slate-900">{label}</h4>
+        <button
+          onClick={onClose}
+          className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-slate-600"
+          aria-label="Close"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 6 6 18"></path>
+            <path d="m6 6 12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item, idx) => (
+          <span
+            key={idx}
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs sm:text-sm bg-slate-100 border border-slate-200 text-slate-700"
+          >
+            {item}
+          </span>
+        ))}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+/* ======================= Full preference summary for pills ======================= */
+function getFullPrefSummary(prefs, category) {
+  const items = [];
+  
+  if (category === "home") {
+    if (prefs.privacyLevel) items.push({ label: "Privacy level", value: prefs.privacyLevel, isArray: false });
+    if (prefs.cleanlinessTier) items.push({ label: "Cleanliness tier", value: prefs.cleanlinessTier, isArray: false });
+    if (prefs.scentPreference) items.push({ label: "Scent preference", value: prefs.scentPreference, isArray: false });
+    if (prefs.linens?.threadCount) items.push({ label: "Thread count (sheets)", value: `${prefs.linens.threadCount}tc`, isArray: false });
+    if (prefs.linens?.towels) items.push({ label: "Towels", value: prefs.linens.towels, isArray: false });
+    if (prefs.linens?.pillowFirmness) items.push({ label: "Pillow firmness", value: prefs.linens.pillowFirmness, isArray: false });
+    if (prefs.linens?.duvetWarmth) items.push({ label: "Duvet warmth", value: prefs.linens.duvetWarmth, isArray: false });
+    if (prefs.mattressFirmness) items.push({ label: "Mattress firmness", value: prefs.mattressFirmness, isArray: false });
+    if (prefs.noiseTolerance) items.push({ label: "Noise tolerance", value: prefs.noiseTolerance, isArray: false });
+    if (prefs.quietHours) items.push({ label: "Quiet hours", value: prefs.quietHours, isArray: false });
+    if (prefs.lighting) items.push({ label: "Lighting", value: prefs.lighting, isArray: false });
+    if (prefs.workspace?.wifiMinMbps) items.push({ label: "Wi-Fi minimum (Mbps)", value: `${prefs.workspace.wifiMinMbps}Mbps`, isArray: false });
+    if (prefs.workspace?.desk) items.push({ label: "Desk", value: "Yes", isArray: false });
+    if (prefs.workspace?.ergoChair) items.push({ label: "Ergonomic chair", value: "Yes", isArray: false });
+    if (prefs.workspace?.backupWifi) items.push({ label: "Backup Wi-Fi", value: "Yes", isArray: false });
+    if (prefs.hypoallergenic) items.push({ label: "Hypoallergenic", value: "Yes", isArray: false });
+    if (prefs.airPurifier) items.push({ label: "Air purifier", value: "Yes", isArray: false });
+    if (prefs.hotWater) items.push({ label: "Hot water", value: "Yes", isArray: false });
+    if (prefs.kitchenMust?.length) items.push({ label: "Kitchen must-haves", value: `${prefs.kitchenMust.length} items`, isArray: true, arrayData: prefs.kitchenMust });
+    if (prefs.welcomeStocking?.length) items.push({ label: "Welcome stocking (on arrival)", value: `${prefs.welcomeStocking.length} items`, isArray: true, arrayData: prefs.welcomeStocking });
+    if (prefs.accessibility?.length) items.push({ label: "Accessibility", value: `${prefs.accessibility.length} items`, isArray: true, arrayData: prefs.accessibility });
+    if (prefs.safetyRequests?.length) items.push({ label: "Safety requests", value: `${prefs.safetyRequests.length} items`, isArray: true, arrayData: prefs.safetyRequests });
+    if (prefs.hostInteraction) items.push({ label: "Host interaction", value: prefs.hostInteraction, isArray: false });
+    if (prefs.rulesFlexibility) items.push({ label: "Rules flexibility", value: prefs.rulesFlexibility, isArray: false });
+    if (prefs.amenitiesMust?.length) items.push({ label: "Must-have amenities", value: `${prefs.amenitiesMust.length} items`, isArray: true, arrayData: prefs.amenitiesMust });
+    if (prefs.amenitiesNice?.length) items.push({ label: "Nice-to-have amenities", value: `${prefs.amenitiesNice.length} items`, isArray: true, arrayData: prefs.amenitiesNice });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  } else if (category === "experience") {
+    if (prefs.pace) items.push({ label: "Pace", value: prefs.pace, isArray: false });
+    if (prefs.depth) items.push({ label: "Depth", value: prefs.depth, isArray: false });
+    if (prefs.personalization) items.push({ label: "Personalization", value: prefs.personalization, isArray: false });
+    if (prefs.groupType) items.push({ label: "Group type", value: prefs.groupType, isArray: false });
+    if (prefs.guideStyle) items.push({ label: "Guide style", value: prefs.guideStyle, isArray: false });
+    if (prefs.crowdTolerance) items.push({ label: "Crowd tolerance", value: prefs.crowdTolerance, isArray: false });
+    if (prefs.languageLevel) items.push({ label: "Language level", value: prefs.languageLevel, isArray: false });
+    if (prefs.audioSupport) items.push({ label: "Audio support (mic/PA)", value: "Yes", isArray: false });
+    if (prefs.photoConsent) items.push({ label: "Photo consent", value: prefs.photoConsent, isArray: false });
+    if (prefs.photosPriority) items.push({ label: "Photos priority", value: "Yes", isArray: false });
+    if (prefs.durationFlexibility) items.push({ label: "Duration flexibility", value: prefs.durationFlexibility, isArray: false });
+    if (prefs.weatherPlan) items.push({ label: "Weather plan", value: prefs.weatherPlan, isArray: false });
+    if (prefs.comfortAccessibility?.length) items.push({ label: "Comfort / Accessibility", value: `${prefs.comfortAccessibility.length} items`, isArray: true, arrayData: prefs.comfortAccessibility });
+    if (prefs.dietRestrictions?.length) items.push({ label: "Diet restrictions", value: `${prefs.dietRestrictions.length} items`, isArray: true, arrayData: prefs.dietRestrictions });
+    if (prefs.allergies?.length) items.push({ label: "Allergies", value: `${prefs.allergies.length} items`, isArray: true, arrayData: prefs.allergies });
+    if (prefs.themes?.length) items.push({ label: "Themes / Interests", value: `${prefs.themes.length} items`, isArray: true, arrayData: prefs.themes });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  } else if (category === "service") {
+    if (prefs.thoroughness) items.push({ label: "Thoroughness", value: prefs.thoroughness, isArray: false });
+    if (prefs.timePrecision) items.push({ label: "Time precision", value: prefs.timePrecision, isArray: false });
+    if (prefs.proofOfWork?.length) items.push({ label: "Proof of work", value: `${prefs.proofOfWork.length} items`, isArray: true, arrayData: prefs.proofOfWork });
+    if (prefs.immediateDamageReport) items.push({ label: "Immediate damage report", value: "Immediate", isArray: false });
+    if (prefs.ecoSupplies) items.push({ label: "Eco supplies", value: "Yes", isArray: false });
+    if (prefs.unscented) items.push({ label: "Unscented products", value: "Yes", isArray: false });
+    if (prefs.linensHandling) items.push({ label: "Linens handling", value: prefs.linensHandling, isArray: false });
+    if (prefs.professionalism?.length) items.push({ label: "Professionalism", value: `${prefs.professionalism.length} items`, isArray: true, arrayData: prefs.professionalism });
+    if (prefs.petSafety) items.push({ label: "Pet safety", value: "Yes", isArray: false });
+    if (prefs.entryMethod) items.push({ label: "Entry", value: prefs.entryMethod, isArray: false });
+    if (prefs.supervision) items.push({ label: "Supervision", value: prefs.supervision, isArray: false });
+    if (prefs.scheduleWindow) items.push({ label: "Schedule window", value: prefs.scheduleWindow, isArray: false });
+    if (prefs.scheduleDays?.length) items.push({ label: "Schedule days", value: prefs.scheduleDays.join(", "), isArray: false });
+    if (prefs.quietHours) items.push({ label: "Quiet hours", value: prefs.quietHours, isArray: false });
+    if (prefs.focusChecklist?.length) items.push({ label: "Focus checklist", value: `${prefs.focusChecklist.length} items`, isArray: true, arrayData: prefs.focusChecklist });
+    if (prefs.serviceTypes?.length) items.push({ label: "Service types", value: `${prefs.serviceTypes.length} items`, isArray: true, arrayData: prefs.serviceTypes });
+    if (prefs.languages?.length) items.push({ label: "Languages", value: `${prefs.languages.length} items`, isArray: true, arrayData: prefs.languages });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  }
+  
+  return items;
 }
 
 /* ======================= Icon mapping for wishlist ======================= */
@@ -1180,11 +1239,14 @@ export default function ProfilePage() {
   // Favorites & bookings
   const [favLoading, setFavLoading] = useState(true);
   const [favorites, setFavorites] = useState([]);
+  const [favoriteListings, setFavoriteListings] = useState([]); // full listing docs with kind
   const [bookLoading, setBookLoading] = useState(true);
   const [bookings, setBookings] = useState([]);
 
   const [modal, setModal] = useState(null); // {type:'home'|'experience'|'service', id}
   const [tab, setTab] = useState("wishlist"); // wishlist | recent | settings
+  const [wishlistFilter, setWishlistFilter] = useState("home"); // home | experience | service
+  const [arrayPrefTooltip, setArrayPrefTooltip] = useState(null); // { label, items, x, y }
   const tabs = useMemo(
     () => [
       { key: "wishlist", label: "Wishlist", icon: Heart },
@@ -1208,7 +1270,7 @@ export default function ProfilePage() {
 
   const [prefCategory, setPrefCategory] = useState("homes");
 
-  // --- Load wishlist favorites (IDs) ---
+  // --- Load wishlist favorites (IDs + full listings) ---
   useEffect(() => {
     const runFavs = async () => {
       if (!auth.currentUser) {
@@ -1220,11 +1282,50 @@ export default function ProfilePage() {
         const favRef = collection(database, "favorites");
         const qFav = query(favRef, where("userId", "==", auth.currentUser.uid));
         const snap = await getDocs(qFav);
-        const ids = snap.docs.map((d) => d.data()?.listingId).filter(Boolean);
+        const favData = snap.docs.map((d) => d.data());
+        const ids = favData.map((f) => f.listingId).filter(Boolean);
         setFavorites(Array.from(new Set(ids)));
+
+        // Load full listing data with category detection
+        const listingsPromises = favData.map(async (f) => {
+          if (!f.listingId) return null;
+          try {
+            const found = await getListingLike(database, f.listingId);
+            if (!found || !found.snap.exists()) return null;
+            
+            const data = found.snap.data() || {};
+            // Only include published listings
+            if (data.status !== "published") return null;
+
+            // Determine kind from category or collection name
+            const kindFromCategory = categoryToKind(data.category || data.type || data.kind);
+            const kindFromCollection = (found.col || "").toLowerCase().startsWith("exp")
+              ? "experience"
+              : (found.col || "").toLowerCase().startsWith("serv")
+              ? "service"
+              : (found.col || "").toLowerCase().startsWith("home")
+              ? "home"
+              : null;
+            
+            const kind = kindFromCategory || kindFromCollection || "home";
+
+            return {
+              id: found.snap.id,
+              ...data,
+              kind,
+            };
+          } catch (err) {
+            console.warn("Failed to load listing:", f.listingId, err);
+            return null;
+          }
+        });
+
+        const listings = (await Promise.all(listingsPromises)).filter(Boolean);
+        setFavoriteListings(listings);
       } catch (e) {
         console.error("Wish list fetch failed:", e);
         setFavorites([]);
+        setFavoriteListings([]);
       } finally {
         setFavLoading(false);
       }
@@ -1398,14 +1499,16 @@ export default function ProfilePage() {
     setWithdrawingPts(true);
     try {
       const pointsRef = doc(database, "points", u.uid);
-      const walletRef = doc(database, "wallets", u.uid);
-      const txRef = doc(collection(database, "wallets", u.uid, "transactions"));
+      const walletRef = doc(database, "guestWallets", u.uid);
+      const walletTxRef = doc(collection(database, "guestWallets", u.uid, "transactions"));
+      const pointsTxRef = doc(collection(database, "points", u.uid, "transactions"));
 
       await runTransaction(database, async (tx) => {
         // read points
         const pSnap = await tx.get(pointsRef);
         const curPts = Number(pSnap.data()?.balance || 0);
         if (want > curPts) throw new Error("Not enough points.");
+        const newPts = curPts - want;
 
         // read wallet
         const wSnap = await tx.get(walletRef);
@@ -1413,13 +1516,13 @@ export default function ProfilePage() {
         const newBal = curBal + php;
 
         // write points
-        tx.set(pointsRef, { uid: u.uid, balance: curPts - want, updatedAt: serverTimestamp() }, { merge: true });
+        tx.set(pointsRef, { uid: u.uid, balance: newPts, updatedAt: serverTimestamp() }, { merge: true });
 
         // ensure wallet + write
         tx.set(walletRef, { uid: u.uid, balance: newBal, currency: "PHP", updatedAt: serverTimestamp() }, { merge: true });
 
         // add wallet transaction
-        tx.set(txRef, {
+        tx.set(walletTxRef, {
           uid: u.uid,
           type: "points_redeem",
           delta: +php,
@@ -1428,6 +1531,19 @@ export default function ProfilePage() {
           method: "rewards",
           note: `Redeemed ${want} pts`,
           balanceAfter: newBal,
+          timestamp: serverTimestamp(),
+        });
+
+        // add points transaction record
+        tx.set(pointsTxRef, {
+          uid: u.uid,
+          type: "points_redeem",
+          delta: -want,
+          amount: want,
+          status: "completed",
+          method: "rewards",
+          note: `Redeemed ${want} pts for ₱${php.toFixed(2)}`,
+          balanceAfter: newPts,
           timestamp: serverTimestamp(),
         });
       });
@@ -1496,7 +1612,7 @@ export default function ProfilePage() {
             onClick={handleHostClick}
             className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
           >
-            <Compass size={18} />
+            <Home size={18} />
             {isHost ? "Switch to Hosting" : "Become a Host"}
           </button>
         </div>
@@ -1522,22 +1638,22 @@ export default function ProfilePage() {
 
           {/* Page tabs */}
           <div className="-mx-1 mb-6 overflow-x-auto">
-            <div className="flex items-center gap-2 px-1">
+            <div className="flex items-center gap-3 px-1">
               {tabs.map(({ key, label, icon: Icon }) => {
                 const active = tab === key;
                 return (
                   <button
                     key={key}
                     onClick={() => setTab(key)}
-                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border transition whitespace-nowrap focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${
+                    className={`inline-flex items-center gap-2.5 px-5 py-3 rounded-xl text-sm font-semibold border-2 transition-all duration-200 whitespace-nowrap focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 ${
                       active
-                        ? "bg-blue-600 text-white border-blue-600 shadow"
-                        : "bg-white/80 text-slate-700 border-slate-200 hover:bg-white"
+                        ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white border-blue-600 shadow-lg shadow-blue-500/30 scale-105"
+                        : "bg-white/90 text-slate-700 border-slate-200 hover:bg-white hover:border-slate-300 hover:shadow-md hover:scale-[1.02] active:scale-100"
                     }`}
                     aria-current={active ? "page" : undefined}
                   >
-                    <Icon size={16} className="shrink-0" />
-                    {label}
+                    <Icon size={18} className={`shrink-0 ${active ? "text-white" : "text-slate-600"}`} />
+                    <span>{label}</span>
                   </button>
                 );
               })}
@@ -1545,64 +1661,89 @@ export default function ProfilePage() {
           </div>
 
           {/* Main grid: Profile summary + content panels */}
-          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
             {/* Left: Profile summary */}
-            <div className="lg:col-span-1 rounded-3xl border border-slate-200 bg-white/80 shadow p-6 self-start">
-              <div className="flex flex-col items-center text-center">
-                {profileView?.photoURL ? (
-                  <img
-                    src={profileView.photoURL}
-                    alt="Avatar"
-                    className="w-24 h-24 rounded-full object-cover shadow-md"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-md">
-                    <User className="text-white w-10 h-10" />
+            <div className="lg:col-span-1 rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg overflow-hidden relative">
+              {/* Decorative gradient background */}
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-50/50 via-indigo-50/30 to-purple-50/20 pointer-events-none" />
+              
+              <div className="relative p-6 sm:p-8">
+                <div className="flex flex-col items-center text-center">
+                  {/* Avatar with enhanced styling */}
+                  <div className="relative">
+                    {profileView?.photoURL ? (
+                      <div className="relative">
+                        <img
+                          src={profileView.photoURL}
+                          alt="Avatar"
+                          className="w-28 h-28 rounded-full object-cover shadow-xl ring-4 ring-white/80"
+                          loading="lazy"
+                        />
+                        <div className="absolute inset-0 rounded-full bg-gradient-to-br from-blue-400/20 to-indigo-500/20 pointer-events-none" />
+                      </div>
+                    ) : (
+                      <div className="w-28 h-28 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-xl ring-4 ring-white/80">
+                        <User className="text-white w-12 h-12" />
+                      </div>
+                    )}
+                    {/* Status indicator */}
+                    <div className="absolute bottom-0 right-0 w-5 h-5 bg-emerald-500 rounded-full border-4 border-white shadow-md" />
                   </div>
-                )}
 
-                <h3 className="mt-4 text-lg font-semibold text-slate-900">
-                  {profileView?.displayName || "Guest User"}
-                </h3>
-                <div className="mt-1 flex items-center gap-2 text-slate-600">
-                  <Mail size={16} />
-                  <span className="text-sm break-words">{profileView?.email || "—"}</span>
-                </div>
+                  {/* Name with better typography */}
+                  <h3 className="mt-6 text-xl font-bold text-slate-900 tracking-tight">
+                    {profileView?.displayName || "Guest User"}
+                  </h3>
+                  
+                  {/* Email with improved styling */}
+                  <div className="mt-2 flex items-center justify-center gap-2 px-4 py-2 rounded-full bg-slate-50/80 border border-slate-200/60 max-w-full">
+                    <Mail size={14} className="text-slate-500 shrink-0" />
+                    <span className="text-sm text-slate-600 break-words truncate max-w-full">
+                      {profileView?.email || "—"}
+                    </span>
+                  </div>
 
-                <div className="mt-4 grid grid-cols-2 gap-3 w-full text-left">
-                  <div className="rounded-2xl border border-slate-200 bg-white/70 p-3 min-w-0">
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <CalendarDays size={16} className="shrink-0" />
-                      <span className="text-xs uppercase tracking-wide text-slate-500">Joined</span>
+                  {/* Stats cards with enhanced design */}
+                  <div className="mt-6 grid grid-cols-2 gap-3 w-full">
+                    <div className="rounded-2xl border border-slate-200/60 bg-gradient-to-br from-white to-slate-50/50 p-4 min-w-0 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-2 text-slate-600 mb-2">
+                        <div className="p-1.5 rounded-lg bg-blue-100/80">
+                          <CalendarDays size={14} className="text-blue-600 shrink-0" />
+                        </div>
+                        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Joined</span>
+                      </div>
+                      <p className="text-sm font-semibold text-slate-900">{createdAtText(profileView)}</p>
                     </div>
-                    <p className="mt-1 font-medium">{createdAtText(profileView)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 bg-white/70 p-3 min-w-0">
-                    <div className="flex items-center gap-2 text-slate-700">
-                      <Clock size={16} className="shrink-0" />
-                      <span className="text-xs uppercase tracking-wide text-slate-500">Last Login</span>
+                    <div className="rounded-2xl border border-slate-200/60 bg-gradient-to-br from-white to-slate-50/50 p-4 min-w-0 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-center gap-2 text-slate-600 mb-2">
+                        <div className="p-1.5 rounded-lg bg-indigo-100/80">
+                          <Clock size={14} className="text-indigo-600 shrink-0" />
+                        </div>
+                        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">Last Login</span>
+                      </div>
+                      <p className="text-sm font-semibold text-slate-900 truncate">{lastLoginText(profileView)}</p>
                     </div>
-                    <p className="mt-1 font-medium">{lastLoginText(profileView)}</p>
                   </div>
-                </div>
 
-                <div className="mt-4 flex gap-2 flex-wrap justify-center">
-                  <button
-                    onClick={() => setTab("settings")}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-white bg-blue-600 hover:bg-blue-700 shadow transition"
-                  >
-                    <Edit3 size={16} className="shrink-0" />
-                    Edit Account
-                  </button>
-                  {/* NEW: Points Button */}
-                  <button
-                    onClick={() => setShowPoints(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-amber-700 bg-amber-50 border border-amber-200 hover:bg-white transition"
-                  >
-                    <Coins size={16} className="shrink-0" />
-                    Points • {points.toLocaleString()} pts
-                  </button>
+                  {/* Action buttons with enhanced styling */}
+                  <div className="mt-6 flex flex-col gap-2 w-full">
+                    <button
+                      onClick={() => setTab("settings")}
+                      className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-md hover:shadow-lg transition-all duration-200 font-medium"
+                    >
+                      <Edit3 size={18} className="shrink-0" />
+                      Edit Account
+                    </button>
+                    {/* Points Button with enhanced styling */}
+                    <button
+                      onClick={() => setShowPoints(true)}
+                      className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-amber-700 bg-gradient-to-br from-amber-50 to-amber-100/80 border-2 border-amber-200/60 hover:from-amber-100 hover:to-amber-200 hover:border-amber-300 transition-all duration-200 font-medium shadow-sm hover:shadow-md"
+                    >
+                      <Coins size={18} className="shrink-0" />
+                      <span>Points</span>
+                      <span className="font-bold">{points.toLocaleString()}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1615,43 +1756,113 @@ export default function ProfilePage() {
                   <div className="space-y-4">
                     <SectionTitle icon={Heart}>Wishlist</SectionTitle>
 
-                    <div className="flex flex-col gap-4">
-                      <PrefSummaryCard
-                        title="Homes"
-                        icon={Building2}
-                        lines={summarizeHomes(homePrefs)}
-                        notes={homePrefs.notes}
-                        onEdit={() => {
-                          setTab("settings");
-                          setPrefCategory("homes");
-                          setTimeout(() => prefSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                        }}
-                      />
-
-                      <PrefSummaryCard
-                        title="Experiences"
-                        icon={Sparkles}
-                        lines={summarizeExperiences(expPrefs)}
-                        notes={expPrefs.notes}
-                        onEdit={() => {
-                          setTab("settings");
-                          setPrefCategory("experiences");
-                          setTimeout(() => prefSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                        }}
-                      />
-
-                      <PrefSummaryCard
-                        title="Services"
-                        icon={Handshake}
-                        lines={summarizeServices(srvPrefs)}
-                        notes={srvPrefs.notes}
-                        onEdit={() => {
-                          setTab("settings");
-                          setPrefCategory("services");
-                          setTimeout(() => prefSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-                        }}
-                      />
+                    {/* Category Filter Pills */}
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        { key: "home", label: "Homes", icon: Building2, prefs: homePrefs },
+                        { key: "experience", label: "Experiences", icon: Sparkles, prefs: expPrefs },
+                        { key: "service", label: "Services", icon: Handshake, prefs: srvPrefs },
+                      ].map(({ key, label, icon: Icon, prefs }) => {
+                        const count = favoriteListings.filter((item) => item.kind === key).length;
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => setWishlistFilter(key)}
+                            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                              wishlistFilter === key
+                                ? "bg-blue-600 text-white shadow-md shadow-blue-500/30"
+                                : "bg-white/80 text-slate-700 border border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                            }`}
+                          >
+                            <Icon size={16} className="shrink-0" />
+                            <span className="font-semibold">{label}</span>
+                            {count > 0 && (
+                              <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                                wishlistFilter === key
+                                  ? "bg-blue-500/30 text-blue-100"
+                                  : "bg-slate-200 text-slate-600"
+                              }`}>
+                                {count}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
+
+                    {/* Preferences Summary */}
+                    <div className="py-8">
+                      {(() => {
+                        const selectedPrefs = wishlistFilter === "home" ? homePrefs : wishlistFilter === "experience" ? expPrefs : srvPrefs;
+                        const items = getFullPrefSummary(selectedPrefs, wishlistFilter);
+                        return items.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {items.map((item, idx) => {
+                              const Icon = labelIcon(item.label);
+                              const isClickable = item.isArray && item.arrayData?.length > 0;
+                              return (
+                                <div
+                                  key={idx}
+                                  className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 ${
+                                    isClickable ? "cursor-pointer hover:bg-slate-100 hover:border-slate-300 transition" : ""
+                                  }`}
+                                  onClick={isClickable ? (e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setArrayPrefTooltip({
+                                      label: item.label,
+                                      items: item.arrayData,
+                                      x: rect.left + rect.width / 2,
+                                      y: rect.top,
+                                    });
+                                  } : undefined}
+                                >
+                                  <Icon size={16} className="text-slate-600 shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-xs font-medium text-slate-700 truncate">{item.label}</p>
+                                    <p className="text-xs text-slate-600 truncate">{item.value}</p>
+                                  </div>
+                                  {isClickable && (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-400 shrink-0">
+                                      <circle cx="12" cy="12" r="10"></circle>
+                                      <path d="M12 16v-4"></path>
+                                      <path d="M12 8h.01"></path>
+                                    </svg>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-600 text-center">No preferences set</p>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Wishlist Items Grid */}
+                    {favLoading ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {Array.from({ length: 6 }).map((_, i) => (
+                          <CardSkeleton key={i} />
+                        ))}
+                      </div>
+                    ) : (
+                      (() => {
+                        const filtered = favoriteListings.filter((item) => item.kind === wishlistFilter);
+                        
+                        return filtered.length > 0 ? (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {filtered.map((item) => (
+                              <TinyListingCard
+                                key={item.id}
+                                item={item}
+                                kind={item.kind}
+                                onClick={() => setModal({ type: item.kind, id: item.id })}
+                              />
+                            ))}
+                          </div>
+                        ) : null;
+                      })()
+                    )}
                   </div>
                 )}
 
@@ -1684,50 +1895,58 @@ export default function ProfilePage() {
                   </>
                 )}
 
-                {/* SETTINGS (Account + Preferences inside) */}
+                {/* SETTINGS (Account only) */}
                 {tab === "settings" && (
-                  <>
+                  <div className="transition-opacity duration-200 ease-in-out">
                     <AccountSettingsCard
+                      key={user?.uid}
                       user={user}
                       showResetPassword={showResetPassword}
                       onProfilePatched={(patch) => {
                         setProfileView((pv) => (pv ? { ...pv, ...patch } : patch));
                       }}
                     />
-                    {/* Preferences moved into its own card under Account Settings — Profile */}
-                    <div
-                      id="settings-prefs"
-                      ref={prefSectionRef}
-                      className="mt-6 rounded-3xl border border-slate-200 bg-white/80 shadow p-6"
-                    >
-                      <div className="space-y-6">
-                        <SectionTitle icon={Settings}>Preferences</SectionTitle>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
 
-                        {/* Category chooser */}
-                        <div className="flex flex-wrap gap-2 -mx-1">
-                          <div className="px-1">
-                            <ChipToggle selected={prefCategory === "homes"} onClick={() => setPrefCategory("homes")}>
-                              <Building2 size={16} className="shrink-0" /> Homes
-                            </ChipToggle>
-                          </div>
-                          <div className="px-1">
-                            <ChipToggle
-                              selected={prefCategory === "experiences"}
-                              onClick={() => setPrefCategory("experiences")}
-                            >
-                              <Sparkles size={16} className="shrink-0" /> Experiences
-                            </ChipToggle>
-                          </div>
-                          <div className="px-1">
-                            <ChipToggle selected={prefCategory === "services"} onClick={() => setPrefCategory("services")}>
-                              <Handshake size={16} className="shrink-0" /> Services
-                            </ChipToggle>
-                          </div>
-                        </div>
+          {/* Preferences Card - Visible only on "Account Settings" tab */}
+          {tab === "settings" && (
+            <div
+              id="settings-prefs"
+              ref={prefSectionRef}
+              className="mt-6 rounded-3xl border border-slate-200 bg-white/80 shadow p-6"
+            >
+            <div className="space-y-6">
+              <SectionTitle icon={Settings}>Preferences</SectionTitle>
 
-                        {/* HOMES */}
-                        {prefCategory === "homes" && (
-                          <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
+              {/* Category chooser */}
+              <div className="flex flex-wrap gap-2 -mx-1">
+                <div className="px-1">
+                  <ChipToggle selected={prefCategory === "homes"} onClick={() => setPrefCategory("homes")}>
+                    <Building2 size={16} className="shrink-0" /> Homes
+                  </ChipToggle>
+                </div>
+                <div className="px-1">
+                  <ChipToggle
+                    selected={prefCategory === "experiences"}
+                    onClick={() => setPrefCategory("experiences")}
+                  >
+                    <Sparkles size={16} className="shrink-0" /> Experiences
+                  </ChipToggle>
+                </div>
+                <div className="px-1">
+                  <ChipToggle selected={prefCategory === "services"} onClick={() => setPrefCategory("services")}>
+                    <Handshake size={16} className="shrink-0" /> Services
+                  </ChipToggle>
+                </div>
+              </div>
+
+              {/* HOMES */}
+              {prefCategory === "homes" && (
+                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm space-y-5">
                             <SectionTitle icon={Building2}>Home Preferences (quality &amp; expectations)</SectionTitle>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2703,15 +2922,9 @@ export default function ProfilePage() {
                             )}
                           </div>
                         )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
             </div>
-
-            
-          </section>
+          </div>
+          )}
         </div>
       </main>
 
@@ -2738,6 +2951,17 @@ export default function ProfilePage() {
         busy={withdrawingPts}
         onWithdraw={handleWithdrawPoints}
       />
+
+      {/* Array Preference Tooltip */}
+      {arrayPrefTooltip && (
+        <ArrayPrefTooltip
+          label={arrayPrefTooltip.label}
+          items={arrayPrefTooltip.items}
+          x={arrayPrefTooltip.x}
+          y={arrayPrefTooltip.y}
+          onClose={() => setArrayPrefTooltip(null)}
+        />
+      )}
 
       {/* Hosting Policies + Category Modals */}
       {showPoliciesModal && (

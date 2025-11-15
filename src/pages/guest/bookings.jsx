@@ -41,6 +41,7 @@ import {
   ChevronRight,
   Hash,
   Star,
+  Home,
 } from "lucide-react";
 
 /* ---------------- EmailJS config ---------------- */
@@ -2384,7 +2385,7 @@ export default function BookingsPage() {
             onClick={handleHostClick}
             className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-b from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-700 shadow-md transition-all"
           >
-            <Compass size={18} />
+            <Home size={18} />
             {isHost ? "Switch to Hosting" : "Become a Host"}
           </button>
         </div>

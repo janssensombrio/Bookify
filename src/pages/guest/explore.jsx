@@ -9,7 +9,7 @@ import Sidebar from "./components/sidebar.jsx";
 import "slick-carousel/slick/slick.css";
 import "slick-carousel/slick/slick-theme.css";
 
-import { MapPin, Menu, X, Compass } from "lucide-react";
+import { MapPin, Menu, Compass, Home, Bell } from "lucide-react";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { useSidebar } from "../../context/SidebarContext";
 import ListingCardContainer from "../../components/listing-card-container.jsx";
@@ -57,7 +57,13 @@ export const Explore = () => {
 
   const [selectedCategory, setSelectedCategory] = useState("Homes");
   const [listings, setListings] = useState([]);
+  const [allListings, setAllListings] = useState([]); // Store all listings for filtering
   const [loading, setLoading] = useState(true);
+  const [searchParams, setSearchParams] = useState({
+    destination: "",
+    dates: { start: "", end: "" },
+    guests: { adults: 0, children: 0, infants: 0 },
+  });
   const navigate = useNavigate();
 
   useBodyScrollLock(showHostModal || showPoliciesModal);
@@ -101,8 +107,8 @@ export const Explore = () => {
       const listingsRef = collection(database, "listings");
       const snapshot = await getDocs(listingsRef);
       const listingsData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      const filtered = listingsData.filter((item) => item.category === category);
-      setListings(filtered);
+      setAllListings(listingsData); // Store all listings
+      applyFilters(listingsData, category, searchParams);
     } catch (error) {
       console.error("Error fetching listings:", error);
     } finally {
@@ -110,9 +116,77 @@ export const Explore = () => {
     }
   };
 
+  const applyFilters = (listingsData, category, search) => {
+    let filtered = listingsData.filter((item) => item.category === category && item.status === "published");
+
+    // Filter by destination (location)
+    if (search.destination && search.destination.trim()) {
+      const destinationLower = search.destination.toLowerCase().trim();
+      filtered = filtered.filter((item) => {
+        const location = (item.location || "").toLowerCase();
+        const title = (item.title || "").toLowerCase();
+        const description = (item.description || "").toLowerCase();
+        return location.includes(destinationLower) || 
+               title.includes(destinationLower) || 
+               description.includes(destinationLower);
+      });
+    }
+
+    // Filter by dates (availability) - for homes only
+    if (category === "Homes" && search.dates.start && search.dates.end) {
+      filtered = filtered.filter((item) => {
+        // Check if the listing has availability or if dates are available
+        // This is a simplified check - you may need to check against booked dates
+        if (item.availability && item.availability.start && item.availability.end) {
+          const availStart = new Date(item.availability.start);
+          const availEnd = new Date(item.availability.end);
+          const searchStart = new Date(search.dates.start);
+          const searchEnd = new Date(search.dates.end);
+          return searchStart >= availStart && searchEnd <= availEnd;
+        }
+        // If no availability set, assume it's available
+        return true;
+      });
+    }
+
+    // Filter by guests (capacity)
+    const totalGuests = (search.guests.adults || 0) + (search.guests.children || 0) + (search.guests.infants || 0);
+    if (totalGuests > 0) {
+      filtered = filtered.filter((item) => {
+        if (category === "Homes") {
+          const maxGuests = item.guests?.total || item.maxGuests || 0;
+          return maxGuests >= totalGuests;
+        } else if (category === "Experiences") {
+          const maxParticipants = item.maxParticipants || 0;
+          return maxParticipants >= totalGuests;
+        } else if (category === "Services") {
+          const maxParticipants = item.maxParticipants || 0;
+          return maxParticipants >= totalGuests || maxParticipants === 0; // 0 means no limit
+        }
+        return true;
+      });
+    }
+
+    setListings(filtered);
+  };
+
+  const handleSearch = (searchData) => {
+    setSearchParams(searchData);
+    applyFilters(allListings, selectedCategory, searchData);
+  };
+
   useEffect(() => {
     fetchListings(selectedCategory);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory]);
+
+  // Re-apply filters when search params change
+  useEffect(() => {
+    if (allListings.length > 0) {
+      applyFilters(allListings, selectedCategory, searchParams);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, selectedCategory]);
 
   const SearchSkeleton = () => (
     <div className="
@@ -162,7 +236,7 @@ export const Explore = () => {
     const items = [
       { key: "Homes", icon: MapPin, label: "Homes" },
       { key: "Experiences", icon: Menu, label: "Experiences" },
-      { key: "Services", icon: X, label: "Services" },
+      { key: "Services", icon: Bell, label: "Services" },
     ];
     return (
       <nav
@@ -235,20 +309,20 @@ export const Explore = () => {
               </div>
             </div>
 
-            <nav className="hidden md:flex space-x-6">
+            <nav className="hidden md:flex space-x-4">
               {["Homes", "Experiences", "Services"].map((cat, index) => (
                 <button
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
-                  className={`flex items-center gap-2 px-4 py-1.5 rounded-full font-medium text-sm transition-all ${
+                  className={`flex items-center gap-2.5 px-6 py-3 rounded-full font-semibold text-base transition-all duration-300 transform-gpu ${
                     selectedCategory === cat
-                      ? "bg-blue-600 text-white shadow-md shadow-blue-500/30"
-                      : "text-gray-700 hover:text-blue-600 hover:bg-blue-50"
+                      ? "bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-2xl shadow-blue-500/50 scale-105 border-2 border-blue-400/30"
+                      : "text-gray-700 hover:text-blue-600 hover:bg-blue-50/80 hover:shadow-lg hover:shadow-blue-200/50 hover:scale-105 active:scale-100 border-2 border-transparent hover:border-blue-200/50"
                   }`}
                 >
-                  {index === 0 && <MapPin size={18} />}
-                  {index === 1 && <Menu size={18} />}
-                  {index === 2 && <X size={18} />}
+                  {index === 0 && <MapPin size={20} />}
+                  {index === 1 && <Menu size={20} />}
+                  {index === 2 && <Bell size={20} />}
                   {cat}
                 </button>
               ))}
@@ -258,7 +332,7 @@ export const Explore = () => {
               onClick={handleHostClick}
               className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md transition-all"
             >
-              <Compass size={18} />
+              <Home size={18} />
               {isHost ? "Switch to Hosting" : "Become a Host"}
             </button>
           </div>
@@ -279,7 +353,7 @@ export const Explore = () => {
           </video>
 
           <div className="relative z-[10] flex items-center justify-center h-[400px] sm:h-[500px]">
-            {loading ? <SearchSkeleton /> : <Search />}
+            {loading ? <SearchSkeleton /> : <Search onSearch={handleSearch} />}
           </div>
         </section>
 

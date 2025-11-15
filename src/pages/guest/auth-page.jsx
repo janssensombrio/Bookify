@@ -30,6 +30,7 @@ import BookifyIcon from "../../media/favorite.png";
 // import FormBg from "../../media/beach.mp4";
 import { useNavigate } from "react-router-dom";
 import emailjs from "@emailjs/browser";
+import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
 
 /* ---------------- EmailJS config ---------------- */
 const EMAILJS_SERVICE_ID =
@@ -300,6 +301,8 @@ export const AuthPage = () => {
   const [showTerms, setShowTerms] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
   const [banner, setBanner] = useState(null); // { kind: 'warning'|'error'|'success'|'info', text: string }
+  const [welcomeModal, setWelcomeModal] = useState({ open: false, message: "", redirectPath: null });
+  const [pointsModal, setPointsModal] = useState({ open: false, points: 0, reason: "" });
 
   // Refs to avoid double-handling
   const handledRedirectRef = useRef(false);
@@ -323,30 +326,52 @@ export const AuthPage = () => {
       try {
         if (handledRedirectRef.current) return;
 
-        const result = await getRedirectResult(auth);
-        handledRedirectRef.current = true;
+        // Add a small delay on mobile to ensure the page is fully loaded after redirect
+        if (isMobile) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
 
+        const result = await getRedirectResult(auth);
+        
         if (result && result.user) {
+          handledRedirectRef.current = true;
           const flow = sessionStorage.getItem(GOOGLE_FLOW_KEY) || "login";
           sessionStorage.removeItem(GOOGLE_FLOW_KEY);
 
           if (flow === "signup") {
             await upsertGoogleUser(database, result.user, result);
-            await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
-            alert(`Welcome ${result.user.displayName || result.user.email.split("@")[0]}!`);
-            goToPostLogin(result.user.email);
+            const pointsAwarded = await awardSignupPointsIfNeeded(database, result.user.uid, SIGNUP_BONUS_POINTS);
+            const name = result.user.displayName || result.user.email.split("@")[0];
+            if (pointsAwarded) {
+              // Store in sessionStorage to show on dashboard
+              sessionStorage.setItem("signupPointsAwarded", JSON.stringify({
+                points: SIGNUP_BONUS_POINTS,
+                reason: "Welcome bonus for signing up!"
+              }));
+            }
+            setWelcomeModal({ 
+              open: true, 
+              message: `Welcome ${name}!`, 
+              redirectPath: isAdminEmail(result.user.email) ? "/admin-dashboard" : "/dashboard"
+            });
             return;
           }
 
+          // LOGIN flow
           const email = (result.user.email || "").toLowerCase();
 
           if (isAdminEmail(email)) {
             await upsertAdminIfNeeded(database, result.user);
-            alert(`Welcome Admin ${result.user.displayName || email.split("@")[0]}!`);
-            goToPostLogin(email);
+            const name = result.user.displayName || email.split("@")[0];
+            setWelcomeModal({ 
+              open: true, 
+              message: `Welcome Admin ${name}!`, 
+              redirectPath: "/admin-dashboard"
+            });
             return;
           }
 
+          // Non-admins must exist already
           const exists = await userExistsByEmail(database, email);
           if (!exists) {
             setBanner({
@@ -357,13 +382,23 @@ export const AuthPage = () => {
             return;
           }
 
-          alert(`Welcome ${result.user.displayName || email.split("@")[0]}!`);
-          goToPostLogin(email);
+          const name = result.user.displayName || email.split("@")[0];
+          setWelcomeModal({ 
+            open: true, 
+            message: `Welcome ${name}!`, 
+            redirectPath: "/dashboard"
+          });
+        } else {
+          // Only mark as handled if there's no result (to allow retry on next mount)
+          handledRedirectRef.current = true;
         }
       } catch (err) {
         console.error("Redirect result error:", err);
-        reportAuthError(err);
-        handledRedirectRef.current = false; // Allow retry on error
+        handledRedirectRef.current = true;
+        // Don't show error if it's just "no redirect result" (normal case)
+        if (err?.code !== "auth/no-auth-event" && err?.code !== "auth/unauthorized-domain") {
+          reportAuthError(err);
+        }
       }
     })();
   }, [navigate]);
@@ -383,8 +418,12 @@ export const AuthPage = () => {
       // If admin, force admin role + skip verify; then route to admin dashboard
       if (isAdminEmail(user.email)) {
         await upsertAdminIfNeeded(database, user);
-        alert(`Welcome Admin ${user.displayName || user.email.split("@")[0]}!`);
-        goToPostLogin(user.email);
+        const name = user.displayName || user.email.split("@")[0];
+        setWelcomeModal({ 
+          open: true, 
+          message: `Welcome Admin ${name}!`, 
+          redirectPath: "/admin-dashboard"
+        });
         return;
       }
 
@@ -405,8 +444,12 @@ export const AuthPage = () => {
         return;
       }
 
-      alert(`Welcome Back ${user.displayName || user.email.split("@")[0]}!`);
-      goToPostLogin(user.email);
+      const name = user.displayName || user.email.split("@")[0];
+      setWelcomeModal({ 
+        open: true, 
+        message: `Welcome Back ${name}!`, 
+        redirectPath: "/dashboard"
+      });
     } catch (err) {
       reportAuthError(err);
     }
@@ -444,7 +487,7 @@ export const AuthPage = () => {
       });
 
       // Award signup bonus
-      await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
+      const pointsAwarded = await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
 
       // Email verification token flow
       const token = genToken();
@@ -472,7 +515,15 @@ export const AuthPage = () => {
         EMAILJS_PUBLIC_KEY
       );
 
-      alert(`We sent you a verification link. Also credited ${SIGNUP_BONUS_POINTS} points 🎉`);
+      if (pointsAwarded) {
+        // Store in sessionStorage to show on dashboard after verification
+        sessionStorage.setItem("signupPointsAwarded", JSON.stringify({
+          points: SIGNUP_BONUS_POINTS,
+          reason: "Welcome bonus for signing up!"
+        }));
+      }
+      
+      alert(`We sent you a verification link.`);
     } catch (err) {
       reportAuthError(err);
     }
@@ -494,9 +545,20 @@ export const AuthPage = () => {
 
       if (flow === "signup") {
         await upsertGoogleUser(database, user, result);
-        await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
-        alert(`Welcome ${user.displayName || (user.email || "").split("@")[0]}!`);
-        goToPostLogin(user.email);
+        const pointsAwarded = await awardSignupPointsIfNeeded(database, user.uid, SIGNUP_BONUS_POINTS);
+        const name = user.displayName || (user.email || "").split("@")[0];
+        if (pointsAwarded) {
+          // Store in sessionStorage to show on dashboard
+          sessionStorage.setItem("signupPointsAwarded", JSON.stringify({
+            points: SIGNUP_BONUS_POINTS,
+            reason: "Welcome bonus for signing up!"
+          }));
+        }
+        setWelcomeModal({ 
+          open: true, 
+          message: `Welcome ${name}!`, 
+          redirectPath: isAdminEmail(user.email) ? "/admin-dashboard" : "/dashboard"
+        });
         return;
       }
 
@@ -505,8 +567,12 @@ export const AuthPage = () => {
 
       if (isAdminEmail(email)) {
         await upsertAdminIfNeeded(database, user);
-        alert(`Welcome Admin ${user.displayName || email.split("@")[0]}!`);
-        goToPostLogin(email);
+        const name = user.displayName || email.split("@")[0];
+        setWelcomeModal({ 
+          open: true, 
+          message: `Welcome Admin ${name}!`, 
+          redirectPath: "/admin-dashboard"
+        });
         return;
       }
 
@@ -515,14 +581,18 @@ export const AuthPage = () => {
       if (!exists) {
         setBanner({
           kind: "warning",
-          text: "That Google account isn’t registered on Bookify. Please use ‘Sign Up with Google’.",
+          text: "That Google account isn't registered on Bookify. Please use 'Sign Up with Google'.",
         });
         await signOut(auth);
         return;
       }
 
-      alert(`Welcome ${user.displayName || email.split("@")[0]}!`);
-      goToPostLogin(email);
+      const name = user.displayName || email.split("@")[0];
+      setWelcomeModal({ 
+        open: true, 
+        message: `Welcome ${name}!`, 
+        redirectPath: "/dashboard"
+      });
     } catch (err) {
       const popupErrors = [
         "auth/popup-closed-by-user",
@@ -616,18 +686,21 @@ export const AuthPage = () => {
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: "select_account" });
 
-      // FORCE Google Redirect on ALL mobile browsers and small screens
-      if (isMobile) {
-        const flow = mode === "login" ? "login" : "signup";
-        sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
-        await signInWithRedirect(auth, provider);
-        return;
-      }
-
-      // Desktop → popup is fine
+      // Try popup first on all devices (works on modern mobile browsers)
       if (mode === "login") {
-        await handleGoogleAuth("login");
-        return;
+        try {
+          await handleGoogleAuth("login");
+          return;
+        } catch (popupErr) {
+          // If popup fails on mobile, fall back to redirect
+          if (isMobile && (popupErr?.code === "auth/popup-blocked" || popupErr?.code === "auth/popup-closed-by-user")) {
+            const flow = "login";
+            sessionStorage.setItem(GOOGLE_FLOW_KEY, flow);
+            await signInWithRedirect(auth, provider);
+            return;
+          }
+          throw popupErr;
+        }
       }
 
       // Signup → show terms first
@@ -663,15 +736,42 @@ export const AuthPage = () => {
             <span className="text-lg font-bold text-gray-800">Bookify</span>
           </div>
 
-          <div className="mb-6">
-            <h2 className="text-2xl font-semibold text-gray-800">
-              {mode === "login" ? "Welcome Back!" : "Create Your Account"}
-            </h2>
-            <p className="text-gray-500 text-sm">
-              {mode === "login"
-                ? "We’re happy to see you again."
-                : "Join us and explore the world of Bookify."}
-            </p>
+          <div className="mb-6 relative min-h-[80px]">
+            <AnimatePresence mode="wait" initial={false}>
+              {mode === "login" ? (
+                <motion.div
+                  key="login-title"
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+                  className="absolute inset-0"
+                >
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    Welcome Back!
+                  </h2>
+                  <p className="text-gray-500 text-sm mt-1">
+                    We're happy to see you again.
+                  </p>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="signup-title"
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+                  className="absolute inset-0"
+                >
+                  <h2 className="text-2xl font-semibold text-gray-800">
+                    Create Your Account
+                  </h2>
+                  <p className="text-gray-500 text-sm mt-1">
+                    Join us and explore the world of Bookify.
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Toggle */}
@@ -679,9 +779,9 @@ export const AuthPage = () => {
             <div className="flex items-center bg-gray-100 rounded-full p-1">
               <button
                 type="button"
-                className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-all duration-300 ease-out ${
                   mode === "login"
-                    ? "bg-blue-600 text-white shadow"
+                    ? "bg-blue-600 text-white shadow-md"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
                 onClick={() => setMode("login")}
@@ -690,9 +790,9 @@ export const AuthPage = () => {
               </button>
               <button
                 type="button"
-                className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-all duration-300 ease-out ${
                   mode === "signup"
-                    ? "bg-blue-600 text-white shadow"
+                    ? "bg-blue-600 text-white shadow-md"
                     : "text-gray-500 hover:text-gray-700"
                 }`}
                 onClick={() => setMode("signup")}
@@ -712,16 +812,20 @@ export const AuthPage = () => {
             autoComplete="on"
             noValidate
           >
-            <AnimatePresence mode="wait">
-              {mode === "login" ? (
-                <motion.div
-                  key="login"
-                  initial={{ opacity: 0, x: 30 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -30 }}
-                  transition={{ duration: 0.4 }}
-                  className="space-y-4"
-                >
+            <div className="relative">
+              <AnimatePresence mode="wait" initial={false}>
+                {mode === "login" ? (
+                  <motion.div
+                    key="login"
+                    initial={{ opacity: 0, x: 20, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: -20, y: -10, scale: 0.98 }}
+                    transition={{ 
+                      duration: 0.35,
+                      ease: [0.4, 0, 0.2, 1]
+                    }}
+                    className="space-y-4"
+                  >
                   <input
                     name="email"
                     type="email"
@@ -762,16 +866,19 @@ export const AuthPage = () => {
                   >
                     Log In
                   </button>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="signup"
-                  initial={{ opacity: 0, x: -30 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 30 }}
-                  transition={{ duration: 0.4 }}
-                  className="space-y-4"
-                >
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="signup"
+                    initial={{ opacity: 0, x: -20, y: 10, scale: 0.98 }}
+                    animate={{ opacity: 1, x: 0, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, x: 20, y: -10, scale: 0.98 }}
+                    transition={{ 
+                      duration: 0.35,
+                      ease: [0.4, 0, 0.2, 1]
+                    }}
+                    className="space-y-4"
+                  >
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <input
                       name="firstName"
@@ -895,9 +1002,10 @@ export const AuthPage = () => {
                   >
                     Sign Up
                   </button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </form>
 
           <div className="flex items-center my-6">
@@ -938,13 +1046,83 @@ export const AuthPage = () => {
             loop
             playsInline
           />
-          <div className="absolute inset-0 backdrop-blur-[2px]" />
+          <div className="absolute inset-0 backdrop-blur-[2px] flex items-center justify-center">
+            <div className="flex items-center space-x-4">
+              <img
+                src={BookifyIcon}
+                alt="Bookify logo"
+                className="w-24 h-24 rounded-md"
+              />
+              <span className="text-4xl font-bold text-white drop-shadow-lg">Bookify</span>
+            </div>
+          </div>
           <div className="absolute bottom-6 left-6 right-6 text-white/80 text-[10px] leading-snug bg-white/10 border border-white/20 backdrop-blur-sm rounded-xl px-4 py-2">
             © 2025 Bookify. All rights reserved. Unauthorized reproduction
             prohibited.
           </div>
         </div>
       </div>
+
+      {/* Points Notification Modal */}
+      <PointsNotificationModal
+        open={pointsModal.open}
+        onClose={() => setPointsModal({ open: false, points: 0, reason: "" })}
+        points={pointsModal.points}
+        reason={pointsModal.reason}
+        title="Points Earned!"
+      />
+
+      {/* Welcome Modal */}
+      {welcomeModal.open && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 px-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+            className="bg-white rounded-2xl w-full max-w-md p-6 sm:p-8 relative shadow-2xl"
+          >
+            <div className="text-center">
+              <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  strokeWidth="2"
+                  stroke="currentColor"
+                  className="w-8 h-8 text-emerald-600"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">
+                {welcomeModal.message}
+              </h3>
+              <p className="text-gray-600 text-sm mb-6">
+                {welcomeModal.redirectPath?.includes("admin") 
+                  ? "Redirecting to admin dashboard..." 
+                  : "Redirecting to your dashboard..."}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setWelcomeModal({ open: false, message: "", redirectPath: null });
+                  if (welcomeModal.redirectPath) {
+                    navigate(welcomeModal.redirectPath);
+                  }
+                }}
+                className="w-full py-3 bg-blue-600 text-white font-semibold rounded-full hover:bg-blue-700 transition shadow-md"
+              >
+                Continue
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Terms & Conditions Modal */}
       {showTerms && (
@@ -990,14 +1168,17 @@ export const AuthPage = () => {
                         const provider = new GoogleAuthProvider();
                         provider.setCustomParameters({ prompt: "select_account" });
 
-                        // Mobile → redirect
-                        if (isMobile) {
-                          sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
-                          await signInWithRedirect(auth, provider);
-                        } 
-                        // Desktop → popup
-                        else {
+                        // Try popup first (works on modern mobile browsers)
+                        try {
                           await handleGoogleAuth("signup");
+                        } catch (popupErr) {
+                          // If popup fails on mobile, fall back to redirect
+                          if (isMobile && (popupErr?.code === "auth/popup-blocked" || popupErr?.code === "auth/popup-closed-by-user")) {
+                            sessionStorage.setItem(GOOGLE_FLOW_KEY, "signup");
+                            await signInWithRedirect(auth, provider);
+                          } else {
+                            throw popupErr;
+                          }
                         }
                       } catch (err) {
                         console.error("Google sign-up error:", err);

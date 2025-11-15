@@ -18,9 +18,10 @@ import {
 } from "firebase/firestore";
 import emailjs from "@emailjs/browser";
 import {
-  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck, Share2, Copy, Facebook, LogIn
+  ChevronLeft, ChevronRight, Plus, Minus, Clock, Users, Languages, MapPin, Building2,  MessageSquareText, Loader2, CheckCircle2, AlertCircle, Percent, Star, Briefcase, GraduationCap, Home, CalendarDays, ShieldCheck, Share2, Copy, Facebook, LogIn, X
 } from "lucide-react";
 import { MessageHostModal } from "../../components/message-host-modal";
+import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
 
 /* =============== Rewards =============== */
 const BOOKING_REWARD_POINTS = 80; // guest reward
@@ -728,6 +729,9 @@ function ServiceCheckout({
   wallet,
   payWithWallet,
   isPayingWallet,
+  
+  // points modal
+  onPointsAwarded,
 }) {
   const computedTotal = Number(payment?.total ?? 0);
 
@@ -962,11 +966,14 @@ function ServiceCheckout({
                 console.error("EmailJS send failed:", mailErr);
               }
 
-              alert(
-                completed
-                  ? "Booking successful! 80 points were added to your account."
-                  : "Order captured; booking pending."
-              );
+              // Show points notification modal if points were awarded
+              if (completed && onPointsAwarded) {
+                setTimeout(() => {
+                  onPointsAwarded(BOOKING_REWARD_POINTS, `Reward for booking ${service?.title || "this service"}!`);
+                }, 500);
+              }
+
+              alert(completed ? "Booking successful!" : "Order captured; booking pending.");
               onClose?.();
             } catch (err) {
               console.error("Error creating reservation:", err);
@@ -1018,8 +1025,11 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 
   const [service, setService] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
+  const [isFullScreenOpen, setIsFullScreenOpen] = useState(false);
+  const [fullScreenPhoto, setFullScreenPhoto] = useState(0);
   const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
+  const [scheduleCapacity, setScheduleCapacity] = useState({}); // { "date_time": count }
   const [payment, setPayment] = useState(null);
   const [showPayPal, setShowPayPal] = useState(false);
 
@@ -1040,6 +1050,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
   const [modal, setModal] = useState({ open: false, kind: "info", title: "", message: "" });
   const openModal = (kind, title, message) => setModal({ open: true, kind, title, message });
   const closeModal = () => setModal((m) => ({ ...m, open: false }));
+  const [pointsModal, setPointsModal] = useState({ open: false, points: 0, reason: "" });
 
   // Coupons UI state
   const [couponInput, setCouponInput] = useState("");
@@ -1181,6 +1192,56 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
     return unsub;
   }, []);
 
+  // Fetch schedule capacity (serviceLocks)
+  useEffect(() => {
+    const targetId = service?.id || listingId;
+    if (!targetId || !service?.schedule || !Array.isArray(service.schedule)) return;
+
+    const fetchCapacity = async () => {
+      try {
+        const capacityMap = {};
+        const locksRef = collection(database, "serviceLocks");
+        
+        // Fetch all locks for this listing
+        const locksQuery = query(locksRef, where("listingId", "==", targetId));
+        const locksSnap = await getDocs(locksQuery);
+        
+        locksSnap.docs.forEach((doc) => {
+          const data = doc.data();
+          const date = data.date;
+          const time = data.time || "";
+          const timeKey = String(time).replace(/:/g, "");
+          const key = `${date}_${timeKey}`;
+          capacityMap[key] = Number(data.count || 0);
+        });
+
+        setScheduleCapacity(capacityMap);
+      } catch (err) {
+        console.error("Error fetching schedule capacity:", err);
+      }
+    };
+
+    fetchCapacity();
+
+    // Subscribe to real-time updates
+    const locksRef = collection(database, "serviceLocks");
+    const locksQuery = query(locksRef, where("listingId", "==", targetId));
+    const unsub = onSnapshot(locksQuery, (snap) => {
+      const capacityMap = {};
+      snap.docs.forEach((doc) => {
+        const data = doc.data();
+        const date = data.date;
+        const time = data.time || "";
+        const timeKey = String(time).replace(/:/g, "");
+        const key = `${date}_${timeKey}`;
+        capacityMap[key] = Number(data.count || 0);
+      });
+      setScheduleCapacity(capacityMap);
+    });
+
+    return () => unsub();
+  }, [listingId, service?.id, service?.schedule]);
+
   /* Fetch host */
   useEffect(() => {
     let cancelled = false;
@@ -1239,6 +1300,39 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
       return idx;
     });
   }, [service?.photos]);
+
+  // Full-screen modal photo navigation - sync with currentPhoto when modal opens
+  useEffect(() => {
+    if (isFullScreenOpen && service) {
+      setFullScreenPhoto(currentPhoto);
+    }
+  }, [isFullScreenOpen, currentPhoto, service]);
+
+  // Keyboard navigation for full-screen modal
+  useEffect(() => {
+    if (!isFullScreenOpen || !service) return;
+    
+    const photos = Array.isArray(service?.photos) ? service.photos : [];
+    if (photos.length === 0) return;
+    
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setIsFullScreenOpen(false);
+      } else if (e.key === "ArrowLeft") {
+        setFullScreenPhoto((p) => (p - 1 + photos.length) % photos.length);
+      } else if (e.key === "ArrowRight") {
+        setFullScreenPhoto((p) => (p + 1) % photos.length);
+      }
+    };
+    
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+    
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [isFullScreenOpen, service]);
 
   /* Load and select matching promo (status=active + date + scope) */
   useEffect(() => {
@@ -1496,6 +1590,16 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
     e?.stopPropagation();
     if (!hasPhotos) return;
     setCurrentPhoto((p) => (p - 1 + photos.length) % photos.length);
+  };
+
+  const nextFullScreenPhoto = () => {
+    if (!hasPhotos) return;
+    setFullScreenPhoto((p) => (p + 1) % photos.length);
+  };
+  
+  const prevFullScreenPhoto = () => {
+    if (!hasPhotos) return;
+    setFullScreenPhoto((p) => (p - 1 + photos.length) % photos.length);
   };
 
   const handleBookNow = () => {
@@ -1812,6 +1916,14 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 
       setIsPayingWallet(false);
       setShowPayPal(false);
+      
+      // Show points notification modal
+      setPointsModal({
+        open: true,
+        points: BOOKING_REWARD_POINTS,
+        reason: `Reward for booking ${service?.title || "this service"}!`
+      });
+      
       openModal(
         "success",
         "Booking confirmed",
@@ -1820,8 +1932,6 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 • Listing discount: ${Number(payment.listingDiscount||0)>0?`- ${currencySymbol}${Number(payment.listingDiscount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"None"}
 • Promo: ${Number(payment.promoDiscount||0)>0?`- ${currencySymbol}${Number(payment.promoDiscount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"None"}
 • Coupon: ${Number(payment.couponDiscount||0)>0?`- ${currencySymbol}${Number(payment.couponDiscount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"None"}
-• You earned: +${BOOKING_REWARD_POINTS} pts
-• Provider earned: +${HOST_BOOKING_REWARD_POINTS} pts
 
 A confirmation email will follow shortly.`
       );
@@ -1955,7 +2065,18 @@ A confirmation email will follow shortly.`
 
       {/* ===== Hero Gallery ===== */}
       <section className="max-w-[1200px] mx-auto px-4 pt-4">
-        <div className="relative rounded-3xl overflow-hidden border border-slate-200 shadow-sm">
+        <div 
+          className="relative rounded-3xl overflow-hidden border border-slate-200 shadow-sm cursor-pointer"
+          onClick={() => hasPhotos && setIsFullScreenOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && hasPhotos) {
+              e.preventDefault();
+              setIsFullScreenOpen(true);
+            }
+          }}
+        >
           <div className="aspect-[16/9] sm:aspect-[21/9] bg-slate-200">
             {hasPhotos ? (
               <img
@@ -2447,27 +2568,53 @@ A confirmation email will follow shortly.`
                 {hasSchedule ? (
                   <div className="grid gap-2">
                     {service.schedule.map((s, idx) => {
+                      const t = s?.time || s?.startTime || "";
                       const isSelected =
                         selectedSchedule?.date === s.date &&
-                        (selectedSchedule?.time || selectedSchedule?.startTime || "") ===
-                          (s.time || s.startTime || "");
+                        (selectedSchedule?.time || selectedSchedule?.startTime || "") === t;
+                      
+                      // Calculate capacity
+                      const timeKey = String(t).replace(/:/g, "");
+                      const capacityKey = `${s.date}_${timeKey}`;
+                      const bookedCount = scheduleCapacity[capacityKey] || 0;
+                      const maxParticipants = service.maxParticipants || 0;
+                      const availableSlots = maxParticipants > 0 ? maxParticipants - bookedCount : Infinity;
+                      const isFull = maxParticipants > 0 && availableSlots <= 0;
+                      
                       return (
                         <button
-                          key={`${s.date}-${s.time || s.startTime || ""}-${idx}`}
+                          key={`${s.date}-${t}-${idx}`}
                           type="button"
-                          onClick={() => setSelectedSchedule(s)}
+                          onClick={() => !isFull && setSelectedSchedule(s)}
+                          disabled={isFull}
                           className={`flex w-full items-start justify-between rounded-2xl border p-3 text-left transition ${
-                            isSelected
+                            isFull
+                              ? "border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed"
+                              : isSelected
                               ? "border-2 border-blue-500 bg-blue-50"
                               : "border-slate-200 bg-white hover:border-blue-300"
                           }`}
                         >
-                          <div>
-                            <p className="font-semibold text-slate-900">{fmtDate(s.date)}</p>
-                            <p className="text-sm text-slate-600">{s.time || s.startTime || ""}</p>
+                          <div className="flex-1">
+                            <p className={`font-semibold ${isFull ? "text-slate-500" : "text-slate-900"}`}>
+                              {fmtDate(s.date)}
+                            </p>
+                            <p className={`text-sm ${isFull ? "text-slate-400" : "text-slate-600"}`}>
+                              {t}
+                            </p>
+                            {maxParticipants > 0 && (
+                              <p className={`text-xs mt-1 ${isFull ? "text-rose-600 font-semibold" : "text-slate-500"}`}>
+                                {isFull ? "Fully booked" : `${availableSlots} slot${availableSlots !== 1 ? "s" : ""} available`}
+                              </p>
+                            )}
                           </div>
-                          {isSelected && (
+                          {isSelected && !isFull && (
                             <span className="mt-1 inline-flex h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                          )}
+                          {isFull && (
+                            <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-xs font-semibold">
+                              Full
+                            </span>
                           )}
                         </button>
                       );
@@ -2704,6 +2851,7 @@ A confirmation email will follow shortly.`
                     wallet={wallet}
                     payWithWallet={payWithWallet}
                     isPayingWallet={isPayingWallet}
+                    onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
                   />
                 ) : (
                   <button
@@ -2788,6 +2936,104 @@ A confirmation email will follow shortly.`
 
       {/* Global overlays for E-Wallet flow */}
       {isPayingWallet && <FullScreenLoader text="Processing E-Wallet payment…" />}
+      {/* Points Notification Modal */}
+      <PointsNotificationModal
+        open={pointsModal.open}
+        onClose={() => setPointsModal({ open: false, points: 0, reason: "" })}
+        points={pointsModal.points}
+        reason={pointsModal.reason}
+        title="Points Earned!"
+      />
+
+      {/* Full-Screen Image Viewer Modal */}
+      {isFullScreenOpen && hasPhotos && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+          onClick={() => setIsFullScreenOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full-screen image viewer"
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setIsFullScreenOpen(false)}
+            className="absolute top-4 right-4 z-10 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+            aria-label="Close image viewer"
+          >
+            <X className="w-6 h-6" />
+          </button>
+
+          {/* Image container */}
+          <div
+            className="relative w-full h-full flex items-center justify-center p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={photos[fullScreenPhoto]}
+              alt={`Photo ${fullScreenPhoto + 1} of ${photos.length}`}
+              className="max-w-full max-h-full object-contain"
+            />
+
+            {/* Navigation buttons */}
+            {photos.length > 1 && (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    prevFullScreenPhoto();
+                  }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                  aria-label="Previous photo"
+                >
+                  <ChevronLeft className="w-7 h-7" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    nextFullScreenPhoto();
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                  aria-label="Next photo"
+                >
+                  <ChevronRight className="w-7 h-7" />
+                </button>
+
+                {/* Photo counter */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/50 backdrop-blur-sm text-white text-sm font-medium">
+                  {fullScreenPhoto + 1} / {photos.length}
+                </div>
+
+                {/* Dots indicator */}
+                <div
+                  className="absolute bottom-20 left-1/2 -translate-x-1/2 flex gap-2"
+                  role="tablist"
+                  aria-label="Gallery slides"
+                >
+                  {photos.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFullScreenPhoto(i);
+                      }}
+                      role="tab"
+                      aria-label={`Go to photo ${i + 1}`}
+                      aria-selected={i === fullScreenPhoto}
+                      className={`h-2.5 w-2.5 rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
+                        i === fullScreenPhoto
+                          ? "bg-white w-8"
+                          : "bg-white/50 hover:bg-white/70"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
       <ResultModal
         open={modal.open}
         kind={modal.kind}

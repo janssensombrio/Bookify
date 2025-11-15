@@ -71,6 +71,7 @@ export default function Search({
   excludeDateIntervals,
   selectsDisabledDaysInRange = false,
   filterDate,
+  onSearch, // Callback when search is clicked
 }) {
   // ⬇️ store range as strings (what DateRangePickerInline expects/returns)
   const [dates, setDates] = useState({ start: "", end: "" });
@@ -196,7 +197,18 @@ export default function Search({
             </div>
 
             {/* Search Button */}
-            <button className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold py-3 rounded-xl transition">
+            <button 
+              onClick={() => {
+                if (onSearch) {
+                  onSearch({
+                    destination,
+                    dates,
+                    guests,
+                  });
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-semibold py-3 rounded-xl transition"
+            >
               <SearchIcon size={18} />
               <span>Search</span>
             </button>
@@ -366,6 +378,15 @@ export default function Search({
 
           {/* Search Button */}
           <button
+            onClick={() => {
+              if (onSearch) {
+                onSearch({
+                  destination,
+                  dates,
+                  guests,
+                });
+              }
+            }}
             className="
               hidden sm:flex items-center justify-center
               bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700

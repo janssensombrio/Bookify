@@ -11,6 +11,7 @@ import {
   Calendar,
   Wallet,
   LogOut,
+  LayoutDashboard,
 } from "lucide-react";
 
 import { auth } from "../../../config/firebase";
@@ -53,7 +54,7 @@ const AdminSidebar = () => {
 
   // Admin nav items
   const navItems = [
-    { icon: Home,      label: "Dashboard", path: "/admin-dashboard", activeMatch: /^\/admin-dashboard/ },
+    { icon: LayoutDashboard, label: "Dashboard", path: "/admin-dashboard", activeMatch: /^\/admin-dashboard/ },
     { icon: Users,     label: "Hosts",     path: "/admin/hosts",     activeMatch: /^\/admin\/hosts/ },
     { icon: UserCheck, label: "Guests",    path: "/admin/guests",    activeMatch: /^\/admin\/guests/ },
     { icon: Building2, label: "Listings",  path: "/admin/listings",  activeMatch: /^\/admin\/listings/ },
@@ -80,7 +81,7 @@ const AdminSidebar = () => {
         `}
       >
         {/* Top bar with toggle */}
-        <div className="flex justify-end p-3 border-b border-gray-200">
+        <div className={`flex p-3 border-b border-gray-200 ${sidebarOpen ? "justify-end" : "justify-center"}`}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"

@@ -40,6 +40,7 @@ import { auth, database } from "../../config/firebase";
 // ⬇️ Adjust if your Sidebar lives elsewhere
 import Sidebar from "./components/sidebar.jsx";
 import { useSidebar } from "../../context/SidebarContext";
+import BookifyLogo from "../../components/bookify-logo.jsx";
 
 /* ======================= Helpers ======================= */
 const peso = (v) => {
@@ -675,8 +676,12 @@ export default function WalletPage() {
         className={`fixed top-0 right-0 z-30 bg-white border-b border-gray-200 shadow-sm transition-all duration-300 left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"}`}
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
-          <div className="flex items-center gap-3">
-            <div className="font-semibold text-gray-800 text-xl">E-Wallet</div>
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => navigate("/dashboard")}
+          >
+            <BookifyLogo />
+            <span className="hidden sm:inline font-semibold text-gray-800">E-wallet</span>
           </div>
           <div className="hidden md:flex items-center gap-2 text-sm text-slate-500">
             Secure • Instant ledger • CSV export

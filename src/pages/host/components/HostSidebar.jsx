@@ -264,7 +264,7 @@ const HostSidebar = ({ setActivePage, activePage, navigate }) => {
         `}
       >
         {/* Top bar with toggle */}
-        <div className="flex justify-end p-3 border-b border-gray-200">
+        <div className={`flex p-3 border-b border-gray-200 ${sidebarOpen ? "justify-end" : "justify-center"}`}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"

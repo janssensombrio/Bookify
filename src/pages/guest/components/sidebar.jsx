@@ -12,6 +12,8 @@ import {
   LogOut,
   User,
   MessageSquareText,
+  LayoutDashboard,
+  Sparkles,
 } from "lucide-react";
 import { auth } from "../../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
@@ -231,11 +233,12 @@ const Sidebar = () => {
 
   // ✅ Profile is now a normal nav item
   const navItems = [
-    { icon: Home, label: "Dashboard", path: "/dashboard" },
+    { icon: LayoutDashboard, label: "Dashboard", path: "/dashboard" },
     { icon: Compass, label: "Explore", path: "/explore" },
     { icon: Calendar, label: "Bookings", path: "/bookings" },
     { icon: MessageSquareText, label: "Messages", path: "/guest-messages" },
     { icon: Heart, label: "Favorites", path: "/favorites" },
+    { icon: Sparkles, label: "Points", path: "/points" },
     { icon: User, label: "Profile", path: "/profile" }, // ← added
     { icon: Wallet, label: "E-Wallet", path: "/wallet" },
   ];
@@ -259,7 +262,7 @@ const Sidebar = () => {
         `}
       >
         {/* Top bar with toggle (works for mobile + desktop) */}
-        <div className="flex justify-end p-3 border-b border-gray-200">
+        <div className={`flex p-3 border-b border-gray-200 ${sidebarOpen ? "justify-end" : "justify-center"}`}>
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
             className="p-2 hover:bg-gray-100 rounded-lg transition-colors"

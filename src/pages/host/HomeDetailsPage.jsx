@@ -21,6 +21,7 @@ import { database, auth } from "../../config/firebase";
 import { PayPalButtons } from "@paypal/react-paypal-js";
 import DateRangePickerInline from "../guest/components/DateRangeInlinePicker";
 import { MessageHostModal } from "../../components/message-host-modal";
+import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
 import {
   ChevronLeft,
   ChevronRight,
@@ -48,7 +49,8 @@ import {
   Share2,
   Copy,
   Facebook,
-  LogIn
+  LogIn,
+  X
 } from "lucide-react";
 
 /* ================== Admin Wallet ================== */
@@ -671,6 +673,8 @@ function PayPalCheckout({
   wallet,
   payWithWallet,
   isPayingWallet,
+  // Points modal
+  onPointsAwarded,
 }) {
   const computedTotal = Number(payment?.total ?? totalAmount ?? 0);
 
@@ -907,6 +911,13 @@ function PayPalCheckout({
                 console.error("EmailJS send failed:", mailErr);
               }
 
+              // Show points notification modal if points were awarded
+              if (completed && onPointsAwarded) {
+                setTimeout(() => {
+                  onPointsAwarded(BOOKING_REWARD_POINTS, `Reward for booking ${listing.title || "this listing"}!`);
+                }, 500);
+              }
+
               alert(completed ? "Booking successful!" : "Order captured; booking pending.");
               onClose?.();
             } catch (error) {
@@ -960,6 +971,8 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const [listing, setListing] = useState(null);
   const [host, setHost] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
+  const [isFullScreenOpen, setIsFullScreenOpen] = useState(false);
+  const [fullScreenPhoto, setFullScreenPhoto] = useState(0);
 
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
@@ -985,6 +998,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const [modal, setModal] = useState({ open: false, kind: "info", title: "", message: "" });
   const openModal = (kind, title, message) => setModal({ open: true, kind, title, message });
   const closeModal = () => setModal((m) => ({ ...m, open: false }));
+  const [pointsModal, setPointsModal] = useState({ open: false, points: 0, reason: "" });
 
   /* NEW: Reviews state */
   const [reviews, setReviews] = useState([]);       // all reviews for this listing
@@ -1534,6 +1548,39 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     });
   }, [selectedDates, includeCleaningFee, listing, appliedCoupon, listingId]);
 
+  // Full-screen modal photo navigation - sync with currentPhoto when modal opens
+  useEffect(() => {
+    if (isFullScreenOpen && listing) {
+      setFullScreenPhoto(currentPhoto);
+    }
+  }, [isFullScreenOpen, currentPhoto, listing]);
+
+  // Keyboard navigation for full-screen modal
+  useEffect(() => {
+    if (!isFullScreenOpen || !listing) return;
+    
+    const photos = Array.isArray(listing?.photos) ? listing.photos : [];
+    if (photos.length === 0) return;
+    
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setIsFullScreenOpen(false);
+      } else if (e.key === "ArrowLeft") {
+        setFullScreenPhoto((p) => (p - 1 + photos.length) % photos.length);
+      } else if (e.key === "ArrowRight") {
+        setFullScreenPhoto((p) => (p + 1) % photos.length);
+      }
+    };
+    
+    document.addEventListener("keydown", handleKeyDown);
+    document.body.style.overflow = "hidden";
+    
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = "";
+    };
+  }, [isFullScreenOpen, listing]);
+
   if (!listing) {
     return (
       <div className="min-h-screen grid place-items-center bg-gradient-to-br from-blue-50/35 via-white/55 to-indigo-50/35">
@@ -1556,6 +1603,16 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     e?.stopPropagation();
     if (!hasPhotos) return;
     setCurrentPhoto((p) => (p - 1 + photos.length) % photos.length);
+  };
+
+  const nextFullScreenPhoto = () => {
+    if (!hasPhotos) return;
+    setFullScreenPhoto((p) => (p + 1) % photos.length);
+  };
+  
+  const prevFullScreenPhoto = () => {
+    if (!hasPhotos) return;
+    setFullScreenPhoto((p) => (p - 1 + photos.length) % photos.length);
   };
 
   /* ---- selection with validation against booked intervals ---- */
@@ -1928,10 +1985,18 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
       setIsPayingWallet(false);
       setShowPayPal(false);
+      
+      // Show points notification modal
+      setPointsModal({
+        open: true,
+        points: BOOKING_REWARD_POINTS,
+        reason: `Reward for booking ${listing.title || "this listing"}!`
+      });
+      
       openModal(
         "success",
         "Booking confirmed",
-        `Paid with E-Wallet.\n• Host received: ₱${Number(payment.subtotal || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n• You earned: +${BOOKING_REWARD_POINTS} pts\n• Host earned: +${HOST_BOOKING_REWARD_POINTS} pts\n\nA confirmation email will follow shortly.`
+        `Paid with E-Wallet.\n• Host received: ₱${Number(payment.subtotal || 0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}\n\nA confirmation email will follow shortly.`
       );
     } catch (e) {
       console.error(e);
@@ -1985,7 +2050,18 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
       {/* ===== Hero Gallery ===== */}
       <section className="max-w-[1200px] mx-auto px-4 pt-4">
-        <div className="relative rounded-3xl overflow-hidden border border-slate-200 shadow-sm">
+        <div 
+          className="relative rounded-3xl overflow-hidden border border-slate-200 shadow-sm cursor-pointer"
+          onClick={() => hasPhotos && setIsFullScreenOpen(true)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && hasPhotos) {
+              e.preventDefault();
+              setIsFullScreenOpen(true);
+            }
+          }}
+        >
           <div className="aspect-[16/9] sm:aspect-[21/9] bg-slate-200">
             {hasPhotos ? (
               <img
@@ -2364,6 +2440,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         wallet={wallet}
         payWithWallet={payWithWallet}
         isPayingWallet={isPayingWallet}
+        onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
       />
 
       {host && (
@@ -2377,6 +2454,104 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
       {/* Global overlays for E-Wallet flow */}
       {isPayingWallet && <FullScreenLoader text="Processing E-Wallet payment…" />}
+
+      {/* Points Notification Modal */}
+      <PointsNotificationModal
+        open={pointsModal.open}
+        onClose={() => setPointsModal({ open: false, points: 0, reason: "" })}
+        points={pointsModal.points}
+        reason={pointsModal.reason}
+        title="Points Earned!"
+      />
+
+      {/* Full-Screen Image Viewer Modal */}
+      {isFullScreenOpen && hasPhotos && createPortal(
+        <div
+          className="fixed inset-0 z-[9999] bg-black/95 backdrop-blur-sm flex items-center justify-center"
+          onClick={() => setIsFullScreenOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full-screen image viewer"
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setIsFullScreenOpen(false)}
+            className="absolute top-4 right-4 z-10 w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+            aria-label="Close image viewer"
+          >
+            <X className="w-6 h-6" />
+          </button>
+
+          {/* Image container */}
+          <div
+            className="relative w-full h-full flex items-center justify-center p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={photos[fullScreenPhoto]}
+              alt={`Photo ${fullScreenPhoto + 1} of ${photos.length}`}
+              className="max-w-full max-h-full object-contain"
+            />
+
+            {/* Navigation buttons */}
+            {photos.length > 1 && (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    prevFullScreenPhoto();
+                  }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                  aria-label="Previous photo"
+                >
+                  <ChevronLeft className="w-7 h-7" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    nextFullScreenPhoto();
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/20 text-white flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+                  aria-label="Next photo"
+                >
+                  <ChevronRight className="w-7 h-7" />
+                </button>
+
+                {/* Photo counter */}
+                <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/50 backdrop-blur-sm text-white text-sm font-medium">
+                  {fullScreenPhoto + 1} / {photos.length}
+                </div>
+
+                {/* Dots indicator */}
+                <div
+                  className="absolute bottom-20 left-1/2 -translate-x-1/2 flex gap-2"
+                  role="tablist"
+                  aria-label="Gallery slides"
+                >
+                  {photos.map((_, i) => (
+                    <button
+                      key={i}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setFullScreenPhoto(i);
+                      }}
+                      role="tab"
+                      aria-label={`Go to photo ${i + 1}`}
+                      aria-selected={i === fullScreenPhoto}
+                      className={`h-2.5 w-2.5 rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 ${
+                        i === fullScreenPhoto
+                          ? "bg-white w-8"
+                          : "bg-white/50 hover:bg-white/70"
+                      }`}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
 
       <ResultModal
         open={modal.open}
@@ -2884,6 +3059,7 @@ function FooterActions({
   wallet,
   payWithWallet,
   isPayingWallet,
+  onPointsAwarded,
 }) {
   return (
     <div
@@ -2907,6 +3083,7 @@ function FooterActions({
             wallet={wallet}
             payWithWallet={payWithWallet}
             isPayingWallet={isPayingWallet}
+            onPointsAwarded={onPointsAwarded}
           />
         ) : (
           <>

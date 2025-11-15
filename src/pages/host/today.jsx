@@ -343,7 +343,7 @@ const CardShell = ({ cover, chip, header, children, onClick }) => {
       <div className="p-5 flex flex-col flex-1 min-h-0">
         {header}
         <div className="flex-1 flex flex-col min-h-0">
-          {children}
+        {children}
         </div>
       </div>
     </div>
@@ -1471,7 +1471,7 @@ export default function TodayTab() {
     }
     
     setLoading(true);
-    
+
     // Store unsubscribe functions
     const unsubs = [];
     let cancelled = false;
@@ -1483,11 +1483,11 @@ export default function TodayTab() {
         const q1 = query(collection(database, "listings"), where("uid", "==", uid));
         const q2 = query(collection(database, "listings"), where("hostId", "==", uid));
         const q3 = query(collection(database, "listings"), where("ownerId", "==", uid));
-        
+
         const [snap1, snap2, snap3] = await Promise.all([getDocs(q1), getDocs(q2), getDocs(q3)]);
         
         if (cancelled) return;
-        
+
         const listingIdsSet = new Set();
         [snap1, snap2, snap3].forEach((snap) => {
           snap.docs.forEach((d) => listingIdsSet.add(d.id));
@@ -1502,17 +1502,17 @@ export default function TodayTab() {
           const rows = Array.from(bookingsMap.values());
           
           rows.sort((a, b) => {
-            const aSeconds = a?.createdAt?.seconds || 0;
-            const bSeconds = b?.createdAt?.seconds || 0;
-            const aNanos = a?.createdAt?.nanoseconds || 0;
-            const bNanos = b?.createdAt?.nanoseconds || 0;
-            return bSeconds === aSeconds ? bNanos - aNanos : bSeconds - aSeconds;
-          });
-          
+        const aSeconds = a?.createdAt?.seconds || 0;
+        const bSeconds = b?.createdAt?.seconds || 0;
+        const aNanos = a?.createdAt?.nanoseconds || 0;
+        const bNanos = b?.createdAt?.nanoseconds || 0;
+        return bSeconds === aSeconds ? bNanos - aNanos : bSeconds - aSeconds;
+      });
+      
           setRows(rows);
-          setLoading(false);
-        };
-        
+      setLoading(false);
+    };
+
         // Query bookings by hostId
         const hostQuery = query(collection(database, "bookings"), where("hostId", "==", uid));
         const unsubHost = onSnapshot(hostQuery, (snapshot) => {
@@ -1572,7 +1572,7 @@ export default function TodayTab() {
         if (!cancelled) setLoading(false);
       }
     })();
-    
+
     return () => {
       cancelled = true;
       unsubs.forEach((unsub) => unsub());
@@ -1788,13 +1788,41 @@ export default function TodayTab() {
     { key: "cancelled", label: "Cancelled" },
   ];
 
+  // Dynamic title and subtitle based on active tab
+  const getTitleAndSubtitle = () => {
+    switch (tab) {
+      case "today":
+        return {
+          title: "Today",
+          subtitle: "Your bookings at a glance"
+        };
+      case "upcoming":
+        return {
+          title: "Upcoming",
+          subtitle: "Future bookings and reservations"
+        };
+      case "cancelled":
+        return {
+          title: "Cancelled",
+          subtitle: "Cancelled and refunded bookings"
+        };
+      default:
+        return {
+          title: "Today",
+          subtitle: "Your bookings at a glance"
+        };
+    }
+  };
+
+  const { title, subtitle } = getTitleAndSubtitle();
+
   return (
     <div className="space-y-6">
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">Today</h2>
-          <p className="text-sm text-slate-600 mt-1">Your bookings at a glance</p>
+          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 tracking-tight">{title}</h2>
+          <p className="text-sm text-slate-600 mt-1">{subtitle}</p>
         </div>
 
         <div className="inline-flex rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm p-1 shadow-md self-start">
