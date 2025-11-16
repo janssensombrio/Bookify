@@ -18,6 +18,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Menu,
 } from "lucide-react";
 
 import {
@@ -165,7 +166,7 @@ function TxRow({ tx }) {
 
 /* ======================= Main Page ======================= */
 export default function WalletPage() {
-  const { sidebarOpen } = useSidebar();
+  const { sidebarOpen, setSidebarOpen } = useSidebar();
   const navigate = useNavigate();
 
   const [authReady, setAuthReady] = useState(!!auth.currentUser);
@@ -365,8 +366,6 @@ export default function WalletPage() {
   // Add Funds Modal
   const [showAdd, setShowAdd] = useState(false);
   const [addAmount, setAddAmount] = useState("");
-  const [addMethod, setAddMethod] = useState("Manual");
-  const [addNote, setAddNote] = useState("");
 
   const handleAddFunds = async () => {
     const amt = Number(addAmount);
@@ -387,8 +386,7 @@ export default function WalletPage() {
           delta: +amt,
           amount: amt,
           status: "completed",
-          method: addMethod,
-          ...(addNote ? { note: addNote } : {}), // avoid nulls
+          method: "Manual",
           // no counterparty field when N/A
           balanceAfter: nb,
           timestamp: serverTimestamp(),
@@ -408,7 +406,6 @@ export default function WalletPage() {
 
       setShowAdd(false);
       setAddAmount("");
-      setAddNote("");
       popToast("success", "Funds added.");
     } catch (e) {
       console.error(e);
@@ -627,26 +624,36 @@ export default function WalletPage() {
 
   /* ======================= Render ======================= */
   const balanceCard = (
-    <div className="rounded-3xl border border-slate-200 bg-white/80 shadow p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
-            <WalletIcon size={18} />
+    <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-6 mb-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4 flex-1">
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg">
+            <WalletIcon className="w-8 h-8 text-white" />
           </div>
-          <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Available Balance</div>
-            <div className="text-2xl font-bold text-slate-900">
-              {loadingWallet ? <Line w="120px" /> : peso(wallet.balance)}
-            </div>
+          <div className="flex-1">
+            <p className="text-sm text-slate-600 font-medium">Available Balance</p>
+            {loadingWallet ? (
+              <Line w="120px" className="mt-2" />
+            ) : (
+              <p className="text-4xl font-bold text-slate-900 mt-1">
+                {peso(wallet.balance)}
+              </p>
+            )}
           </div>
         </div>
-
-        <div className="flex flex-wrap gap-2">
-          <PillButton icon={Plus} label="Add funds" onClick={() => setShowAdd(true)} />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAdd(true)}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold shadow-md hover:from-blue-600 hover:to-blue-700 transition"
+          >
+            <Plus size={16} />
+            Add Funds
+          </button>
         </div>
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-4 flex flex-wrap items-center gap-2 pt-4 border-t border-slate-200/50">
         <Badge>Currency: {wallet.currency || "PHP"}</Badge>
         <button
           onClick={copyWalletId}
@@ -667,41 +674,68 @@ export default function WalletPage() {
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
-      {/* Sidebar */}
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/50">
+      {/* ===== Sidebar ===== */}
       <Sidebar />
 
-      {/* Top header */}
+      {/* ===== Top Navbar ===== */}
       <header
-        className={`fixed top-0 right-0 z-30 bg-white border-b border-gray-200 shadow-sm transition-all duration-300 left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"}`}
+        className={`
+          fixed top-0 right-0 z-30
+          bg-white text-gray-800 border-b border-gray-200 shadow-sm
+          transition-all duration-300
+          left-0 ${sidebarOpen ? "md:left-72" : "md:left-20"}
+        `}
       >
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 md:px-8 py-3">
-          <div
-            className="flex items-center gap-2 cursor-pointer select-none"
-            onClick={() => navigate("/dashboard")}
-          >
-            <BookifyLogo />
-            <span className="hidden sm:inline font-semibold text-gray-800">E-wallet</span>
-          </div>
-          <div className="hidden md:flex items-center gap-2 text-sm text-slate-500">
-            Secure • Instant ledger • CSV export
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Open menu"
+              aria-controls="app-sidebar"
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(true)}
+              className={`md:hidden rounded-lg bg-white border border-gray-200 p-2 shadow-sm ${
+                sidebarOpen ? "hidden" : ""
+              }`}
+            >
+              <Menu size={20} />
+            </button>
+
+            <div
+              className="flex items-center gap-2 cursor-pointer select-none"
+              onClick={() => navigate("/dashboard")}
+            >
+              <BookifyLogo />
+              <span className="hidden sm:inline font-semibold text-gray-800">E-wallet</span>
+            </div>
           </div>
         </div>
       </header>
 
-      {/* Spacer */}
-      <div className="h-[56px]" />
+      {/* Spacer under fixed header */}
+      <div className="h-[56px] md:h-[56px]" />
 
-      {/* Main */}
+      {/* ===== Main Content ===== */}
       <main
-        className={`transition-[margin] duration-300 ml-0 ${sidebarOpen ? "md:ml-72" : "md:ml-20"} px-4 sm:px-6 lg:px-12 py-6`}
+        className={`
+          transition-[margin] duration-300 ml-0
+          ${sidebarOpen ? "md:ml-72" : "md:ml-20"}
+          px-4 sm:px-6 lg:px-12 py-6
+        `}
       >
-        <div className="max-w-7xl mx-auto space-y-6">
+        <div className="max-w-7xl mx-auto">
+          {/* Page Header */}
+          <div className="mb-6">
+            <h1 className="text-3xl font-bold text-foreground">E-Wallet</h1>
+            <p className="text-muted-foreground">Manage your wallet balance and view transaction history.</p>
+          </div>
+
           {/* Balance + actions */}
           {balanceCard}
 
           {/* Search */}
-          <div className="rounded-3xl border border-slate-200 bg-white/80 shadow p-4">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 mb-6">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
@@ -721,7 +755,7 @@ export default function WalletPage() {
           </div>
 
           {/* Transactions */}
-          <div className="rounded-3xl border border-slate-200 bg-white/80 shadow p-4">
+          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="font-semibold">Recent Activity</h4>
               {txLoading && (
@@ -860,37 +894,9 @@ export default function WalletPage() {
             />
           </label>
 
-          <label className="block">
-            <span className="text-sm text-slate-700">Method</span>
-            <select
-              value={addMethod}
-              onChange={(e) => setAddMethod(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
-            >
-              <option>Manual</option>
-              <option>GCash</option>
-              <option>Bank</option>
-              <option>Card</option>
-            </select>
-          </label>
-
-          <label className="block">
-            <span className="text-sm text-slate-700">Note (optional)</span>
-            <input
-              value={addNote}
-              onChange={(e) => setAddNote(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
-              placeholder="reference / memo"
-            />
-          </label>
-
           <div className="flex justify-end gap-2 pt-2">
             <PillButton variant="ghost" label="Cancel" onClick={() => setShowAdd(false)} disabled={busy} />
             <PillButton icon={Plus} label={busy ? "Processing…" : "Add funds"} onClick={handleAddFunds} disabled={busy} />
-          </div>
-
-          <div className="text-xs text-slate-500">
-            In production, initiate with <em>pending</em> status and mark <em>completed</em> after your PSP webhook.
           </div>
         </div>
       </Modal>

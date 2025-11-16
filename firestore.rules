@@ -1,8 +1,86 @@
-// firestore.rules
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // --- Allow credit-only payouts to host wallets ---
+    match /wallets/{uid} {
+      allow read: if true;
+      // Let anyone create a wallet doc for another user, as long as it's tagged to that user.
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      // Owner can do anything (increase or decrease their own balance)
+      // Non-owner may only INCREASE someone else's balance (credit-only).
+      allow update: if request.auth != null
+                    && request.resource.data.uid == uid
+                    && (
+                      // Owner can update their own wallet (any change)
+                      request.auth.uid == uid ||
+                      // Non-owner can only increase balance (credit-only)
+                      request.resource.data.balance >= resource.data.balance
+                    );
+    }
+
+    match /wallets/{uid}/transactions/{tid} {
+      // Allow creating a transaction row on behalf of {uid} (e.g., payout-in).
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      allow read: if true;
+    }
+
+    // --- Allow credit-only guest wallet updates (for refunds) ---
+    match /guestWallets/{uid} {
+      allow read: if true;
+      // Let anyone create a guest wallet doc for another user, as long as it's tagged to that user.
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      // Non-owner may only INCREASE someone else's balance (credit-only, for refunds).
+      // Owners can still do anything via your catch-all below.
+      allow update: if request.auth != null
+                    && request.resource.data.uid == uid
+                    && request.resource.data.balance >= resource.data.balance;
+    }
+
+    match /guestWallets/{uid}/transactions/{tid} {
+      // Allow creating a transaction row on behalf of {uid} (e.g., refund).
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      allow read: if true;
+    }
+
+    // --- Allow credit-only host rewards (+points) ---
+    match /points/{uid} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      allow update: if request.auth != null
+                    && request.resource.data.uid == uid
+                    && request.resource.data.balance >= resource.data.balance;
+    }
+
+    match /points/{uid}/transactions/{tid} {
+      allow create: if request.auth != null && request.resource.data.uid == uid;
+      allow read: if true;
+    }
+
+    // Optional: simple ledger so you (admin later) can see fees owed.
+    match /platformFees/{docId} {
+      allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
+      allow read: if true;
+    }
+
+    // --- Bookings: allow guest to update their own bookings, and host to update bookings for their listings ---
+    match /bookings/{bookingId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
+      allow update: if request.auth != null && (
+        // Guest can update their own booking (uid matches)
+        request.auth.uid == request.resource.data.uid ||
+        // OR host can update if they own the listing (check via hostId, ownerId)
+        request.auth.uid == request.resource.data.hostId ||
+        request.auth.uid == request.resource.data.ownerId ||
+        // OR if uid is not being changed (preserves guest UID) and user is host
+        (request.resource.data.uid == resource.data.uid && 
+         (request.auth.uid == resource.data.hostId || request.auth.uid == resource.data.ownerId))
+      );
+      allow delete: if request.auth != null && request.auth.uid == resource.data.uid;
+    }
+
+    // --- keep your existing catch-all (do not remove) ---
     match /{document=**} {
       allow create, update: if request.auth != null && request.auth.uid == request.resource.data.uid;
       allow delete: if request.auth != null && request.auth.uid == resource.data.uid;

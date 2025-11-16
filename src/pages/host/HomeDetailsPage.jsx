@@ -22,6 +22,7 @@ import { PayPalButtons } from "@paypal/react-paypal-js";
 import DateRangePickerInline from "../guest/components/DateRangeInlinePicker";
 import { MessageHostModal } from "../../components/message-host-modal";
 import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
+import { useServiceFeeRate } from "../../utils/serviceFeeRate.js";
 import {
   ChevronLeft,
   ChevronRight,
@@ -61,12 +62,12 @@ const BOOKING_REWARD_POINTS = 80;            // guest reward (existing behavior)
 const HOST_BOOKING_REWARD_POINTS = 100;      // NEW: host reward per booking (E-Wallet flow)
 
 /* ================== EmailJS env ================== */
-// const EMAILJS_SERVICE_ID = "service_x9dtjt6";
-// const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
-// const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
-const EMAILJS_SERVICE_ID = "";
-const EMAILJS_TEMPLATE_ID = "";
-const EMAILJS_PUBLIC_KEY = "";
+const EMAILJS_SERVICE_ID = "service_x9dtjt6";
+const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
+const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
+// const EMAILJS_SERVICE_ID = "";
+// const EMAILJS_TEMPLATE_ID = "";
+// const EMAILJS_PUBLIC_KEY = "";
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 const isEmailJsConfigured = [EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, EMAILJS_PUBLIC_KEY].every(Boolean);
 
@@ -675,6 +676,10 @@ function PayPalCheckout({
   isPayingWallet,
   // Points modal
   onPointsAwarded,
+  // Modal
+  openModal,
+  // Reward
+  setSelectedReward,
 }) {
   const computedTotal = Number(payment?.total ?? totalAmount ?? 0);
 
@@ -727,6 +732,7 @@ function PayPalCheckout({
               }
 
               // Transaction: lock nights + create booking + award points + credit admin wallet
+              let bookingId = null;
               await runTransaction(database, async (tx) => {
                 const sLock = startOfDay(selectedDates.start);
                 const eLock = startOfDay(selectedDates.end);
@@ -734,6 +740,7 @@ function PayPalCheckout({
 
                 // refs
                 const bookingRef = doc(collection(database, "bookings"));
+                bookingId = bookingRef.id; // Store booking ID for use outside transaction
                 const pointsRef = doc(database, "points", user.uid);
                 const ptsLogRef = doc(collection(database, "points", user.uid, "transactions"));
                 const nightRefs = nightsArr.map((d) =>
@@ -784,6 +791,14 @@ function PayPalCheckout({
                         code: payment?.offerCode || null,
                         label: payment?.couponLabel || "",
                         discount: Number(payment?.couponDiscount || 0),
+                      }]
+                    : []),
+                  ...(Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+                    ? [{
+                        kind: "reward",
+                        offerId: payment?.rewardId || null,
+                        label: payment?.rewardLabel || "",
+                        discount: Number(payment?.rewardDiscount || 0),
                       }]
                     : []),
                 ];
@@ -851,17 +866,27 @@ function PayPalCheckout({
                   });
                 }
 
-                // ADDED: coupon redemption audit row (if coupon applied)
-                if (Number(payment?.couponDiscount || 0) > 0 && payment?.couponId) {
-                  const redRef = doc(collection(database, "couponRedemptions"));
-                  tx.set(redRef, {
-                    uid: user.uid,
-                    couponId: payment.couponId,
-                    code: payment?.offerCode || null,
+        // ADDED: coupon redemption audit row (if coupon applied)
+        if (Number(payment?.couponDiscount || 0) > 0 && payment?.couponId) {
+          const redRef = doc(collection(database, "couponRedemptions"));
+          tx.set(redRef, {
+            uid: user.uid,
+            couponId: payment.couponId,
+            code: payment?.offerCode || null,
+            bookingId: bookingRef.id,
+            listingId: listing.id,
+            hostUid: listing?.uid || listing?.ownerId || listing?.hostId || null,
+            timestamp: serverTimestamp(),
+          });
+        }
+
+                // ADDED: mark reward as used (if reward applied)
+                if (completed && Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+                  const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+                  tx.update(rewardRef, {
+                    used: true,
+                    usedAt: serverTimestamp(),
                     bookingId: bookingRef.id,
-                    listingId: listing.id,
-                    hostUid: listing?.uid || listing?.ownerId || listing?.hostId || null,
-                    timestamp: serverTimestamp(),
                   });
                 }
 
@@ -918,8 +943,31 @@ function PayPalCheckout({
                 }, 500);
               }
 
-              alert(completed ? "Booking successful!" : "Order captured; booking pending.");
+              // Clear selected reward from localStorage after successful booking
+              if (completed && payment?.rewardId) {
+                localStorage.removeItem("selectedReward");
+                setSelectedReward(null);
+              }
+
+              // Show success modal for PayPal payment
+              if (completed) {
+                openModal(
+                  "success",
+                  "Payment Successful!",
+                  `Your booking for "${listing.title || "this listing"}" has been confirmed.\n\nBooking ID: ${bookingId ? bookingId.slice(0, 8).toUpperCase() : "N/A"}\nTotal Paid: ₱${(payment?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                );
+                // Close the booking modal after showing success
+                setTimeout(() => {
               onClose?.();
+                }, 2000);
+              } else {
+                openModal(
+                  "info",
+                  "Order Captured",
+                  "Your order has been captured. Booking is pending confirmation."
+                );
+                onClose?.();
+              }
             } catch (error) {
               console.error("Error creating reservation:", error);
               alert(`Failed to create reservation: ${error.message}`);
@@ -964,6 +1012,8 @@ function PayPalCheckout({
 
 /* ============================ PAGE component ============================ */
 export default function HomeDetailsPage({ listingId: propListingId }) {
+  // Get service fee rate from admin settings
+  const serviceFeeRate = useServiceFeeRate("Homes");
   const navigate = useNavigate();
   const { listingId: routeListingId } = useParams();
   const listingId = propListingId ?? routeListingId;
@@ -984,6 +1034,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const [payment, setPayment] = useState(null);
   const [showPayPal, setShowPayPal] = useState(false);
   const [totalAmount, setTotalAmount] = useState(0);
+  const [selectedReward, setSelectedReward] = useState(null);
 
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
@@ -1012,6 +1063,10 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
   const [couponInput, setCouponInput] = useState("");
   const [couponErr, setCouponErr] = useState("");
   const promosCacheRef = useRef([]);                        // cache active promos for this host
+
+  /* ======= ADDED: Rewards state ======= */
+  const [availableRewards, setAvailableRewards] = useState([]); // user's redeemed rewards
+  const [appliedReward, setAppliedReward] = useState(null);     // selected reward to apply
 
   /* ======= Share functionality ======= */
   const [shareToast, setShareToast] = useState(null);
@@ -1450,7 +1505,66 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     setCouponErr("");
   };
 
-  /* Payment recompute — NOW STACKS PROMO + COUPON */
+  // Load selected reward from localStorage on mount and when page becomes visible
+  useEffect(() => {
+    const loadReward = () => {
+      const rewardStr = localStorage.getItem("selectedReward");
+      if (rewardStr) {
+        try {
+          const reward = JSON.parse(rewardStr);
+          setSelectedReward(reward);
+        } catch (e) {
+          console.error("Failed to parse selected reward:", e);
+          localStorage.removeItem("selectedReward");
+          setSelectedReward(null);
+        }
+      } else {
+        setSelectedReward(null);
+      }
+    };
+
+    // Load on mount
+    loadReward();
+
+    // Listen for custom event when reward is selected (same tab)
+    const handleRewardSelected = (e) => {
+      if (e.detail) {
+        setSelectedReward(e.detail);
+      }
+    };
+    window.addEventListener("rewardSelected", handleRewardSelected);
+
+    // Also listen for storage changes (when reward is selected from another tab/page)
+    const handleStorageChange = (e) => {
+      if (e.key === "selectedReward") {
+        loadReward();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    // Also check periodically when page is visible (for same-tab updates)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        loadReward();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Check on focus (when user switches back to this tab)
+    const handleFocus = () => {
+      loadReward();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("rewardSelected", handleRewardSelected);
+      window.removeEventListener("storage", handleStorageChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, []);
+
+  /* Payment recompute — NOW STACKS PROMO + COUPON + REWARD */
   useEffect(() => {
     if (!listing) return setPayment(null);
     const { start, end } = selectedDates || {};
@@ -1474,7 +1588,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
     // Base BEFORE fees/cleaning (used for offer/coupon minSubtotal checks)
     const baseSubtotal = Math.max(0, staySubtotal - fixedDiscount);
 
-    // ----- Stacking: promo first, coupon second -----
+    // ----- Stacking: promo first, coupon second, reward third -----
     const promos = promosCacheRef.current || [];
 
     // Best PROMO against baseSubtotal
@@ -1506,11 +1620,24 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
     // coupon applies to AFTER-PROMO amount
     const couponDiscount = couponOk ? offerDiscountAmount(appliedCoupon, afterPromo) : 0;
+    const afterCoupon = Math.max(0, afterPromo - couponDiscount);
 
-    const offerDiscount = promoDiscount + couponDiscount;
-    const subtotal = Math.max(0, afterPromo - couponDiscount);
+    // REWARD applies to AFTER-COUPON amount (last in stack)
+    let rewardDiscount = 0;
+    if (selectedReward) {
+      const rewardType = selectedReward.discountType || "percentage";
+      const rewardValue = Number(selectedReward.discountValue || 0);
+      if (rewardType === "percentage") {
+        rewardDiscount = Math.min(afterCoupon, (afterCoupon * rewardValue) / 100);
+      } else {
+        rewardDiscount = Math.min(afterCoupon, rewardValue);
+      }
+    }
 
-    const serviceRate = 0.1;
+    const offerDiscount = promoDiscount + couponDiscount + rewardDiscount;
+    const subtotal = Math.max(0, afterCoupon - rewardDiscount);
+
+    const serviceRate = serviceFeeRate;
     const serviceFee = subtotal * serviceRate;
     const total = subtotal + serviceFee;
 
@@ -1533,7 +1660,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
       dVal: type === "percentage" ? cappedPercent : dVal,
 
       // Aggregate discount (sum)
-      offerDiscount,
+      offerDiscount: offerDiscount,
 
       // PROMO detail
       promoDiscount,
@@ -1545,8 +1672,13 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
       couponLabel: couponOk ? describeOffer(appliedCoupon) : "",
       couponId: couponOk ? (appliedCoupon?.id || null) : null,
       offerCode: couponOk ? (appliedCoupon?.code || null) : null,
+
+      // REWARD detail
+      rewardDiscount,
+      rewardLabel: selectedReward ? `${selectedReward.rewardName} (${selectedReward.discountType === "percentage" ? `${selectedReward.discountValue}%` : `₱${Number(selectedReward.discountValue).toLocaleString()}`} OFF)` : "",
+      rewardId: selectedReward?.id || null,
     });
-  }, [selectedDates, includeCleaningFee, listing, appliedCoupon, listingId]);
+  }, [selectedDates, includeCleaningFee, listing, appliedCoupon, listingId, serviceFeeRate, selectedReward]);
 
   // Full-screen modal photo navigation - sync with currentPhoto when modal opens
   useEffect(() => {
@@ -1738,10 +1870,12 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         if (!hostUid) throw new Error("Listing host not found.");
 
         // Refs
+        // Use guestWallets for guest (catch-all rule allows if uid matches)
+        // Use wallets for host (credit-only rule allows any auth user to credit)
         const wrefGuest = doc(database, "guestWallets", user.uid);
-        const wrefHost  = doc(database, "hostWallets", hostUid);
+        const wrefHost  = doc(database, "wallets", hostUid);
         const walletTxGuestRef = doc(collection(database, "guestWallets", user.uid, "transactions"));
-        const walletTxHostRef  = doc(collection(database, "hostWallets", hostUid, "transactions"));
+        const walletTxHostRef  = doc(collection(database, "wallets", hostUid, "transactions"));
 
         const pointsGuestRef = doc(database, "points", user.uid);
         const pointsHostRef  = doc(database, "points", hostUid);
@@ -1804,6 +1938,14 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
                 code: payment?.offerCode || null,
                 label: payment?.couponLabel || "",
                 discount: Number(payment?.couponDiscount || 0),
+              }]
+            : []),
+          ...(Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+            ? [{
+                kind: "reward",
+                offerId: payment?.rewardId || null,
+                label: payment?.rewardLabel || "",
+                discount: Number(payment?.rewardDiscount || 0),
               }]
             : []),
         ];
@@ -1871,6 +2013,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         );
 
         // ---------- HOST wallet: credit SUBTOTAL (no service fee) ----------
+        // Use wallets/{hostUid} with credit-only rule (balance can only increase)
         tx.set(
           wrefHost,
           { uid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
@@ -1963,6 +2106,16 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
             listingId: listing.id,
             hostUid,
             timestamp: serverTimestamp(),
+          });
+        }
+
+        // ADDED: mark reward as used (if reward applied)
+        if (Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+          const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+          tx.update(rewardRef, {
+            used: true,
+            usedAt: serverTimestamp(),
+            bookingId: bookingRef.id,
           });
         }
       });
@@ -2405,6 +2558,9 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
             applyCouponCode={applyCouponCode}
             clearCoupon={clearCoupon}
             autoPromo={autoPromo}
+            openModal={openModal}
+            // Reward
+            setSelectedReward={setSelectedReward}
           />
         </div>
       </main>
@@ -2444,6 +2600,8 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         payWithWallet={payWithWallet}
         isPayingWallet={isPayingWallet}
         onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
+        openModal={openModal}
+        setSelectedReward={setSelectedReward}
       />
 
       {host && (
@@ -2657,6 +2815,10 @@ function BookingSidebar(props) {
     isPayingWallet,
     // ADDED: coupon/promo props
     couponInput, setCouponInput, couponErr, appliedCoupon, applyCouponCode, clearCoupon, autoPromo,
+    // Modal
+    openModal,
+    // Reward
+    setSelectedReward,
   } = props;
 
   // Check if current user is the host
@@ -2954,6 +3116,18 @@ function BookingSidebar(props) {
                 </div>
               )}
 
+              {/* REWARD line */}
+              {payment.rewardDiscount > 0 && (
+                <div className="flex items-center justify-between text-[13.5px] sm:text-sm text-emerald-700">
+                  <span>
+                    Reward{payment.rewardLabel ? ` — ${payment.rewardLabel}` : ""}
+                  </span>
+                  <span>
+                    − ₱{payment.rewardDiscount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+
               <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
                 <span>Subtotal</span>
                 <span className="font-medium">
@@ -2962,7 +3136,7 @@ function BookingSidebar(props) {
               </div>
 
               <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
-                <span>Service fee (10%)</span>
+                <span>Service fee ({Math.round((payment.serviceRate ?? 0.1) * 100)}%)</span>
                 <span>₱{payment.serviceFee.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
 
@@ -3004,6 +3178,8 @@ function BookingSidebar(props) {
               wallet={wallet}
               payWithWallet={payWithWallet}
               isPayingWallet={isPayingWallet}
+              openModal={openModal}
+              setSelectedReward={setSelectedReward}
             />
           ) : (
             <button
@@ -3068,6 +3244,8 @@ function FooterActions({
   payWithWallet,
   isPayingWallet,
   onPointsAwarded,
+  openModal,
+  setSelectedReward,
 }) {
   // Check if current user is the host
   const currentUser = auth.currentUser;
@@ -3096,6 +3274,8 @@ function FooterActions({
             payWithWallet={payWithWallet}
             isPayingWallet={isPayingWallet}
             onPointsAwarded={onPointsAwarded}
+            setSelectedReward={setSelectedReward}
+            openModal={openModal}
           />
         ) : (
           <>

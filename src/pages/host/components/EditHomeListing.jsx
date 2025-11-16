@@ -257,29 +257,35 @@ export default function EditHomeModal({
       return;
     }
 
-    const g = formData.guests || {};
+    // Match the exact structure from host-set-up.jsx
+    // Normalize numeric fields (matching host-set-up.jsx handleSubmit)
     const normalized = {
-      ...formData, // includes cancellationPolicy
+      ...formData, // includes all fields: listingType, location, propertyType, uniqueDescription, amenities, photos, title, description, availability, cancellationPolicy, bedrooms, beds, bathrooms, etc.
       price: Number(formData.price || 0),
       cleaningFee: Number(formData.cleaningFee || 0),
       discountValue: Number(formData.discountValue || 0),
-      bedrooms: Number(formData.bedrooms || 0),
-      beds: Number(formData.beds || 0),
-      bathrooms: Number(formData.bathrooms || 0),
-      guests: {
-        adults: Number(g.adults ?? 1),
-        children: Number(g.children ?? 0),
-        infants: Number(g.infants ?? 0),
-        total:
-          Number(g.adults ?? 1) +
-          Number(g.children ?? 0) +
-          Number(g.infants ?? 0),
-      },
+    };
+
+    // Normalize guests object (matching host-set-up.jsx)
+    const g = formData.guests || {};
+    const adults = Number(g.adults ?? 1);
+    const children = Number(g.children ?? 0);
+    const infants = Number(g.infants ?? 0);
+    const guests = { adults, children, infants, total: adults + children + infants };
+
+    // Final data structure matching host-set-up.jsx dataToSave structure
+    // All fields from formData are included via spread, with explicit normalization for price, cleaningFee, discountValue, and guests
+    const dataToSave = {
+      ...normalized,
+      guests,
+      location: formData.location || "",
+      // Note: category is excluded as per user request
+      // Note: status, publishedAt, updatedAt are handled by the parent component (listings.jsx)
     };
 
     setSaving(true);
     try {
-      await onSave(normalized);
+      await onSave(dataToSave);
       onClose();
     } catch (e) {
       console.error(e);

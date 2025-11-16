@@ -133,9 +133,9 @@ export default function AdminGuestsPage() {
           // Process results - deduplicate by booking ID
           results.forEach((snap) => {
             snap.docs.forEach((doc) => {
-              if (seenBookingIds.has(doc.id)) return;
-              seenBookingIds.add(doc.id);
-              const data = doc.data() || {};
+                  if (seenBookingIds.has(doc.id)) return;
+                  seenBookingIds.add(doc.id);
+                  const data = doc.data() || {};
               // Try multiple field names to find the guest UID
               const guestUid = data.uid || data.userId || data.guestUid || data.guestId || null;
               if (guestUid) {
@@ -349,14 +349,14 @@ export default function AdminGuestsPage() {
         <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
           <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
             <div className="flex items-center gap-2 sm:gap-3">
-              <button
+            <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
                 aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
                 aria-expanded={sidebarOpen}
-              >
+            >
                 <Menu size={22} />
-              </button>
+            </button>
               <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none" onClick={() => navigate("/admin-dashboard")}>
                 <BookifyLogo />
                 <span className="hidden sm:inline font-semibold text-gray-800 text-sm sm:text-base">Guests</span>
@@ -408,22 +408,22 @@ export default function AdminGuestsPage() {
         {/* Controls */}
         <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6 mb-6">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div className="lg:col-span-1">
-              <div className="relative">
-                <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
-                  <path d="M9 3.5a5.5 5.5 0 1 0 3.89 9.39l3.61 3.6a1 1 0 0 0 1.42-1.42l-3.6-3.61A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0A4 4 0 0 1 5 9Z" />
-                </svg>
-                <input
-                  type="search"
-                  placeholder="Search by name, email or ID..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
+          <div className="lg:col-span-1">
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M9 3.5a5.5 5.5 0 1 0 3.89 9.39l3.61 3.6a1 1 0 0 0 1.42-1.42l-3.6-3.61A5.5 5.5 0 0 0 9 3.5ZM5 9a4 4 0 1 1 8 0A4 4 0 0 1 5 9Z" />
+              </svg>
+              <input
+                type="search"
+                placeholder="Search by name, email or ID..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
                   className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500"
-                />
-              </div>
+              />
             </div>
+          </div>
 
-            <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
+          <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
             <TailwindDropdown
               value={timeFilter}
               onChange={(e) => setTimeFilter(e.target.value)}
@@ -437,8 +437,8 @@ export default function AdminGuestsPage() {
               className="min-w-[120px]"
             />
             <TailwindDropdown
-              value={verifiedFilter}
-              onChange={(e) => setVerifiedFilter(e.target.value)}
+                value={verifiedFilter}
+                onChange={(e) => setVerifiedFilter(e.target.value)}
               options={[
                 { value: "all", label: "All Guests" },
                 { value: "verified", label: "Verified Only" },
@@ -447,8 +447,8 @@ export default function AdminGuestsPage() {
               className="min-w-[140px]"
             />
             <TailwindDropdown
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value)}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value)}
               options={[
                 { value: "createdAt", label: "Newest" },
                 { value: "firstName", label: "First Name" },
@@ -458,13 +458,13 @@ export default function AdminGuestsPage() {
               ]}
               className="min-w-[130px]"
             />
-            <button
-              title="Toggle sort direction"
-              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
-            >
-              {sortDir === "asc" ? "Asc" : "Desc"}
-            </button>
+              <button
+                title="Toggle sort direction"
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+              >
+                {sortDir === "asc" ? "Asc" : "Desc"}
+              </button>
             <button
               title="Export CSV"
               onClick={exportCSV}
@@ -541,7 +541,7 @@ export default function AdminGuestsPage() {
           </div>
         )}
           </div>
-        </main>
+      </main>
       </div>
     </div>
   );

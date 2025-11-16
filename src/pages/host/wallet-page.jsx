@@ -126,9 +126,10 @@ export default function HostWalletPage() {
   const uid = auth.currentUser?.uid;
 
   // Ensure host wallet exists + live balance
+  // Read from wallets/{uid} where payments are credited (credit-only rule)
   useEffect(() => {
     if (!uid) return;
-    const wref = doc(database, "hostWallets", uid);
+    const wref = doc(database, "wallets", uid);
 
     (async () => {
       try {
@@ -160,7 +161,7 @@ export default function HostWalletPage() {
     setTxLoading(true);
     setTxError(null);
     try {
-      const tRef = collection(database, "hostWallets", uid, "transactions");
+      const tRef = collection(database, "wallets", uid, "transactions");
       let qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
       if (lastCursor) {
         qy = query(tRef, orderBy("timestamp", "desc"), startAfter(lastCursor), limit(PAGE_SIZE));
@@ -193,7 +194,7 @@ export default function HostWalletPage() {
       
       const loadInitial = async () => {
         try {
-          const tRef = collection(database, "hostWallets", uid, "transactions");
+          const tRef = collection(database, "wallets", uid, "transactions");
           const qy = query(tRef, orderBy("timestamp", "desc"), limit(PAGE_SIZE));
           const snap = await getDocs(qy);
           const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
@@ -296,13 +297,13 @@ export default function HostWalletPage() {
     setBusy(true);
     try {
       await runTransaction(database, async (tx) => {
-        const wref = doc(database, "hostWallets", uid);
+        const wref = doc(database, "wallets", uid);
         const wSnap = await tx.get(wref);
         const wb = Number(wSnap.data()?.balance || 0);
         if (amt > wb) throw new Error("Insufficient balance.");
         const nb = wb - amt;
 
-        const tref = doc(collection(database, "hostWallets", uid, "transactions"));
+        const tref = doc(collection(database, "wallets", uid, "transactions"));
         tx.set(tref, {
           uid,
           type: "withdraw",

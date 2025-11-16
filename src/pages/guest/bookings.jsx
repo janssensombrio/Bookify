@@ -23,6 +23,7 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
+import { MessageHostModal } from "../../components/message-host-modal.jsx";
 
 import {
   Menu,
@@ -42,6 +43,7 @@ import {
   Hash,
   Star,
   Home,
+  MessageCircle,
 } from "lucide-react";
 
 /* ---------------- EmailJS config ---------------- */
@@ -165,6 +167,7 @@ const normalizeListing = (docData = {}, booking = {}) => {
     discountValue: numberOr(pick(docData.discountValue, docData?.discount?.value), 0),
     uid: pick(docData.uid, docData.ownerId, docData.hostId),
     amenities,
+    cancellationPolicy: pick(docData.cancellationPolicy, docData?.policy?.cancellation, docData.cancellation_policy),
   };
 
   if (cat === "homes") {
@@ -1109,6 +1112,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
   const [listing, setListing] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
   const [host, setHost] = useState(null);
+  const [showMessageModal, setShowMessageModal] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -1182,7 +1186,21 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
     return () => { cancelled = true; };
   }, [listing]);
 
-  if (!open || !booking) return null;
+  if (!open || !booking) {
+    // Still render message modal even if booking modal is closed (for smooth transitions)
+    if (showMessageModal && host) {
+      return createPortal(
+        <MessageHostModal
+          open={showMessageModal}
+          onClose={() => setShowMessageModal(false)}
+          host={host}
+          hostId={host?.uid || listing?.uid || listing?.ownerId || listing?.hostId}
+        />,
+        document.body
+      );
+    }
+    return null;
+  }
 
   const cat = normalizeCategory(listing?.category || booking?.listingCategory || "");
   const title = listing?.title || booking?.listingTitle || "Untitled";
@@ -1213,205 +1231,10 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
   const discountValue = numberOr(booking.discountValue, 0);
   const totalPrice = numberOr(booking.totalPrice, NaN);
 
-  const policyText =
-    listing?.cancellationPolicy ||
-    listing?.policy?.cancellation ||
-    listing?.cancellation_policy ||
-    "";
+  const policyText = listing?.cancellationPolicy || "";
 
-  const chips = [];
-  if (listing?.listingType) chips.push(listing.listingType);
-  if (cat) chips.push((cat[0]?.toUpperCase() || "") + cat.slice(1));
-  if (booking?.experienceType) chips.push((booking.experienceType[0]?.toUpperCase() || "") + booking.experienceType.slice(1));
-  if (listing?.serviceType) chips.push(listing.serviceType);
-  if (listing?.pricingType) chips.push(listing.pricingType);
-
-  const Field = ({ label, children }) => (
-    <div className="flex items-start justify-between gap-4 py-2">
-      <span className="text-[12px] sm:text-xs text-gray-600 shrink-0">{label}</span>
-      <span className="text-sm sm:text-[15px] text-gray-900 text-right break-words">{children || "—"}</span>
-    </div>
-  );
-
-  const PillList = ({ items }) => (
-    <div className="mt-2 flex flex-wrap gap-2.5">
-      {items.map((a, i) => (
-        <span key={`${a}-${i}`} className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1.5 text-[12.5px] sm:text-xs font-medium text-gray-900 shadow-sm">
-          {a}
-        </span>
-      ))}
-    </div>
-  );
-
-  const FullDetails = () => (
-    <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm space-y-2">
-      <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Full Listing Details</h3>
-
-      {listing?.propertyType && <Field label="Property Type">{listing.propertyType}</Field>}
-      {typeof listing?.price !== "undefined" && (
-        <Field label={cat.startsWith("experience") ? "Price / person" : cat.startsWith("service") ? "Base Price" : "Price / night"}>
-          ₱{numberOr(listing.price).toLocaleString()}
-        </Field>
-      )}
-      {typeof listing?.cleaningFee !== "undefined" && numberOr(listing.cleaningFee) > 0 && (
-        <Field label="Cleaning Fee">₱{numberOr(listing.cleaningFee).toLocaleString()}</Field>
-      )}
-      {listing?.discountType && numberOr(listing.discountValue) > 0 && (
-        <Field label="Discount">
-          {listing.discountType === "percentage"
-            ? `${numberOr(listing.discountValue)}%`
-            : `₱${numberOr(listing.discountValue).toLocaleString()}`}
-        </Field>
-      )}
-
-      {cat.startsWith("home") && (
-        <>
-          {(typeof listing?.bedrooms !== "undefined" || typeof listing?.beds !== "undefined" || typeof listing?.bathrooms !== "undefined") && (
-            <div className="grid grid-cols-3 gap-3 pt-2">
-              {[{ label: "Bedrooms", value: listing?.bedrooms ?? "—" },
-                { label: "Beds", value: listing?.beds ?? "—" },
-                { label: "Bathrooms", value: listing?.bathrooms ?? "—" }].map((r) => (
-                <div key={r.label} className="rounded-2xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
-                  <p className="text-[12px] sm:text-xs text-gray-600">{r.label}</p>
-                  <p className="mt-1 text-lg sm:text-xl font-semibold text-gray-900">{r.value}</p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {(listing?.guests || listing?.maxGuests) && (
-            <div className="pt-1">
-              <Field label="Max Guests">{numberOr(listing?.guests?.total, listing?.maxGuests)}</Field>
-              {typeof listing?.guests?.adults !== "undefined" && (
-                <Field label="Adults Cap">{numberOr(listing.guests.adults)}</Field>
-              )}
-              {typeof listing?.guests?.children !== "undefined" && (
-                <Field label="Children Cap">{numberOr(listing.guests.children)}</Field>
-              )}
-              {typeof listing?.guests?.infants !== "undefined" && (
-                <Field label="Infants Cap">{numberOr(listing.guests.infants)}</Field>
-              )}
-            </div>
-          )}
-
-          {listing?.availability?.start && listing?.availability?.end && (
-            <Field label="Availability">{fmtDateStr(listing.availability.start)} – {fmtDateStr(listing.availability.end)}</Field>
-          )}
-        </>
-      )}
-
-      {cat.startsWith("experience") && (
-        <>
-          {listing?.experienceType && <Field label="Experience Type">{listing.experienceType === "online" ? "Online" : "In-Person"}</Field>}
-          {listing?.duration && <Field label="Duration">{listing.duration}</Field>}
-          {Array.isArray(listing?.languages) && listing.languages.length > 0 && (
-            <div className="pt-1">
-              <span className="text-[12px] sm:text-xs text-gray-600">Languages</span>
-              <PillList items={listing.languages} />
-            </div>
-          )}
-          {Array.isArray(listing?.schedule) && listing.schedule.length > 0 && (
-            <div className="pt-1">
-              <span className="text-[12px] sm:text-xs text-gray-600">Upcoming Schedules</span>
-              <div className="mt-2 grid gap-2">
-                {listing.schedule.map((s, i) => (
-                  <div key={i} className="flex items-center justify-between rounded-xl border border-white/60 bg-white/80 p-3">
-                    <span className="text-sm text-gray-900">{fmtDateStr(s?.date)}</span>
-                    <span className="text-sm text-gray-600">{fmtTimeStr(s?.time || s?.startTime)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {listing?.hostRequirements && (
-            <div className="pt-1">
-              <span className="text-[12px] sm:text-xs text-gray-600">Requirements</span>
-              <p className="mt-1 text-sm text-gray-900 whitespace-pre-wrap">{listing.hostRequirements}</p>
-            </div>
-          )}
-          {listing?.ageRestriction && (
-            <Field label="Age Requirements">{`${listing.ageRestriction?.min ?? 0} – ${listing.ageRestriction?.max ?? 100} years`}</Field>
-          )}
-        </>
-      )}
-
-      {cat.startsWith("service") && (
-        <>
-          {listing?.serviceType && <Field label="Service Type">{listing.serviceType}</Field>}
-          {listing?.pricingType && <Field label="Pricing Type">{listing.pricingType}</Field>}
-          {listing?.recurrence && <Field label="Repeats">{listing.recurrence}</Field>}
-          {listing?.duration && <Field label="Duration">{listing.duration}</Field>}
-          {listing?.providerName && <Field label="Provider">{listing.providerName}</Field>}
-          {Array.isArray(listing?.languages) && listing.languages.length > 0 && (
-            <div className="pt-1">
-              <span className="text-[12px] sm:text-xs text-gray-600">Languages</span>
-              <PillList items={listing.languages} />
-            </div>
-          )}
-          {Array.isArray(listing?.schedule) && listing.schedule.length > 0 && (
-            <div className="pt-1">
-              <span className="text-[12px] sm:text-xs text-gray-600">Available Schedules</span>
-              <div className="mt-2 grid gap-2">
-                {listing.schedule.map((s, i) => (
-                  <div key={i} className="flex items-center justify-between rounded-xl border border-white/60 bg-white/80 p-3">
-                    <span className="text-sm text-gray-900">{fmtDateStr(s?.date)}</span>
-                    <span className="text-sm text-gray-600">{s?.time}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {listing?.address && <Field label="Address">{listing.address}</Field>}
-        </>
-      )}
-
-      {Array.isArray(listing?.amenities) && listing.amenities.length > 0 && (
-        <div className="pt-1">
-          <span className="text-[12px] sm:text-xs text-gray-600">Amenities</span>
-          <PillList items={listing.amenities} />
-        </div>
-      )}
-
-      {listing?.includes && (
-        <div className="pt-1">
-          <span className="text-[12px] sm:text-xs text-gray-600">What’s Included</span>
-          <ul className="mt-2 list-disc pl-5 space-y-1 text-sm text-gray-800">
-            {String(listing.includes)
-              .split(/•|\n|;|,/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((item, i) => (
-                <li key={i}>{item}</li>
-              ))}
-          </ul>
-        </div>
-      )}
-
-      {listing?.qualifications && (
-        <div className="pt-1">
-          <span className="text-[12px] sm:text-xs text-gray-600">Qualifications</span>
-          <p className="mt-1 text-sm text-gray-900 whitespace-pre-wrap">{listing.qualifications}</p>
-        </div>
-      )}
-
-      {listing?.targetAudience && (
-        <div className="pt-1">
-          <span className="text-[12px] sm:text-xs text-gray-600">Best For</span>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {String(listing.targetAudience)
-              .split(/,|\/|·|\|/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .map((tag, i) => (
-                <span key={`${tag}-${i}`} className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1.5 text-[12.5px] sm:text-xs font-medium text-gray-900 shadow-sm">
-                  {tag}
-                </span>
-              ))}
-          </div>
-        </div>
-      )}
-    </section>
-  );
+  // Removed unused components: chips, Field, PillList, FullDetails
+  // Only booking-specific information is displayed in the modal
 
   const leftCol = (
     <>
@@ -1501,24 +1324,10 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
   );
 
   const bookingMeta = (
-    <section className="rounded-3xl bg-white/85 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-lg space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${sBadge.cls}`}>
-          {sBadge.text}
-        </span>
-        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${pBadge.cls}`}>
-          <CreditCard size={14} className="mr-1 opacity-80" />
-          {pBadge.text}
-        </span>
-      </div>
+    <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm space-y-4">
+      <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Booking Information</h3>
 
-      <div className="flex items-center gap-2 text-[12.5px] text-slate-600">
-        <Hash size={14} />
-        <span className="truncate">Booking ID: <span className="font-mono">{booking.id}</span></span>
-        {createdAt && <span className="ml-auto">Created {createdAt.toLocaleString()}</span>}
-      </div>
-
-      <div className="grid gap-2 text-sm">
+      <div className="grid gap-3 text-sm">
         {cat.startsWith("home") ? (
           <>
             <div className="flex items-center gap-2">
@@ -1560,42 +1369,45 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
         )}
       </div>
 
-      <div className="mt-2 space-y-1 text-[13.5px]">
+      <div className="pt-2 border-t border-white/60">
+        <h4 className="text-xs font-semibold text-gray-700 mb-2">Payment Breakdown</h4>
+        <div className="space-y-1.5 text-[13.5px]">
         {!Number.isNaN(subtotal) && (
           <div className="flex items-center justify-between">
-            <span>Subtotal</span>
-            <span className="font-medium">₱{subtotal.toLocaleString()}</span>
+              <span className="text-slate-600">Subtotal</span>
+              <span className="font-medium text-slate-900">₱{subtotal.toLocaleString()}</span>
           </div>
         )}
         {!Number.isNaN(cleaningFee) && cleaningFee > 0 && (
           <div className="flex items-center justify-between">
-            <span>Cleaning fee</span>
-            <span>₱{cleaningFee.toLocaleString()}</span>
+              <span className="text-slate-600">Cleaning fee</span>
+              <span className="text-slate-900">₱{cleaningFee.toLocaleString()}</span>
           </div>
         )}
         {!Number.isNaN(serviceFee) && (
           <div className="flex items-center justify-between">
-            <span>Service fee</span>
-            <span>₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+              <span className="text-slate-600">Service fee</span>
+              <span className="text-slate-900">₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
           </div>
         )}
         {discountType !== "none" && discountValue > 0 && (
           <div className="flex items-center justify-between text-emerald-700">
             <span>Discount ({discountType})</span>
-            <span>− ₱{discountValue.toLocaleString()}</span>
+              <span className="font-medium">− ₱{discountValue.toLocaleString()}</span>
           </div>
         )}
 
-        <div className="my-2 h-px bg-white/60" />
+          <div className="my-2 h-px bg-slate-200" />
 
         {!Number.isNaN(totalPrice) ? (
-          <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between pt-1">
             <span className="text-base font-bold text-slate-900">Total</span>
             <span className="text-base font-bold text-blue-700">₱{totalPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
           </div>
         ) : (
           <div className="text-sm text-slate-500">Total unavailable.</div>
         )}
+        </div>
       </div>
     </section>
   );
@@ -1606,27 +1418,38 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
         <div className="max-w-[720px] mx-auto px-5 sm:px-6 md:px-7 py-5 sm:py-6 md:py-7 space-y-6 sm:space-y-7">
 
           <section className="space-y-3">
+            <div>
             <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">{title}</h2>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {chips.map((c, i) => (
-                <span
-                  key={`${c}-${i}`}
-                  className="inline-flex items-center rounded-full border border-white/60 bg-white/80 backdrop-blur px-3 py-1 text-[12px] sm:text-xs font-semibold text-blue-700 shadow-sm"
-                >
-                  {c}
-                </span>
-              ))}
-            </div>
-
-            <p className="inline-flex items-center gap-2 text-sm sm:text[15px] text-gray-700">
+              <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700 mt-2">
               <MapPin className="w-4 h-4 text-blue-600" />
               <span className="font-medium text-gray-900">{location}</span>
             </p>
+            </div>
+
+            {/* Booking Status & ID */}
+            <div className="flex flex-wrap items-center gap-2 pt-2">
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${sBadge.cls}`}>
+                {sBadge.text}
+              </span>
+              <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${pBadge.cls}`}>
+                <CreditCard size={14} className="mr-1 opacity-80" />
+                {pBadge.text}
+              </span>
+              <div className="flex items-center gap-1.5 text-[12px] text-slate-600 ml-auto">
+                <Hash size={12} />
+                <span className="font-mono text-xs">{booking.id.slice(0, 8)}...</span>
+                {createdAt && (
+                  <span className="text-[11px] text-slate-500">
+                    • {createdAt.toLocaleDateString()}
+                  </span>
+                )}
+              </div>
+            </div>
           </section>
 
           {host && (
-            <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 flex items-center gap-4 shadow-sm">
+            <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
+              <div className="flex items-center gap-4 mb-4">
               <HostAvatar host={host} />
               <div className="flex-1 min-w-0">
                 <p className="text-[15px] sm:text-base font-semibold text-gray-900 truncate">
@@ -1635,6 +1458,15 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
                 </p>
                 <p className="text-[13px] sm:text-sm text-gray-600">Listing Host</p>
               </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMessageModal(true)}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition"
+              >
+                <MessageCircle size={16} />
+                Message Host
+              </button>
             </section>
           )}
 
@@ -1683,17 +1515,18 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
             </section>
           )}
 
-          <FullDetails />
           {bookingMeta}
 
-          <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 shadow-sm">
-            <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-1">
+          {policyText && (
+            <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
+              <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-2">
               Cancellation Policy
             </h3>
-            <p className="text-[14px] sm:text[15px] text-gray-800">
-              {policyText || "No specific cancellation policy was provided by the host."}
+              <p className="text-[14px] sm:text-[15px] leading-relaxed text-gray-800">
+                {policyText}
             </p>
           </section>
+          )}
         </div>
       </div>
 
@@ -1723,7 +1556,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
     </div>
   );
 
-  return createPortal(
+  const mainModal = createPortal(
     <div
       className={[
         "fixed inset-0 z-[2147483000] flex items-center justify-center p-0 sm:p-4",
@@ -1760,6 +1593,23 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
       </div>
     </div>,
     document.body
+  );
+
+  // Render MessageHostModal in a separate portal
+  return (
+    <>
+      {mainModal}
+      {showMessageModal &&
+        createPortal(
+          <MessageHostModal
+            open={showMessageModal}
+            onClose={() => setShowMessageModal(false)}
+            host={host}
+            hostId={host?.uid || listing?.uid || listing?.ownerId || listing?.hostId}
+          />,
+          document.body
+        )}
+    </>
   );
 };
 

@@ -12,6 +12,7 @@ import {
   Wallet,
   LogOut,
   LayoutDashboard,
+  Gift,
 } from "lucide-react";
 
 import { auth } from "../../../config/firebase";
@@ -60,6 +61,7 @@ const AdminSidebar = () => {
     { icon: Building2, label: "Listings",  path: "/admin/listings",  activeMatch: /^\/admin\/listings/ },
     { icon: Calendar,  label: "Bookings",  path: "/admin/bookings",  activeMatch: /^\/admin\/bookings/ },
     { icon: Wallet,    label: "E-Wallet",  path: "/admin/wallet",    activeMatch: /^\/admin\/wallet/ },
+    { icon: Gift,      label: "Rewards",   path: "/admin/rewards",   activeMatch: /^\/admin\/rewards/ },
   ];
 
   return (

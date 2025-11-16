@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { MessageHostModal } from "../../components/message-host-modal";
 import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
+import { useServiceFeeRate } from "../../utils/serviceFeeRate.js";
 
 /* =============== Rewards =============== */
 const BOOKING_REWARD_POINTS = 80; // guest reward
@@ -29,12 +30,12 @@ const HOST_BOOKING_REWARD_POINTS = 100; // provider/host reward per booking (wal
 const ADMIN_WALLET_ID = "admin";
 
 /* ================= EmailJS config & helper ================= */
-// const EMAILJS_SERVICE_ID = "service_xxx";
-// const EMAILJS_TEMPLATE_ID = "template_xxx";
-// const EMAILJS_PUBLIC_KEY = "public_xxx";
-const EMAILJS_SERVICE_ID = "";
-const EMAILJS_TEMPLATE_ID = "";
-const EMAILJS_PUBLIC_KEY = "";
+const EMAILJS_SERVICE_ID = "service_xxx";
+const EMAILJS_TEMPLATE_ID = "template_xxx";
+const EMAILJS_PUBLIC_KEY = "public_xxx";
+// const EMAILJS_SERVICE_ID = "";
+// const EMAILJS_TEMPLATE_ID = "";
+// const EMAILJS_PUBLIC_KEY = "";
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
 async function sendBookingEmail({
@@ -103,7 +104,7 @@ function sanitizeDiscount(typeRaw, valueRaw) {
   return { type: "", value: 0 };
 }
 
-function computePayment({ price, quantity, discountType, discountValue }) {
+function computePayment({ price, quantity, discountType, discountValue, serviceFeeRate = 0.12 }) {
   const base = Math.max(0, Number(price || 0));
   const qty = Math.max(1, Number(quantity || 1));
   const { type, value } = sanitizeDiscount(discountType, discountValue);
@@ -113,7 +114,7 @@ function computePayment({ price, quantity, discountType, discountValue }) {
   const unitAfter = Math.max(0, base - unitDiscount);
 
   const subtotal = unitAfter * qty; // provider receives this
-  const tax = subtotal * 0.12; // 12% platform fee
+  const tax = subtotal * serviceFeeRate; // platform fee (dynamic from admin settings)
   const total = subtotal + tax; // guest pays this
 
   return {
@@ -179,7 +180,7 @@ function describeOffer(c) {
   if (c.type === "fixed") return `₱${Number(c.value).toLocaleString()} OFF`;
   return "";
 }
-function applyCouponToPayment(basePay, coupon, quantity) {
+function applyCouponToPayment(basePay, coupon, quantity, serviceFeeRate = 0.12) {
   if (!basePay || !coupon?.type || !(coupon.value > 0)) {
     return {
       ...basePay,
@@ -208,7 +209,7 @@ function applyCouponToPayment(basePay, coupon, quantity) {
 
   couponDiscount = Math.max(0, Math.min(subtotal, couponDiscount));
   const subtotalAfterCoupon = subtotal - couponDiscount;
-  const tax = subtotalAfterCoupon * 0.12;
+  const tax = subtotalAfterCoupon * serviceFeeRate;
   const total = subtotalAfterCoupon + tax;
 
   return {
@@ -732,6 +733,9 @@ function ServiceCheckout({
   
   // points modal
   onPointsAwarded,
+  
+  // Modal
+  openModal,
 }) {
   const computedTotal = Number(payment?.total ?? 0);
 
@@ -787,11 +791,13 @@ function ServiceCheckout({
                 // ignore
               }
 
+              let bookingId = null;
               await runTransaction(database, async (tx) => {
                 const serviceFee = Number(payment.tax || 0); // service fee is stored as "tax" in payment
                 const hostUid = service?.uid || service?.ownerId || service?.hostId || null;
 
                 const bookingRef = doc(collection(database, "bookings"));
+                bookingId = bookingRef.id; // Store booking ID for use outside transaction
                 const pointsRef = doc(database, "points", user.uid);
                 const ptsLogRef = doc(collection(database, "points", user.uid, "transactions"));
                 const lref = doc(database, "serviceLocks", lockId);
@@ -863,6 +869,16 @@ function ServiceCheckout({
                         }
                       : null,
 
+                  // reward audit
+                  reward:
+                    Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+                      ? {
+                          rewardId: payment.rewardId,
+                          rewardName: payment?.rewardLabel || "",
+                          discount: Number(payment?.rewardDiscount || 0),
+                        }
+                      : null,
+
                   status: bookingStatus,
                   paymentStatus: storedPaymentStatus,
                   paymentMethod: "paypal",
@@ -903,6 +919,16 @@ function ServiceCheckout({
                     },
                     { merge: true }
                   );
+                }
+
+                // Mark reward as used (if reward applied)
+                if (completed && Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+                  const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+                  tx.update(rewardRef, {
+                    used: true,
+                    usedAt: serverTimestamp(),
+                    bookingId: bookingRef.id,
+                  });
                 }
 
                 if (completed) {
@@ -973,8 +999,25 @@ function ServiceCheckout({
                 }, 500);
               }
 
-              alert(completed ? "Booking successful!" : "Order captured; booking pending.");
+              // Show success modal for PayPal payment
+              if (completed) {
+                openModal(
+                  "success",
+                  "Payment Successful!",
+                  `Your booking for "${service?.title || "this service"}" has been confirmed.\n\nBooking ID: ${bookingId ? bookingId.slice(0, 8).toUpperCase() : "N/A"}\nTotal Paid: ₱${(payment?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                );
+                // Close the booking modal after showing success
+                setTimeout(() => {
               onClose?.();
+                }, 2000);
+              } else {
+                openModal(
+                  "info",
+                  "Order Captured",
+                  "Your order has been captured. Booking is pending confirmation."
+                );
+                onClose?.();
+              }
             } catch (err) {
               console.error("Error creating reservation:", err);
               alert(`Failed to create reservation: ${err.message}`);
@@ -1019,6 +1062,8 @@ function ServiceCheckout({
 
 /* ============================ Page component ============================ */
 export default function ServiceDetailsPage({ listingId: propListingId }) {
+  // Get service fee rate from admin settings
+  const serviceFeeRate = useServiceFeeRate("Services");
   const navigate = useNavigate();
   const { listingId: routeListingId } = useParams();
   const listingId = propListingId ?? routeListingId;
@@ -1059,6 +1104,9 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
 
   // PROMO state (auto-applied)
   const [autoPromo, setAutoPromo] = useState(null);
+
+  // Reward state
+  const [selectedReward, setSelectedReward] = useState(null);
 
   /* ======= Share functionality ======= */
   const [shareToast, setShareToast] = useState(null);
@@ -1377,6 +1425,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
       quantity: selectedQuantity,
       discountType: service.discountType,
       discountValue: service.discountValue,
+      serviceFeeRate: serviceFeeRate,
     });
 
     // 2) auto promo
@@ -1388,7 +1437,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
           ? (base.subtotal * autoPromo.value) / 100
           : Math.min(base.subtotal, autoPromo.value);
         const subAfterPromo = Math.max(0, base.subtotal - promoDiscount);
-        const tax = subAfterPromo * 0.12;
+        const tax = subAfterPromo * serviceFeeRate;
         const total = subAfterPromo + tax;
         withPromo = {
           ...base,
@@ -1422,20 +1471,44 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
     }
 
     // 4) apply coupon
-    const afterCoupon = applyCouponToPayment(withPromo, useCoupon, withPromo.quantity);
+    const afterCoupon = applyCouponToPayment(withPromo, useCoupon, withPromo.quantity, serviceFeeRate);
+
+    // 5) REWARD applies to AFTER-COUPON amount (last in stack)
+    let rewardDiscount = 0;
+    if (selectedReward) {
+      const rewardType = selectedReward.discountType || "percentage";
+      const rewardValue = Number(selectedReward.discountValue || 0);
+      const afterCouponSubtotal = Number(afterCoupon.subtotal || 0);
+      if (rewardType === "percentage") {
+        rewardDiscount = Math.min(afterCouponSubtotal, (afterCouponSubtotal * rewardValue) / 100);
+      } else {
+        rewardDiscount = Math.min(afterCouponSubtotal, rewardValue);
+      }
+    }
+
+    const subtotalAfterReward = Math.max(0, Number(afterCoupon.subtotal || 0) - rewardDiscount);
+    const taxAfterReward = subtotalAfterReward * serviceFeeRate;
+    const totalAfterReward = subtotalAfterReward + taxAfterReward;
 
     setPayment({
       ...afterCoupon,
+      subtotal: subtotalAfterReward,
+      tax: taxAfterReward,
+      total: totalAfterReward,
       listingDiscount: Number(base?.discountTotal || 0),
       promoDiscount: Number(withPromo?.promoDiscount || 0) || 0,
       couponDiscount: Number(afterCoupon?.couponDiscount || 0),
+      rewardDiscount,
+      rewardLabel: selectedReward ? `${selectedReward.rewardName} (${selectedReward.discountType === "percentage" ? `${selectedReward.discountValue}%` : `₱${Number(selectedReward.discountValue).toLocaleString()}`} OFF)` : "",
+      rewardId: selectedReward?.id || null,
       totalDiscount:
         Number(base?.discountTotal || 0) +
         Number(withPromo?.promoDiscount || 0) +
-        Number(afterCoupon?.couponDiscount || 0),
+        Number(afterCoupon?.couponDiscount || 0) +
+        rewardDiscount,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [service, selectedSchedule, selectedQuantity, appliedCoupon, autoPromo, listingId]);
+  }, [service, selectedSchedule, selectedQuantity, appliedCoupon, autoPromo, listingId, selectedReward]);
 
   /* ==================== Reviews subscription ==================== */
   useEffect(() => {
@@ -1669,10 +1742,13 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
         const hostUid = service?.uid || service?.ownerId || service?.hostId || "";
         if (!hostUid) throw new Error("Service provider not found.");
 
+        // Refs
+        // Use guestWallets for guest (catch-all rule allows if uid matches)
+        // Use wallets for host (credit-only rule allows any auth user to credit)
         const wrefGuest = doc(database, "guestWallets", user.uid);
-        const wrefHost = doc(database, "hostWallets", hostUid);
+        const wrefHost = doc(database, "wallets", hostUid);
         const walletTxGuestRef = doc(collection(database, "guestWallets", user.uid, "transactions"));
-        const walletTxHostRef = doc(collection(database, "hostWallets", hostUid, "transactions"));
+        const walletTxHostRef = doc(collection(database, "wallets", hostUid, "transactions"));
 
         const pointsGuestRef = doc(database, "points", user.uid);
         const pointsHostRef = doc(database, "points", hostUid);
@@ -1763,6 +1839,16 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
                 }
               : null,
 
+          // reward audit
+          reward:
+            Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+              ? {
+                  rewardId: payment.rewardId,
+                  rewardName: payment?.rewardLabel || "",
+                  discount: Number(payment?.rewardDiscount || 0),
+                }
+              : null,
+
           status: "confirmed",
           paymentStatus: "paid",
           paymentMethod: "wallet",
@@ -1821,6 +1907,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
         );
 
         // Host wallet: credit
+        // Use wallets/{hostUid} with credit-only rule (balance can only increase)
         tx.set(
           wrefHost,
           { uid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
@@ -1857,6 +1944,16 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
           balanceAfter: guestPtsAfter,
           timestamp: serverTimestamp(),
         });
+
+        // Mark reward as used (if reward applied)
+        if (Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+          const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+          tx.update(rewardRef, {
+            used: true,
+            usedAt: serverTimestamp(),
+            bookingId: bookingRef.id,
+          });
+        }
 
         tx.set(
           pointsHostRef,
@@ -1927,6 +2024,12 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
         reason: `Reward for booking ${service?.title || "this service"}!`
       });
       
+      // Clear selected reward from localStorage after successful booking
+      if (Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+        localStorage.removeItem("selectedReward");
+        setSelectedReward(null);
+      }
+
       openModal(
         "success",
         "Booking confirmed",
@@ -2784,6 +2887,22 @@ A confirmation email will follow shortly.`
                       </div>
                     )}
 
+                    {/* Row: Reward */}
+                    {Number(payment?.rewardDiscount || 0) > 0 && (
+                      <div className="flex items-center justify-between text-[13.5px] sm:text-sm text-emerald-700">
+                        <span>
+                          Reward{payment.rewardLabel ? ` — ${payment.rewardLabel}` : ""}
+                        </span>
+                        <span>
+                          − {currencySymbol}
+                          {Number(payment.rewardDiscount).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+
                     {/* Row: Subtotal (after discounts) */}
                     <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
                       <span>Subtotal (after discounts)</span>
@@ -2798,7 +2917,7 @@ A confirmation email will follow shortly.`
 
                     {/* Row: Service fee */}
                     <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
-                      <span>Service fee (12%)</span>
+                      <span>Service fee ({Math.round(serviceFeeRate * 100)}%)</span>
                       <span>
                         {currencySymbol}
                         {payment.tax.toLocaleString(undefined, {
@@ -2855,6 +2974,7 @@ A confirmation email will follow shortly.`
                     payWithWallet={payWithWallet}
                     isPayingWallet={isPayingWallet}
                     onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
+                    openModal={openModal}
                   />
                 ) : (
                   (() => {
@@ -2862,14 +2982,14 @@ A confirmation email will follow shortly.`
                     const hostUid = service?.uid || service?.ownerId || service?.hostId;
                     const isHost = currentUser && hostUid && currentUser.uid === hostUid;
                     return (
-                      <button
-                        type="button"
-                        onClick={handleBookNow}
+                  <button
+                    type="button"
+                    onClick={handleBookNow}
                         disabled={!payment || !selectedSchedule || isHost}
-                        className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
-                      >
-                        Book Now
-                      </button>
+                    className="w-full inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                  >
+                    Book Now
+                  </button>
                     );
                   })()
                 )}
@@ -2912,6 +3032,7 @@ A confirmation email will follow shortly.`
               wallet={wallet}
               payWithWallet={payWithWallet}
               isPayingWallet={isPayingWallet}
+              openModal={openModal}
             />
           ) : (
             <>
@@ -2920,14 +3041,14 @@ A confirmation email will follow shortly.`
                 const hostUid = service?.uid || service?.ownerId || service?.hostId;
                 const isHost = currentUser && hostUid && currentUser.uid === hostUid;
                 return (
-                  <button
-                    type="button"
-                    onClick={handleBookNow}
+              <button
+                type="button"
+                onClick={handleBookNow}
                     disabled={!payment || !selectedSchedule || isHost}
-                    className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none"
-                  >
-                    Book Now
-                  </button>
+                className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-blue-500 to-blue-600 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-blue-600 hover:to-blue-700 active:scale-[0.99] transition disabled:opacity-50 disabled:pointer-events-none"
+              >
+                Book Now
+              </button>
                 );
               })()}
               <button

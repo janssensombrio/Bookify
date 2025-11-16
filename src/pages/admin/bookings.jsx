@@ -117,18 +117,18 @@ export default function AdminBookingsPage() {
           // Process results
           results.forEach((listingDocs) => {
             listingDocs.docs.forEach((doc) => {
-              const data = doc.data() || {};
-              const rawCategory = data.category ?? data.listingCategory ?? null;
-              const category =
-                typeof rawCategory === "string"
-                  ? rawCategory
-                  : rawCategory?.name ||
-                    (data.experienceType ? "Experiences" : data.serviceType || data.type ? "Services" : "Homes");
-              listingMap[doc.id] = {
-                title: data.title || "—",
-                category: category || "Uncategorized",
-              };
-            });
+                const data = doc.data() || {};
+                const rawCategory = data.category ?? data.listingCategory ?? null;
+                const category =
+                  typeof rawCategory === "string"
+                    ? rawCategory
+                    : rawCategory?.name ||
+                      (data.experienceType ? "Experiences" : data.serviceType || data.type ? "Services" : "Homes");
+                listingMap[doc.id] = {
+                  title: data.title || "—",
+                  category: category || "Uncategorized",
+                };
+              });
           });
 
           rows = rows.map((r) => {
@@ -647,7 +647,7 @@ export default function AdminBookingsPage() {
           </div>
 
           {/* Second Row: Time, Status, Sort & Export */}
-          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
             <TailwindDropdown
               value={timeFilter}
               onChange={(e) => setTimeFilter(e.target.value)}
@@ -661,8 +661,8 @@ export default function AdminBookingsPage() {
               className="min-w-[120px]"
             />
             <TailwindDropdown
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
               options={[
                 { value: "all", label: "All Statuses" },
                 { value: "pending", label: "Pending" },
@@ -672,8 +672,8 @@ export default function AdminBookingsPage() {
               className="min-w-[130px]"
             />
             <TailwindDropdown
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value)}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value)}
               options={[
                 { value: "createdAt", label: "Newest" },
                 { value: "totalPrice", label: "Price" },
@@ -682,42 +682,42 @@ export default function AdminBookingsPage() {
               ]}
               className="min-w-[110px]"
             />
-            <button
-              title="Toggle sort direction"
-              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-              className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
-            >
-              <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
-              </svg>
-              <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
-            </button>
-            <div className="flex items-center gap-2 ml-auto">
               <button
-                title="Export CSV"
-                onClick={exportCSV}
-                className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
-              >
-                <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
-                  <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
-                  <path d="M10 14a1 1 0 0 1-1-1V7a1 1 0 1 1 2 0v6a1 1 0 0 1-1 1Z" />
-                  <path d="M7.293 11.707a1 1 0 0 1 0-1.414l2-2a1 1 0 1 1 1.414 1.414L9.414 10l1.293 1.293a1 1 0 0 1-1.414 1.414l-2-2Z" />
-                </svg>
-                <span className="hidden sm:inline">CSV</span>
-              </button>
-              <button
-                title="Export PDF"
-                onClick={exportPDF}
-                className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+                title="Toggle sort direction"
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
               >
                 <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                  <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
+                  <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
                 </svg>
-                <span className="hidden sm:inline">PDF</span>
+                <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
               </button>
+            <div className="flex items-center gap-2 ml-auto">
+            <button
+              title="Export CSV"
+              onClick={exportCSV}
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
+            >
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
+                <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
+                <path d="M10 14a1 1 0 0 1-1-1V7a1 1 0 1 1 2 0v6a1 1 0 0 1-1 1Z" />
+                <path d="M7.293 11.707a1 1 0 0 1 0-1.414l2-2a1 1 0 1 1 1.414 1.414L9.414 10l1.293 1.293a1 1 0 0 1-1.414 1.414l-2-2Z" />
+              </svg>
+                <span className="hidden sm:inline">CSV</span>
+            </button>
+            <button
+              title="Export PDF"
+              onClick={exportPDF}
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+            >
+              <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
+                <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
+              </svg>
+                <span className="hidden sm:inline">PDF</span>
+            </button>
             </div>
           </div>
-        </div>
+          </div>
         </div>
 
         {/* Content */}

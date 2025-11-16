@@ -222,16 +222,16 @@ export default function AdminListingsPage() {
             const hostResults = await Promise.all(hostQueries);
             hostResults.forEach((snap) => {
               snap.docs.forEach((doc) => {
-                const data = doc.data() || {};
-                const uid = data.uid || doc.id;
-                const name =
-                  data.displayName ||
-                  ((data.firstName || "") + " " + (data.lastName || "")).trim() ||
-                  data.email ||
-                  uid;
-                hostMap[uid] = name;
-                hostMap[doc.id] = name;
-              });
+                  const data = doc.data() || {};
+                  const uid = data.uid || doc.id;
+                  const name =
+                    data.displayName ||
+                    ((data.firstName || "") + " " + (data.lastName || "")).trim() ||
+                    data.email ||
+                    uid;
+                  hostMap[uid] = name;
+                  hostMap[doc.id] = name;
+                });
             });
             rows = rows.map((r) => ({
               ...r,
@@ -779,8 +779,8 @@ function escapeHtml(str) {
           {/* Sort & actions */}
           <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
             <TailwindDropdown
-              value={sortKey}
-              onChange={(e) => setSortKey(e.target.value)}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value)}
               options={[
                 { value: "createdAt", label: "Newest" },
                 { value: "price", label: "Price" },
@@ -790,16 +790,16 @@ function escapeHtml(str) {
               ]}
               className="min-w-[120px]"
             />
-            <button
-              title="Toggle sort direction"
-              onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-              className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
-            >
-              <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
-                <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
-              </svg>
-              <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
-            </button>
+              <button
+                title="Toggle sort direction"
+                onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
+                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
+              >
+                <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
+                  <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
+                </svg>
+                <span className="hidden xs:inline">{sortDir === "asc" ? "Asc" : "Desc"}</span>
+              </button>
             <button
               title="Export CSV"
               onClick={exportCSV}

@@ -21,6 +21,7 @@ import emailjs from "@emailjs/browser";
 
 import { MessageHostModal } from "../../components/message-host-modal";
 import PointsNotificationModal from "../../components/PointsNotificationModal.jsx";
+import { useServiceFeeRate } from "../../utils/serviceFeeRate.js";
 
 import {
   ChevronLeft,
@@ -55,12 +56,12 @@ const BOOKING_REWARD_POINTS = 80; // guest reward
 const HOST_BOOKING_REWARD_POINTS = 100; // host reward per booking (E-Wallet flow)
 
 /* ================= EmailJS config & helper ================= */
-// const EMAILJS_SERVICE_ID = "service_x9dtjt6";
-// const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
-// const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
-const EMAILJS_SERVICE_ID = "";
-const EMAILJS_TEMPLATE_ID = "";
-const EMAILJS_PUBLIC_KEY = "";
+const EMAILJS_SERVICE_ID = "service_x9dtjt6";
+const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
+const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
+// const EMAILJS_SERVICE_ID = "";
+// const EMAILJS_TEMPLATE_ID = "";
+// const EMAILJS_PUBLIC_KEY = "";
 emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
 async function sendBookingEmail({
@@ -94,7 +95,6 @@ const numberOr = (v, d = 0) => {
   const n = typeof v === "string" ? parseFloat(v) : v;
   return Number.isFinite(n) ? n : d;
 };
-const SERVICE_FEE_RATE = 0.2; // 20%
 const ADMIN_WALLET_ID = "admin";
 
 const fmtDate = (isoDate) => {
@@ -151,7 +151,7 @@ const IconStat = ({ Icon, label, value }) => (
 /* ============================ Overlays & Modals ============================ */
 function FullScreenLoader({ text = "Processing…" }) {
   return createPortal(
-    <div className="fixed inset-0 z-[2147483647] flex items-center justify.center bg-black/40 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[2147483647] flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="rounded-2xl bg-white border border-slate-200 shadow-xl p-5 flex flex-col items-center gap-3">
         <Loader2 className="w-6 h-6 animate-spin text-blue-600" />
         <p className="text-sm font-medium text-slate-900">{text}</p>
@@ -693,6 +693,10 @@ function PayPalCheckout({
   isPayingWallet,
   // points modal
   onPointsAwarded,
+  // Modal
+  openModal,
+  // reward
+  setSelectedReward,
 }) {
   const computedTotal = Number(payment?.total ?? 0);
 
@@ -746,12 +750,14 @@ function PayPalCheckout({
               }
 
               // ---- Transaction: lock capacity + create booking + (if completed) award points + credit admin wallet ----
+              let bookingId = null;
               await runTransaction(database, async (tx) => {
                 const participants = Number(payment.participants || 1);
                 const serviceFee = Number(payment.serviceFee || 0);
                 const hostUid = payment?.hostUid || null;
 
                 const bookingRef = doc(collection(database, "bookings"));
+                bookingId = bookingRef.id; // Store booking ID for use outside transaction
                 const pointsRef = doc(database, "points", user.uid);
                 const ptsLogRef = doc(collection(database, "points", user.uid, "transactions"));
                 const lref = doc(database, "experienceLocks", lockId);
@@ -807,6 +813,16 @@ function PayPalCheckout({
                   couponValue: Number(payment?.discounts?.code?.value || 0),
                   couponDiscountAmount: Number(payment?.couponDiscountAmount || 0),
 
+                  // reward audit
+                  reward:
+                    Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+                      ? {
+                          rewardId: payment.rewardId,
+                          rewardName: payment?.rewardLabel || "",
+                          discount: Number(payment?.rewardDiscount || 0),
+                        }
+                      : null,
+
                   subtotal: Number(payment.subtotal || 0),
                   serviceFee: Number(payment.serviceFee || 0),
                   totalPrice: Number(payment.total || 0),
@@ -852,6 +868,16 @@ function PayPalCheckout({
                     },
                     { merge: true }
                   );
+                }
+
+                // Mark reward as used (if reward applied)
+                if (completed && Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+                  const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+                  tx.update(rewardRef, {
+                    used: true,
+                    usedAt: serverTimestamp(),
+                    bookingId: bookingRef.id,
+                  });
                 }
 
                 // Points (only if PayPal completed)
@@ -924,8 +950,31 @@ function PayPalCheckout({
                 }, 500);
               }
 
-              alert(completed ? "Booking successful!" : "Order captured; booking pending.");
+              // Clear selected reward from localStorage after successful booking
+              if (completed && payment?.rewardId) {
+                localStorage.removeItem("selectedReward");
+                setSelectedReward(null);
+              }
+
+              // Show success modal for PayPal payment
+              if (completed) {
+                openModal(
+                  "success",
+                  "Payment Successful!",
+                  `Your booking for "${title || "this experience"}" has been confirmed.\n\nBooking ID: ${bookingId ? bookingId.slice(0, 8).toUpperCase() : "N/A"}\nTotal Paid: ₱${(payment?.total ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                );
+                // Close the booking modal after showing success
+                setTimeout(() => {
               onClose?.();
+                }, 2000);
+              } else {
+                openModal(
+                  "info",
+                  "Order Captured",
+                  "Your order has been captured. Booking is pending confirmation."
+                );
+                onClose?.();
+              }
             } catch (err) {
               console.error("Error creating reservation:", err);
               alert(`Failed to create reservation: ${err.message}`);
@@ -970,6 +1019,8 @@ function PayPalCheckout({
 
 /* ================================ PAGE ================================ */
 export default function ExperienceDetailsPage({ listingId: propListingId }) {
+  // Get service fee rate from admin settings
+  const serviceFeeRate = useServiceFeeRate("Experiences");
   const navigate = useNavigate();
   const { listingId: routeListingId } = useParams();
   const listingId = propListingId ?? routeListingId;
@@ -1011,6 +1062,9 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
   // NEW: promos (auto-applied)
   const [activePromos, setActivePromos] = useState([]); // normalized promos eligible for this listing
   const [bestPromo, setBestPromo] = useState(null);
+
+  // Reward state
+  const [selectedReward, setSelectedReward] = useState(null);
 
   /* ======= Share functionality ======= */
   const [shareToast, setShareToast] = useState(null);
@@ -1138,6 +1192,65 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       setWallet({ balance: Number(d.balance || 0), currency: d.currency || "PHP" });
     });
     return unsub;
+  }, []);
+
+  // Load selected reward from localStorage on mount and when page becomes visible
+  useEffect(() => {
+    const loadReward = () => {
+      const rewardStr = localStorage.getItem("selectedReward");
+      if (rewardStr) {
+        try {
+          const reward = JSON.parse(rewardStr);
+          setSelectedReward(reward);
+        } catch (e) {
+          console.error("Failed to parse selected reward:", e);
+          localStorage.removeItem("selectedReward");
+          setSelectedReward(null);
+        }
+      } else {
+        setSelectedReward(null);
+      }
+    };
+
+    // Load on mount
+    loadReward();
+
+    // Listen for custom event when reward is selected (same tab)
+    const handleRewardSelected = (e) => {
+      if (e.detail) {
+        setSelectedReward(e.detail);
+      }
+    };
+    window.addEventListener("rewardSelected", handleRewardSelected);
+
+    // Also listen for storage changes (when reward is selected from another tab/page)
+    const handleStorageChange = (e) => {
+      if (e.key === "selectedReward") {
+        loadReward();
+      }
+    };
+    window.addEventListener("storage", handleStorageChange);
+
+    // Also check periodically when page is visible (for same-tab updates)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        loadReward();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    // Check on focus (when user switches back to this tab)
+    const handleFocus = () => {
+      loadReward();
+    };
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      window.removeEventListener("rewardSelected", handleRewardSelected);
+      window.removeEventListener("storage", handleStorageChange);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, []);
 
   // Fetch schedule capacity (experienceLocks)
@@ -1479,11 +1592,24 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       });
     }
 
+    // 3) REWARD applies to AFTER-COUPON amount (last in stack)
+    const baseAfterCoupon = Math.max(0, baseAfterListing - promoDiscountAmount - couponDiscountAmount);
+    let rewardDiscount = 0;
+    if (selectedReward) {
+      const rewardType = selectedReward.discountType || "percentage";
+      const rewardValue = Number(selectedReward.discountValue || 0);
+      if (rewardType === "percentage") {
+        rewardDiscount = Math.min(baseAfterCoupon, (baseAfterCoupon * rewardValue) / 100);
+      } else {
+        rewardDiscount = Math.min(baseAfterCoupon, rewardValue);
+      }
+    }
+
     const discountedSubtotal = Math.max(
       0,
-      baseAfterListing - promoDiscountAmount - couponDiscountAmount
+      baseAfterCoupon - rewardDiscount
     );
-    const serviceFee = discountedSubtotal * SERVICE_FEE_RATE;
+    const serviceFee = discountedSubtotal * serviceFeeRate;
     const total = discountedSubtotal + serviceFee;
 
     setPayment({
@@ -1499,12 +1625,16 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       // coupon
       couponDiscountAmount,
       discounts: { code: appliedCode || null },
+      // reward
+      rewardDiscount,
+      rewardLabel: selectedReward ? `${selectedReward.rewardName} (${selectedReward.discountType === "percentage" ? `${selectedReward.discountValue}%` : `₱${Number(selectedReward.discountValue).toLocaleString()}`} OFF)` : "",
+      rewardId: selectedReward?.id || null,
       // derived
       subtotal: discountedSubtotal,
       serviceFee,
       total,
     });
-  }, [experience, selectedSchedule, selectedParticipants, appliedCode, activePromos]);
+  }, [experience, selectedSchedule, selectedParticipants, appliedCode, activePromos, serviceFeeRate, selectedReward]);
 
   const photos = useMemo(
     () => (Array.isArray(experience?.photos) ? experience.photos : []),
@@ -1626,11 +1756,13 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
 
         const participants = Number(payment.participants || 1);
 
-        // Refs - use guestWallets for guest, hostWallets for host
+        // Refs
+        // Use guestWallets for guest (catch-all rule allows if uid matches)
+        // Use wallets for host (credit-only rule allows any auth user to credit)
         const wrefGuest = doc(database, "guestWallets", user.uid);
-        const wrefHost = doc(database, "hostWallets", hostUid);
+        const wrefHost = doc(database, "wallets", hostUid);
         const walletTxGuestRef = doc(collection(database, "guestWallets", user.uid, "transactions"));
-        const walletTxHostRef = doc(collection(database, "hostWallets", hostUid, "transactions"));
+        const walletTxHostRef = doc(collection(database, "wallets", hostUid, "transactions"));
 
         const pointsGuestRef = doc(database, "points", user.uid);
         const pointsHostRef = doc(database, "points", hostUid);
@@ -1713,6 +1845,16 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
           couponValue: Number(payment?.discounts?.code?.value || 0),
           couponDiscountAmount: Number(payment?.couponDiscountAmount || 0),
 
+          // reward audit
+          reward:
+            Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId
+              ? {
+                  rewardId: payment.rewardId,
+                  rewardName: payment?.rewardLabel || "",
+                  discount: Number(payment?.rewardDiscount || 0),
+                }
+              : null,
+
           subtotal,
           serviceFee,
           totalPrice: total,
@@ -1773,6 +1915,7 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
         );
 
         // ---------- HOST wallet: credit SUBTOTAL (no service fee) ----------
+        // Use wallets/{hostUid} with credit-only rule (balance can only increase)
         tx.set(
           wrefHost,
           { uid: hostUid, balance: hostBalAfter, currency: "PHP", updatedAt: serverTimestamp() },
@@ -1809,6 +1952,16 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
           balanceAfter: guestPtsAfter,
           timestamp: serverTimestamp(),
         });
+
+        // Mark reward as used (if reward applied)
+        if (Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+          const rewardRef = doc(database, "users", user.uid, "redeemedRewards", payment.rewardId);
+          tx.update(rewardRef, {
+            used: true,
+            usedAt: serverTimestamp(),
+            bookingId: bookingRef.id,
+          });
+        }
 
         // ---------- HOST points (+100) ----------
         tx.set(
@@ -1875,6 +2028,12 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       setIsPayingWallet(false);
       setShowPayPal(false);
       
+      // Clear selected reward from localStorage after successful booking
+      if (Number(payment?.rewardDiscount || 0) > 0 && payment?.rewardId) {
+        localStorage.removeItem("selectedReward");
+        setSelectedReward(null);
+      }
+
       // Show points notification modal
       setPointsModal({
         open: true,
@@ -2663,6 +2822,22 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
                       </div>
                     )}
 
+                    {/* Reward line */}
+                    {Number(payment?.rewardDiscount || 0) > 0 && (
+                      <div className="flex items-center justify-between text-[13.5px] sm:text-sm text-emerald-700">
+                        <span>
+                          Reward{payment.rewardLabel ? ` — ${payment.rewardLabel}` : ""}
+                        </span>
+                        <span>
+                          − {currencySymbol}
+                          {Number(payment.rewardDiscount).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
                       <span>Subtotal</span>
                       <span className="font-medium">
@@ -2674,7 +2849,7 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[13.5px] sm:text-sm">
-                      <span>Service fee ({Math.round(SERVICE_FEE_RATE * 100)}%)</span>
+                      <span>Service fee ({Math.round(serviceFeeRate * 100)}%)</span>
                       <span>
                         {currencySymbol}
                         {payment.serviceFee.toLocaleString(undefined, {
@@ -2717,6 +2892,8 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
                     payWithWallet={payWithWallet}
                     isPayingWallet={isPayingWallet}
                     onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
+                    openModal={openModal}
+                    setSelectedReward={setSelectedReward}
                   />
                 ) : (
                   (() => {
@@ -2778,6 +2955,9 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
               wallet={wallet}
               payWithWallet={payWithWallet}
               isPayingWallet={isPayingWallet}
+              onPointsAwarded={(points, reason) => setPointsModal({ open: true, points, reason })}
+              openModal={openModal}
+              setSelectedReward={setSelectedReward}
             />
           ) : (
             <>

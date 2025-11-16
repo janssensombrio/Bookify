@@ -14,9 +14,11 @@ import {
   addDoc,
   deleteDoc,
   getDocs,
+  runTransaction,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { database, auth } from "../../config/firebase";
+import emailjs from "@emailjs/browser";
 import {
   MapPin,
   Calendar as CalIcon,
@@ -37,7 +39,36 @@ import {
   XCircle,
   Clock,
   Package,
+  Hash,
+  User,
+  Heart,
+  Building2,
+  Sparkles,
+  Handshake,
+  Loader2,
+  Shield,
+  Sun,
+  Wifi,
+  Tag,
 } from "lucide-react";
+
+/* ---------------- EmailJS config ---------------- */
+const EMAILJS = {
+  SERVICE_ID: "service_7y9jqhs",
+  TEMPLATE_ID: "template_6ak94mi",
+  PUBLIC_KEY: "0QgVGXmPL9kGSq53X",
+};
+
+// Initialize once at module load (idempotent)
+if (!emailjs.__BOOKIFY_INIT__) {
+  try {
+    emailjs.init(EMAILJS.PUBLIC_KEY);
+    emailjs.__BOOKIFY_INIT__ = true;
+    console.info("[EmailJS] init OK");
+  } catch (e) {
+    console.error("[EmailJS] init failed:", e);
+  }
+}
 
 // =============================================================================
 // UTILITY FUNCTIONS
@@ -96,6 +127,7 @@ const fmtDateStr = (isoLike) => {
 };
 
 const fmtTimeStr = (hhmm) => {
+  if (!hhmm) return "";
   try {
     const [h, m] = (hhmm || "").split(":").map(Number);
     if (Number.isNaN(h)) return hhmm;
@@ -116,6 +148,85 @@ const daysBetween = (a, b) => {
   const eNoon = new Date(e.getFullYear(), e.getMonth(), e.getDate(), 12);
   return Math.max(0, Math.ceil((eNoon - sNoon) / ms));
 };
+
+/* ---------------- EmailJS: send cancellation email ---------------- */
+async function sendCancellationEmail({ booking, reasonText, refundAmount, guestEmail, guestName }) {
+  try {
+    // Resolve recipient (guest email from booking)
+    const to_email =
+      guestEmail ||
+      booking?.guestEmail ||
+      booking?.email ||
+      booking?.userEmail ||
+      (typeof booking?.user === "object" ? booking.user?.email : null) ||
+      null;
+
+    if (!to_email) {
+      console.warn("[EmailJS] Recipient email missing; skipping send.");
+      return { ok: false, status: 422, text: "Recipient email missing" };
+    }
+
+    // Derive fields
+    const cat = (booking?.listing?.category || booking?.listingCategory || "").toLowerCase();
+    const listingTitle = booking?.listing?.title || booking?.listingTitle || "Your booking";
+
+    const guestsLabelHomes =
+      `${(booking.adults || 0) + (booking.children || 0) + (booking.infants || 0)} guest(s)`;
+    const guestsLabelOther =
+      typeof booking.quantity === "number" ? `Qty ${booking.quantity}` : guestsLabelHomes;
+
+    const amountPaid = typeof booking?.totalPrice === "number"
+      ? `₱${Number(booking.totalPrice).toLocaleString()}`
+      : "—";
+
+    const refund = typeof refundAmount === "number"
+      ? `₱${Number(refundAmount).toLocaleString()}`
+      : (typeof booking?.refundAmount === "number"
+          ? `₱${Number(booking.refundAmount).toLocaleString()}`
+          : "—");
+
+    const dateRange = cat.startsWith("home")
+      ? fmtRange(booking?.checkIn, booking?.checkOut)
+      : (booking?.schedule?.date
+          ? `${fmtDateStr(booking.schedule.date)}${booking?.schedule?.time ? " • " + fmtTimeStr(booking.schedule.time) : ""}`
+          : "");
+
+    const origin =
+      (typeof window !== "undefined" && window.location?.origin) || "https://bookify.example.com";
+
+    // ⚠️ Make sure these names match your EmailJS template variables exactly
+    const templateParams = {
+      to_email: to_email,
+      to_name: guestName || booking?.guestName || to_email,
+      reply_to: "noreply@bookify",
+      website_link: origin,
+      support_link: `${origin}/support`,
+      booking_id: booking?.id || booking?.bookingId || "",
+      listing_title: listingTitle,
+      date_range: dateRange || "—",
+      guests_label: (cat.startsWith("service") || cat.startsWith("experience"))
+        ? guestsLabelOther
+        : guestsLabelHomes,
+      amount_paid: amountPaid,
+      refund_amount: refund,
+      cancel_reason: reasonText || booking?.cancelReason || "—",
+    };
+
+    const res = await emailjs.send(
+      EMAILJS.SERVICE_ID,
+      EMAILJS.TEMPLATE_ID,
+      templateParams,
+      EMAILJS.PUBLIC_KEY
+    );
+
+    console.info("[EmailJS] send result:", res);
+    const ok = (res?.status >= 200 && res?.status < 300);
+    return { ok, status: res?.status ?? 0, text: res?.text ?? "" };
+  } catch (err) {
+    console.error("[EmailJS] send failed:", err);
+    return { ok: false, status: err?.status ?? 500, text: err?.text ?? String(err?.message || "Failed to send email") };
+  }
+}
 
 const statusBadge = (status = "pending") => {
   const s = (status || "").toLowerCase();
@@ -216,6 +327,7 @@ const normalizeListing = (raw = {}, booking = {}) => {
     discountValue: number(pick(raw.discountValue, raw?.discount?.value), 0),
     uid: pick(raw.uid, raw.ownerId, raw.hostId),
     schedule,
+    cancellationPolicy: pick(raw.cancellationPolicy, raw?.policy?.cancellation, raw.cancellation_policy),
   };
 
   // Category-specific fields
@@ -395,7 +507,7 @@ const GuestPill = ({ booking }) => {
 // BOOKING CARDS BY CATEGORY
 // =============================================================================
 
-const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const HomesCard = ({ b, onRequestCancel, onRequestDetails, onRequestRefund, showRefundButton }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled listing";
   const loc = b.listing?.location || b.listingAddress || "";
   const dates = fmtRange(b.checkIn, b.checkOut);
@@ -484,6 +596,17 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
       </div>
 
       <div className="mt-auto pt-4">
+        {showRefundButton && onRequestRefund && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestRefund(b);
+            }}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-emerald-600 to-emerald-700 border border-emerald-700/50 shadow hover:from-emerald-500 hover:to-emerald-700 active:translate-y-px transition mb-2"
+          >
+            Process Refund
+          </button>
+        )}
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -497,7 +620,7 @@ const HomesCard = ({ b, onRequestCancel, onRequestDetails }) => {
   );
 };
 
-const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const ExperienceCard = ({ b, onRequestCancel, onRequestDetails, onRequestRefund, showRefundButton }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled experience";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -605,6 +728,17 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
       </div>
 
       <div className="mt-auto pt-4">
+        {showRefundButton && onRequestRefund && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestRefund(b);
+            }}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-emerald-600 to-emerald-700 border border-emerald-700/50 shadow hover:from-emerald-500 hover:to-emerald-700 active:translate-y-px transition mb-2"
+          >
+            Process Refund
+          </button>
+        )}
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -618,7 +752,7 @@ const ExperienceCard = ({ b, onRequestCancel, onRequestDetails }) => {
   );
 };
 
-const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
+const ServiceCard = ({ b, onRequestCancel, onRequestDetails, onRequestRefund, showRefundButton }) => {
   const title = b.listing?.title || b.listingTitle || "Untitled service";
   const cover = b.listing?.photos?.[0] || b.listingPhotos?.[0];
   const sBadge = statusBadge(b.status);
@@ -721,6 +855,17 @@ const ServiceCard = ({ b, onRequestCancel, onRequestDetails }) => {
       </div>
 
       <div className="mt-auto pt-4">
+        {showRefundButton && onRequestRefund && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRequestRefund(b);
+            }}
+            className="w-full h-10 px-4 rounded-xl text-white bg-gradient-to-b from-emerald-600 to-emerald-700 border border-emerald-700/50 shadow hover:from-emerald-500 hover:to-emerald-700 active:translate-y-px transition mb-2"
+          >
+            Process Refund
+          </button>
+        )}
         {isCancelable(b) && (
           <button
             onClick={handleCancelClick}
@@ -861,7 +1006,18 @@ const CancelReasonModal = ({ open, onClose, onNext }) => {
   );
 };
 
-const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText, submitting }) => {
+const CancelConfirmModal = ({ 
+  open, 
+  onBack, 
+  onConfirm, 
+  listingTitle, 
+  policyText, 
+  submitting,
+  bookingTotal,
+  refundPercentage,
+  onRefundPercentageChange,
+  refundAmount,
+}) => {
   if (!open) return null;
   
   const title = listingTitle || "this booking";
@@ -877,11 +1033,51 @@ const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText,
             </div>
             <div className="flex-1">
               <h3 className="text-xl font-semibold tracking-tight text-slate-900">Cancel {title}?</h3>
-              <p className="text-sm text-slate-600 mt-1">Before you proceed, review the host's cancellation policy:</p>
+              <p className="text-sm text-slate-600 mt-1">Before you proceed, review the cancellation policy:</p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 max-h-44 overflow-auto text-sm text-slate-800">
                 {policy}
               </div>
-              <p className="text-xs text-slate-500 mt-2">
+              
+              {/* Refund Percentage Input */}
+              <div className="mt-4 space-y-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Refund Percentage (%)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={refundPercentage}
+                    onChange={(e) => {
+                      const val = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                      onRefundPercentageChange(val);
+                    }}
+                    className="flex-1 h-10 px-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="0-100"
+                    disabled={submitting}
+                  />
+                  <span className="text-sm font-medium text-slate-600">%</span>
+                </div>
+                
+                {/* Real-time Refund Amount Display */}
+                {typeof bookingTotal === "number" && bookingTotal > 0 && (
+                  <div className="mt-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-emerald-900">Refund Amount:</span>
+                      <span className="text-lg font-bold text-emerald-700">
+                        ₱{refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      This amount will be refunded to the guest's E-Wallet
+                    </p>
+                  </div>
+                )}
+              </div>
+              
+              <p className="text-xs text-slate-500 mt-3">
                 By confirming, you agree to any applicable fees or refund rules described above.
               </p>
             </div>
@@ -909,6 +1105,513 @@ const CancelConfirmModal = ({ open, onBack, onConfirm, listingTitle, policyText,
   );
 };
 
+const RefundModal = ({ 
+  open, 
+  onClose, 
+  onConfirm, 
+  listingTitle, 
+  policyText, 
+  submitting,
+  bookingTotal,
+  refundPercentage,
+  onRefundPercentageChange,
+  refundAmount,
+}) => {
+  if (!open) return null;
+  
+  const title = listingTitle || "this booking";
+  const policy = policyText?.trim() || "No specific cancellation policy was provided by the host.";
+
+  return (
+    <Overlay onBackdropClick={onClose}>
+      <div className="relative z-10 w-full sm:w-[560px]">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-6">
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-b from-emerald-600 to-emerald-800 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_20px_rgba(16,185,129,0.35)] ring-1 ring-white/10">
+              <DollarSign size={20} className="text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold tracking-tight text-slate-900">Process Refund for {title}</h3>
+              <p className="text-sm text-slate-600 mt-1">Review the cancellation policy before processing the refund:</p>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 max-h-44 overflow-auto text-sm text-slate-800">
+                {policy}
+              </div>
+              
+              {/* Refund Percentage Input */}
+              <div className="mt-4 space-y-2">
+                <label className="block text-sm font-medium text-slate-700">
+                  Refund Percentage (%)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={refundPercentage}
+                    onChange={(e) => {
+                      const val = Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                      onRefundPercentageChange(val);
+                    }}
+                    className="flex-1 h-10 px-3 rounded-xl border border-slate-300 bg-white text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    placeholder="0-100"
+                    disabled={submitting}
+                  />
+                  <span className="text-sm font-medium text-slate-600">%</span>
+                </div>
+                
+                {/* Real-time Refund Amount Display */}
+                {typeof bookingTotal === "number" && bookingTotal > 0 && (
+                  <div className="mt-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-emerald-900">Refund Amount:</span>
+                      <span className="text-lg font-bold text-emerald-700">
+                        ₱{refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <p className="text-xs text-emerald-700 mt-1">
+                      This amount will be refunded to the guest's E-Wallet
+                    </p>
+                  </div>
+                )}
+              </div>
+              
+              <p className="text-xs text-slate-500 mt-3">
+                By confirming, you agree to process the refund according to the policy above.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-end gap-3">
+            <button
+              onClick={onClose}
+              className="h-10 px-4 rounded-xl border border-slate-200 bg-white text-slate-700 shadow hover:bg-slate-50 active:translate-y-px transition"
+              disabled={submitting}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={submitting}
+              className="h-10 px-4 rounded-xl text-white bg-gradient-to-b from-emerald-600 to-emerald-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_16px_rgba(16,185,129,0.35)] hover:from-emerald-500 hover:to-emerald-700 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {submitting ? "Processing…" : "Process Refund"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Overlay>
+  );
+};
+
+// Helper function to get listing from any collection
+async function getListingLike(database, idOrRef) {
+  if (!idOrRef) return null;
+  
+  // If it's already a DocumentReference
+  if (typeof idOrRef === "object" && idOrRef?.path) {
+    try {
+      const snap = await getDoc(idOrRef);
+      return snap.exists() ? { col: idOrRef.parent?.id || "", snap } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const id = String(idOrRef);
+  // Try different collections
+  const candidates = ["experiences", "services", "homes", "properties", "listings"];
+
+  for (const col of candidates) {
+    try {
+      const snap = await getDoc(doc(database, col, id));
+      if (snap.exists()) return { col, snap };
+    } catch {
+      // ignore and try next
+    }
+  }
+  return null;
+}
+
+// Helper to determine category kind
+function categoryToKind(category) {
+  const c = (category || "").toString().toLowerCase();
+  if (c.startsWith("home")) return "home";
+  if (c.startsWith("service")) return "service";
+  if (c.startsWith("experience")) return "experience";
+  return null;
+}
+
+// Helper to get full preference summary (simplified version)
+function getFullPrefSummary(prefs, category) {
+  const items = [];
+  
+  if (category === "home") {
+    if (prefs.privacyLevel) items.push({ label: "Privacy level", value: prefs.privacyLevel, isArray: false });
+    if (prefs.cleanlinessTier) items.push({ label: "Cleanliness tier", value: prefs.cleanlinessTier, isArray: false });
+    if (prefs.scentPreference) items.push({ label: "Scent preference", value: prefs.scentPreference, isArray: false });
+    if (prefs.linens?.threadCount) items.push({ label: "Thread count (sheets)", value: `${prefs.linens.threadCount}tc`, isArray: false });
+    if (prefs.linens?.towels) items.push({ label: "Towels", value: prefs.linens.towels, isArray: false });
+    if (prefs.linens?.pillowFirmness) items.push({ label: "Pillow firmness", value: prefs.linens.pillowFirmness, isArray: false });
+    if (prefs.linens?.duvetWarmth) items.push({ label: "Duvet warmth", value: prefs.linens.duvetWarmth, isArray: false });
+    if (prefs.mattressFirmness) items.push({ label: "Mattress firmness", value: prefs.mattressFirmness, isArray: false });
+    if (prefs.noiseTolerance) items.push({ label: "Noise tolerance", value: prefs.noiseTolerance, isArray: false });
+    if (prefs.quietHours) items.push({ label: "Quiet hours", value: prefs.quietHours, isArray: false });
+    if (prefs.lighting) items.push({ label: "Lighting", value: prefs.lighting, isArray: false });
+    if (prefs.workspace?.wifiMinMbps) items.push({ label: "Wi-Fi minimum (Mbps)", value: `${prefs.workspace.wifiMinMbps}Mbps`, isArray: false });
+    if (prefs.workspace?.desk) items.push({ label: "Desk", value: "Yes", isArray: false });
+    if (prefs.workspace?.ergoChair) items.push({ label: "Ergonomic chair", value: "Yes", isArray: false });
+    if (prefs.workspace?.backupWifi) items.push({ label: "Backup Wi-Fi", value: "Yes", isArray: false });
+    if (prefs.hypoallergenic) items.push({ label: "Hypoallergenic", value: "Yes", isArray: false });
+    if (prefs.airPurifier) items.push({ label: "Air purifier", value: "Yes", isArray: false });
+    if (prefs.hotWater) items.push({ label: "Hot water", value: "Yes", isArray: false });
+    if (prefs.kitchenMust?.length) items.push({ label: "Kitchen must-haves", value: `${prefs.kitchenMust.length} items`, isArray: true, arrayData: prefs.kitchenMust });
+    if (prefs.welcomeStocking?.length) items.push({ label: "Welcome stocking (on arrival)", value: `${prefs.welcomeStocking.length} items`, isArray: true, arrayData: prefs.welcomeStocking });
+    if (prefs.accessibility?.length) items.push({ label: "Accessibility", value: `${prefs.accessibility.length} items`, isArray: true, arrayData: prefs.accessibility });
+    if (prefs.safetyRequests?.length) items.push({ label: "Safety requests", value: `${prefs.safetyRequests.length} items`, isArray: true, arrayData: prefs.safetyRequests });
+    if (prefs.hostInteraction) items.push({ label: "Host interaction", value: prefs.hostInteraction, isArray: false });
+    if (prefs.rulesFlexibility) items.push({ label: "Rules flexibility", value: prefs.rulesFlexibility, isArray: false });
+    if (prefs.amenitiesMust?.length) items.push({ label: "Must-have amenities", value: `${prefs.amenitiesMust.length} items`, isArray: true, arrayData: prefs.amenitiesMust });
+    if (prefs.amenitiesNice?.length) items.push({ label: "Nice-to-have amenities", value: `${prefs.amenitiesNice.length} items`, isArray: true, arrayData: prefs.amenitiesNice });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  } else if (category === "experience") {
+    if (prefs.pace) items.push({ label: "Pace", value: prefs.pace, isArray: false });
+    if (prefs.depth) items.push({ label: "Depth", value: prefs.depth, isArray: false });
+    if (prefs.personalization) items.push({ label: "Personalization", value: prefs.personalization, isArray: false });
+    if (prefs.groupType) items.push({ label: "Group type", value: prefs.groupType, isArray: false });
+    if (prefs.guideStyle) items.push({ label: "Guide style", value: prefs.guideStyle, isArray: false });
+    if (prefs.crowdTolerance) items.push({ label: "Crowd tolerance", value: prefs.crowdTolerance, isArray: false });
+    if (prefs.languageLevel) items.push({ label: "Language level", value: prefs.languageLevel, isArray: false });
+    if (prefs.audioSupport) items.push({ label: "Audio support (mic/PA)", value: "Yes", isArray: false });
+    if (prefs.photoConsent) items.push({ label: "Photo consent", value: prefs.photoConsent, isArray: false });
+    if (prefs.photosPriority) items.push({ label: "Photos priority", value: "Yes", isArray: false });
+    if (prefs.durationFlexibility) items.push({ label: "Duration flexibility", value: prefs.durationFlexibility, isArray: false });
+    if (prefs.weatherPlan) items.push({ label: "Weather plan", value: prefs.weatherPlan, isArray: false });
+    if (prefs.comfortAccessibility?.length) items.push({ label: "Comfort / Accessibility", value: `${prefs.comfortAccessibility.length} items`, isArray: true, arrayData: prefs.comfortAccessibility });
+    if (prefs.dietRestrictions?.length) items.push({ label: "Diet restrictions", value: `${prefs.dietRestrictions.length} items`, isArray: true, arrayData: prefs.dietRestrictions });
+    if (prefs.allergies?.length) items.push({ label: "Allergies", value: `${prefs.allergies.length} items`, isArray: true, arrayData: prefs.allergies });
+    if (prefs.themes?.length) items.push({ label: "Themes / Interests", value: `${prefs.themes.length} items`, isArray: true, arrayData: prefs.themes });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  } else if (category === "service") {
+    if (prefs.thoroughness) items.push({ label: "Thoroughness", value: prefs.thoroughness, isArray: false });
+    if (prefs.timePrecision) items.push({ label: "Time precision", value: prefs.timePrecision, isArray: false });
+    if (prefs.proofOfWork?.length) items.push({ label: "Proof of work", value: `${prefs.proofOfWork.length} items`, isArray: true, arrayData: prefs.proofOfWork });
+    if (prefs.immediateDamageReport) items.push({ label: "Immediate damage report", value: "Immediate", isArray: false });
+    if (prefs.ecoSupplies) items.push({ label: "Eco supplies", value: "Yes", isArray: false });
+    if (prefs.unscented) items.push({ label: "Unscented products", value: "Yes", isArray: false });
+    if (prefs.linensHandling) items.push({ label: "Linens handling", value: prefs.linensHandling, isArray: false });
+    if (prefs.professionalism?.length) items.push({ label: "Professionalism", value: `${prefs.professionalism.length} items`, isArray: true, arrayData: prefs.professionalism });
+    if (prefs.petSafety) items.push({ label: "Pet safety", value: "Yes", isArray: false });
+    if (prefs.entryMethod) items.push({ label: "Entry", value: prefs.entryMethod, isArray: false });
+    if (prefs.supervision) items.push({ label: "Supervision", value: prefs.supervision, isArray: false });
+    if (prefs.scheduleWindow) items.push({ label: "Schedule window", value: prefs.scheduleWindow, isArray: false });
+    if (prefs.scheduleDays?.length) items.push({ label: "Schedule days", value: prefs.scheduleDays.join(", "), isArray: false });
+    if (prefs.quietHours) items.push({ label: "Quiet hours", value: prefs.quietHours, isArray: false });
+    if (prefs.focusChecklist?.length) items.push({ label: "Focus checklist", value: `${prefs.focusChecklist.length} items`, isArray: true, arrayData: prefs.focusChecklist });
+    if (prefs.serviceTypes?.length) items.push({ label: "Service types", value: `${prefs.serviceTypes.length} items`, isArray: true, arrayData: prefs.serviceTypes });
+    if (prefs.languages?.length) items.push({ label: "Languages", value: `${prefs.languages.length} items`, isArray: true, arrayData: prefs.languages });
+    if (prefs.locations?.length) items.push({ label: "Preferred locations", value: `${prefs.locations.length} locations`, isArray: true, arrayData: prefs.locations });
+  }
+  
+  return items;
+}
+
+// Helper to get icon for preference label
+function labelIcon(label) {
+  const L = (label || "").toLowerCase();
+  if (L.includes("privacy")) return Shield;
+  if (L.includes("cleanliness")) return Sparkles;
+  if (L.includes("scent")) return Sun;
+  if (L.includes("sheets") || L.includes("thread") || L.includes("towels") || L.includes("pillow") || L.includes("duvet") || L.includes("mattress")) return BedDouble;
+  if (L.includes("noise")) return Clock;
+  if (L.includes("quiet hours")) return Clock;
+  if (L.includes("lighting") || L.includes("hot water")) return Sun;
+  if (L.includes("wi-fi") || L.includes("wifi") || L.includes("workspace")) return Wifi;
+  if (L.startsWith("desk")) return Wrench;
+  if (L.includes("host interaction") || L.includes("rules")) return Tag;
+  return Tag; // default icon
+}
+
+// Guest Profile Modal Component
+const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
+  const [wishlistItems, setWishlistItems] = useState([]);
+  const [preferences, setPreferences] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [guestProfile, setGuestProfile] = useState(null);
+
+  // Determine the category filter based on listing category
+  const categoryFilter = useMemo(() => {
+    const cat = normalizeCategory(listingCategory || "");
+    if (cat.startsWith("home")) return "home";
+    if (cat.startsWith("service")) return "service";
+    if (cat.startsWith("experience")) return "experience";
+    return "home"; // default
+  }, [listingCategory]);
+
+  // Load guest profile and wishlist
+  useEffect(() => {
+    if (!open || !guest?.uid) {
+      setWishlistItems([]);
+      setGuestProfile(null);
+      setPreferences(null);
+      return;
+    }
+
+    let isActive = true;
+    setLoading(true);
+
+    const loadData = async () => {
+      try {
+        // Load guest profile and preferences in parallel
+        const [profile, prefSnap] = await Promise.all([
+          fetchGuestProfile(guest.uid),
+          getDoc(doc(database, "preferences", guest.uid)).catch(() => null),
+        ]);
+        
+        if (!isActive) return;
+        setGuestProfile(profile);
+
+        // Load preferences
+        if (prefSnap?.exists()) {
+          const prefData = prefSnap.data() || {};
+          // Get preferences for the specific category
+          const categoryKey = categoryFilter === "home" ? "homes" : categoryFilter === "service" ? "services" : "experiences";
+          const categoryPrefs = prefData[categoryKey] || {};
+          setPreferences(categoryPrefs);
+        } else {
+          setPreferences({});
+        }
+
+        // Load favorites
+        const favRef = collection(database, "favorites");
+        const qFav = query(favRef, where("userId", "==", guest.uid));
+        const snap = await getDocs(qFav);
+        const favData = snap.docs.map((d) => d.data());
+
+        // Load full listing data
+        const listingsPromises = favData.map(async (f) => {
+          if (!f.listingId) return null;
+          try {
+            const found = await getListingLike(database, f.listingId);
+            if (!found || !found.snap.exists()) return null;
+
+            const data = found.snap.data() || {};
+            if (data.status !== "published") return null;
+
+            // Determine kind from category or collection name
+            const kindFromCategory = categoryToKind(data.category || data.type || data.kind);
+            const kindFromCollection = (found.col || "").toLowerCase().startsWith("exp")
+              ? "experience"
+              : (found.col || "").toLowerCase().startsWith("serv")
+              ? "service"
+              : (found.col || "").toLowerCase().startsWith("home")
+              ? "home"
+              : null;
+
+            const kind = kindFromCategory || kindFromCollection || "home";
+
+            return {
+              id: found.snap.id,
+              ...data,
+              kind,
+            };
+          } catch (err) {
+            console.warn("Failed to load listing:", f.listingId, err);
+            return null;
+          }
+        });
+
+        const listings = (await Promise.all(listingsPromises)).filter(Boolean);
+        
+        if (!isActive) return;
+        
+        // Filter by category
+        const filtered = listings.filter((item) => item.kind === categoryFilter);
+        setWishlistItems(filtered);
+      } catch (error) {
+        console.error("Error loading guest profile/wishlist:", error);
+      } finally {
+        if (isActive) setLoading(false);
+      }
+    };
+
+    loadData();
+
+    return () => {
+      isActive = false;
+    };
+  }, [open, guest?.uid, categoryFilter]);
+
+  if (!open) return null;
+
+  const guestName = guestProfile?.displayName || 
+    [guestProfile?.firstName, guestProfile?.lastName].filter(Boolean).join(" ").trim() ||
+    guest?.displayName ||
+    "Guest";
+  const guestInitial = guestName?.[0]?.toUpperCase() || "G";
+  const guestPhoto = guestProfile?.photoURL || guest?.photoURL;
+
+  const categoryLabels = {
+    home: { label: "Homes", icon: Building2 },
+    service: { label: "Services", icon: Handshake },
+    experience: { label: "Experiences", icon: Sparkles },
+  };
+
+  const categoryInfo = categoryLabels[categoryFilter] || categoryLabels.home;
+  const CategoryIcon = categoryInfo.icon;
+
+  return (
+    <Overlay onBackdropClick={onClose}>
+      <div
+        className="relative w-full max-w-4xl max-h-[90vh] bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
+          <div className="flex items-center gap-4">
+            <div className="relative w-16 h-16 rounded-full bg-slate-100 border-2 border-slate-200 overflow-hidden grid place-items-center text-slate-700 font-semibold shrink-0">
+              {guestPhoto ? (
+                <img
+                  src={guestPhoto}
+                  alt={guestName}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
+                />
+              ) : (
+                <span className="text-xl">{guestInitial}</span>
+              )}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">{guestName}'s Profile</h2>
+              {guestProfile?.email && (
+                <p className="text-sm text-slate-600 mt-0.5">{guestProfile.email}</p>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition"
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Preferences Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <CategoryIcon size={20} className="text-blue-600" />
+              <h3 className="text-lg font-semibold text-slate-900">
+                Preferences — {categoryInfo.label}
+              </h3>
+            </div>
+            
+            {loading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 size={20} className="animate-spin text-blue-600" />
+                <span className="ml-2 text-sm text-slate-600">Loading preferences...</span>
+              </div>
+            ) : (() => {
+              const prefItems = preferences ? getFullPrefSummary(preferences, categoryFilter) : [];
+              return prefItems.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {prefItems.map((item, idx) => {
+                    const Icon = labelIcon(item.label);
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200"
+                      >
+                        <Icon size={16} className="text-slate-600 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-slate-700 truncate">{item.label}</p>
+                          <p className="text-xs text-slate-600 truncate">{item.value}</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-200">
+                  <p className="text-slate-600">No preferences set for {categoryInfo.label.toLowerCase()}</p>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Wishlist Section */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Heart size={20} className="text-rose-500" />
+              <h3 className="text-lg font-semibold text-slate-900">
+                Wishlist — {categoryInfo.label}
+              </h3>
+              <span className="text-sm text-slate-500">
+                ({wishlistItems.length} {wishlistItems.length === 1 ? "item" : "items"})
+              </span>
+            </div>
+
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 size={24} className="animate-spin text-blue-600" />
+                <span className="ml-3 text-slate-600">Loading wishlist...</span>
+              </div>
+            ) : wishlistItems.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-200">
+                <Heart size={48} className="mx-auto text-slate-300 mb-3" />
+                <p className="text-slate-600">No {categoryInfo.label.toLowerCase()} in wishlist</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {wishlistItems.map((item) => {
+                  const photo = item.photos?.[0] || item.cover || null;
+                  const price = item.price || item.pricePerNight || item.basePrice || 0;
+                  return (
+                    <div
+                      key={item.id}
+                      className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow"
+                    >
+                      {photo && (
+                        <div className="aspect-video bg-slate-200 overflow-hidden">
+                          <img
+                            src={photo}
+                            alt={item.title || "Listing"}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      )}
+                      <div className="p-4">
+                        <h4 className="font-semibold text-slate-900 line-clamp-1 mb-1">
+                          {item.title || "Untitled"}
+                        </h4>
+                        {item.location && (
+                          <p className="text-sm text-slate-600 line-clamp-1 mb-2 flex items-center gap-1">
+                            <MapPin size={12} />
+                            {item.location}
+                          </p>
+                        )}
+                        {price > 0 && (
+                          <p className="text-base font-bold text-blue-600">
+                            {peso(price)}
+                            {item.kind === "home" && <span className="text-xs font-normal text-slate-500">/night</span>}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Overlay>
+  );
+};
+
 const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const [listing, setListing] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
@@ -916,6 +1619,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatText, setChatText] = useState("");
+  const [showGuestProfile, setShowGuestProfile] = useState(false);
   const chatEndRef = useRef(null);
   const navigate = useNavigate();
 
@@ -1082,6 +1786,15 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const guestInitial = guestName?.[0]?.toUpperCase() || "G";
   const guestPhoto = guest?.photoURL;
 
+  const createdAt =
+    booking?.createdAt?.toDate?.() ? booking.createdAt.toDate() :
+    (booking?.createdAt instanceof Date ? booking.createdAt : null);
+
+  const policyText = listing?.cancellationPolicy || "";
+
+  // Removed unused components: chips, Field, PillList, FullDetails
+  // Only booking-specific information is displayed in the modal
+
   return (
     <Overlay onBackdropClick={onClose}>
       <div
@@ -1204,9 +1917,16 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             <div className="max-w-[720px] mx-auto px-5 sm:px-6 md:px-7 py-5 sm:py-6 md:py-7 space-y-6 sm:space-y-7">
               {/* Header Section */}
               <section className="space-y-3">
+                <div>
                 <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">{title}</h2>
+                  <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700 mt-2">
+                    <MapPin className="w-4 h-4 text-blue-600" />
+                    <span className="font-medium text-gray-900">{location}</span>
+                  </p>
+                </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                {/* Booking Status & ID */}
+                <div className="flex flex-wrap items-center gap-2 pt-2">
                   <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${sBadge.cls}`}>
                     {sBadge.text}
                   </span>
@@ -1214,16 +1934,20 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                     <CreditCard size={14} className="mr-1 opacity-80" />
                     {pBadge.text}
                   </span>
+                  <div className="flex items-center gap-1.5 text-[12px] text-slate-600 ml-auto">
+                    <Hash size={12} />
+                    <span className="font-mono text-xs">{booking.id.slice(0, 8)}...</span>
+                    {createdAt && (
+                      <span className="text-[11px] text-slate-500">
+                        • {createdAt.toLocaleDateString()}
+                      </span>
+                    )}
                 </div>
-
-                <p className="inline-flex items-center gap-2 text-sm sm:text-[15px] text-gray-700">
-                  <MapPin className="w-4 h-4 text-blue-600" />
-                  <span className="font-medium text-gray-900">{location}</span>
-                </p>
+                </div>
               </section>
 
               {/* Guest Information Section */}
-              <section className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm p-4 sm:p-5 shadow-md">
+              <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative w-12 h-12 rounded-full bg-white/70 border border-white/60 overflow-hidden grid place-items-center text-gray-900 font-semibold ring-4 ring-white/60 shrink-0">
@@ -1248,18 +1972,28 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setChatOpen((v) => !v)}
-                    className="inline-flex items-center justify-center rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 shadow"
-                  >
-                    {chatOpen ? "Hide Chat" : "Message Guest"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowGuestProfile(true)}
+                      className="inline-flex items-center justify-center gap-2 rounded-full bg-slate-600 hover:bg-slate-700 text-white text-sm font-semibold px-4 py-2 shadow"
+                    >
+                      <User size={16} />
+                      View Profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setChatOpen((v) => !v)}
+                      className="inline-flex items-center justify-center rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-4 py-2 shadow"
+                    >
+                      {chatOpen ? "Hide Chat" : "Message Guest"}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Inline Chat Panel */}
                 {chatOpen && (
-                  <div className="mt-4 rounded-2xl border border-slate-200 bg-white/90">
+                  <div className="mt-4 rounded-2xl border border-white/60 bg-white/90 backdrop-blur-sm shadow-sm">
                     <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-800">
                       Chat with {guestName}
                     </div>
@@ -1317,18 +2051,21 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
               </section>
 
               {/* Booking Details Section */}
-              <section className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm p-4 sm:p-5 shadow-md space-y-2">
+              <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm space-y-4">
+                <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide">Booking Information</h3>
+
+                <div className="grid gap-3 text-sm">
                 {cat.startsWith("home") ? (
                   <>
-                    <div className="flex items-center gap-2 text-sm">
+                      <div className="flex items-center gap-2">
                       <CalIcon size={16} />
                       <span>{fmtRange(booking.checkIn, booking.checkOut) || "—"}</span>
                     </div>
-                    <div className="flex items-center gap-2 text-sm">
+                      <div className="flex items-center gap-2">
                       <BedDouble size={16} />
                       <span>{nights || 0} night{(nights || 0) === 1 ? "" : "s"}</span>
                     </div>
-                    <div className="flex items-center gap-2 text-sm">
+                      <div className="flex items-center gap-2">
                       <Users size={16} />
                       <span>
                         {(booking.adults || 0) + (booking.children || 0) + (booking.infants || 0)} guests
@@ -1340,49 +2077,58 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                   </>
                 ) : (
                   <>
-                    <div className="flex items-center gap-2 text-sm">
+                      <div className="flex items-center gap-2">
                       <CalIcon size={16} />
                       <span>{scheduleStr || "—"}</span>
                     </div>
                     {typeof booking.quantity === "number" && (
-                      <div className="flex items-center gap-2 text-sm">
+                        <div className="flex items-center gap-2">
                         <Users size={16} />
                         <span>Qty {booking.quantity}</span>
                       </div>
                     )}
+                      {booking.duration && (
+                        <div className="flex items-center gap-2">
+                          <Clock size={16} />
+                          <span>{booking.duration}</span>
+                        </div>
+                      )}
                   </>
                 )}
+                </div>
 
-                <div className="mt-2 space-y-1 text-[13.5px]">
+                <div className="pt-2 border-t border-white/60">
+                  <h4 className="text-xs font-semibold text-gray-700 mb-2">Payment Breakdown</h4>
+                  <div className="space-y-1.5 text-[13.5px]">
                   {!Number.isNaN(subtotal) && (
                     <div className="flex items-center justify-between">
-                      <span>Subtotal</span>
-                      <span className="font-medium">₱{subtotal.toLocaleString()}</span>
+                        <span className="text-slate-600">Subtotal</span>
+                        <span className="font-medium text-slate-900">₱{subtotal.toLocaleString()}</span>
                     </div>
                   )}
                   {!Number.isNaN(cleaningFee) && cleaningFee > 0 && (
                     <div className="flex items-center justify-between">
-                      <span>Cleaning fee</span>
-                      <span>₱{cleaningFee.toLocaleString()}</span>
+                        <span className="text-slate-600">Cleaning fee</span>
+                        <span className="text-slate-900">₱{cleaningFee.toLocaleString()}</span>
                     </div>
                   )}
                   {!Number.isNaN(serviceFee) && (
                     <div className="flex items-center justify-between">
-                      <span>Service fee</span>
-                      <span>₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                        <span className="text-slate-600">Service fee</span>
+                        <span className="text-slate-900">₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                     </div>
                   )}
                   {discountType !== "none" && discountValue > 0 && (
                     <div className="flex items-center justify-between text-emerald-700">
                       <span>Discount ({discountType})</span>
-                      <span>− ₱{discountValue.toLocaleString()}</span>
+                        <span className="font-medium">− ₱{discountValue.toLocaleString()}</span>
                     </div>
                   )}
 
-                  <div className="my-2 h-px bg-white/60" />
+                    <div className="my-2 h-px bg-slate-200" />
 
                   {!Number.isNaN(totalPrice) ? (
-                    <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between pt-1">
                       <span className="text-base font-bold text-slate-900">Total</span>
                       <span className="text-base font-bold text-blue-700">
                         ₱{totalPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
@@ -1391,8 +2137,21 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                   ) : (
                     <div className="text-sm text-slate-500">Total unavailable.</div>
                   )}
+                  </div>
                 </div>
               </section>
+
+              {/* Cancellation Policy */}
+              {policyText && (
+                <section className="rounded-3xl bg-white/80 backdrop-blur border border-white/60 p-4 sm:p-5 shadow-sm">
+                  <h3 className="text-[13px] sm:text-sm font-semibold text-gray-900 tracking-wide mb-2">
+                    Cancellation Policy
+                  </h3>
+                  <p className="text-[14px] sm:text-[15px] leading-relaxed text-gray-800">
+                    {policyText}
+                  </p>
+                </section>
+              )}
             </div>
           </div>
 
@@ -1422,6 +2181,14 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
           </div>
         </div>
       </div>
+      
+      {/* Guest Profile Modal */}
+      <GuestProfileModal
+        open={showGuestProfile}
+        guest={guest}
+        listingCategory={listing?.category || booking?.listingCategory}
+        onClose={() => setShowGuestProfile(false)}
+      />
     </Overlay>
   );
 };
@@ -1441,14 +2208,22 @@ export default function TodayTab() {
   
   // UI state
   const [tab, setTab] = useState("today");
+  const [cancelledFilter, setCancelledFilter] = useState("all"); // "all", "for_refund", "refunded"
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelReason, setCancelReason] = useState("");
   const [reasonOpen, setReasonOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [policyText, setPolicyText] = useState("");
   const [submittingCancel, setSubmittingCancel] = useState(false);
+  const [refundPercentage, setRefundPercentage] = useState(100);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsTarget, setDetailsTarget] = useState(null);
+  // Refund modal state
+  const [refundTarget, setRefundTarget] = useState(null);
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [refundModalPolicyText, setRefundModalPolicyText] = useState("");
+  const [refundModalPercentage, setRefundModalPercentage] = useState(100);
+  const [submittingRefund, setSubmittingRefund] = useState(false);
 
   // Auth state listener
   useEffect(() => {
@@ -1619,6 +2394,33 @@ export default function TodayTab() {
     [rows]
   );
 
+  // Filter cancelled bookings by sub-category
+  const filteredCancelledBookings = useMemo(() => {
+    if (cancelledFilter === "all") return cancelledBookings;
+    
+    const hostUid = authUser?.uid || null;
+    
+    if (cancelledFilter === "for_refund") {
+      // Bookings cancelled by guest (uid !== hostUid) and not yet refunded
+      return cancelledBookings.filter((booking) => {
+        const bookingUid = booking?.uid || null;
+        const refundAmount = numberOr(booking?.refundAmount, 0);
+        // Cancelled by guest (not host) and no refund processed yet
+        return bookingUid && bookingUid !== hostUid && refundAmount === 0;
+      });
+    }
+    
+    if (cancelledFilter === "refunded") {
+      // Bookings that have been refunded
+      return cancelledBookings.filter((booking) => {
+        const refundAmount = numberOr(booking?.refundAmount, 0);
+        return refundAmount > 0;
+      });
+    }
+    
+    return cancelledBookings;
+  }, [cancelledBookings, cancelledFilter, authUser?.uid]);
+
   const todayBookings = useMemo(
     () =>
       rows.filter((booking) => {
@@ -1661,7 +2463,7 @@ export default function TodayTab() {
 
   const tabbedBookings = tab === "today" ? todayBookings : 
                         tab === "upcoming" ? upcomingBookings : 
-                        cancelledBookings;
+                        filteredCancelledBookings;
 
   // Statistics calculations
   // Note: rows now only contains host bookings (fetched by hostId, ownerId, and listingId)
@@ -1723,8 +2525,222 @@ export default function TodayTab() {
     setCancelTarget(booking);
     setCancelReason("");
     setPolicyText("");
+    setRefundPercentage(100); // Default to 100% refund
     setReasonOpen(true);
     setConfirmOpen(false);
+  };
+
+  // Refund flow handlers
+  const startRefund = async (booking) => {
+    setRefundTarget(booking);
+    setRefundModalPercentage(100); // Default to 100% refund
+    const policy = await loadPolicyForBooking(booking);
+    setRefundModalPolicyText(policy || "");
+    setRefundModalOpen(true);
+  };
+
+  const handleConfirmRefund = async () => {
+    if (!refundTarget || !refundTarget.id) return;
+    
+    setSubmittingRefund(true);
+    
+    try {
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error("Not signed in");
+      
+      const bookingTotal = numberOr(refundTarget?.totalPrice, 0);
+      const refundAmount = (bookingTotal * refundModalPercentage) / 100;
+      const guestUid = refundTarget?.uid || null;
+      
+      if (!guestUid) {
+        throw new Error("Guest UID not found in booking. Cannot process refund.");
+      }
+      
+      // Process refund: credit guest wallet and deduct from host wallet
+      if (refundAmount > 0 && guestUid) {
+        // Get host ID from booking
+        const hostId = refundTarget?.hostId || refundTarget?.ownerId || currentUser.uid;
+        
+        if (!hostId) {
+          console.warn("Host ID not found in booking, using current user UID");
+        }
+        
+        try {
+          await runTransaction(database, async (tx) => {
+            // STEP 1: ALL READS FIRST (Firestore requirement)
+            const wrefGuest = doc(database, "guestWallets", guestUid);
+            const wrefHost = doc(database, "wallets", hostId);
+            
+            const wSnapGuest = await tx.get(wrefGuest);
+            const wSnapHost = await tx.get(wrefHost);
+            
+            // Calculate balances
+            const guestCurrentBal = Number(wSnapGuest.data()?.balance || 0);
+            const guestNewBal = guestCurrentBal + refundAmount;
+            
+            const hostCurrentBal = Number(wSnapHost.data()?.balance || 0);
+            const hostNewBal = Math.max(0, hostCurrentBal - refundAmount); // Ensure balance doesn't go negative
+            
+            // STEP 2: ALL WRITES AFTER ALL READS
+            const walletTxGuestRef = doc(collection(database, "guestWallets", guestUid, "transactions"));
+            const walletTxHostRef = doc(collection(database, "wallets", hostId, "transactions"));
+            
+            // Credit guest wallet
+            tx.set(
+              wrefGuest,
+              {
+                uid: guestUid,
+                balance: guestNewBal,
+                currency: "PHP",
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+            
+            // Log refund transaction in guest wallet
+            tx.set(walletTxGuestRef, {
+              uid: guestUid,
+              type: "refund",
+              delta: +refundAmount,
+              amount: refundAmount,
+              status: "completed",
+              method: "system",
+              note: `Refund for cancelled booking ${refundTarget.id}${refundTarget?.listingTitle ? ` — ${refundTarget.listingTitle}` : ""}`,
+              metadata: { 
+                bookingId: refundTarget.id, 
+                listingId: refundTarget?.listingId || null,
+                refundPercentage: refundModalPercentage,
+                processedBy: currentUser.uid,
+              },
+              balanceAfter: guestNewBal,
+              timestamp: serverTimestamp(),
+            });
+            
+            // Deduct from host wallet (create if doesn't exist, then update)
+            if (!wSnapHost.exists()) {
+              tx.set(wrefHost, {
+                uid: hostId,
+                balance: hostNewBal,
+                currency: "PHP",
+                updatedAt: serverTimestamp(),
+              });
+            } else {
+              tx.set(
+                wrefHost,
+                {
+                  uid: hostId,
+                  balance: hostNewBal,
+                  currency: "PHP",
+                  updatedAt: serverTimestamp(),
+                },
+                { merge: true }
+              );
+            }
+            
+            // Log refund deduction transaction in host wallet
+            tx.set(walletTxHostRef, {
+              uid: hostId,
+              type: "refund_deduction",
+              delta: -refundAmount,
+              amount: refundAmount,
+              status: "completed",
+              method: "system",
+              note: `Refund deduction for cancelled booking ${refundTarget.id}${refundTarget?.listingTitle ? ` — ${refundTarget.listingTitle}` : ""}`,
+              metadata: { 
+                bookingId: refundTarget.id, 
+                listingId: refundTarget?.listingId || null,
+                refundPercentage: refundModalPercentage,
+                guestUid: guestUid,
+                processedBy: currentUser.uid,
+              },
+              balanceAfter: hostNewBal,
+              timestamp: serverTimestamp(),
+            });
+          });
+          console.log(`Refund processed: ₱${refundAmount} credited to guest ${guestUid}, deducted from host ${hostId}`);
+        } catch (walletError) {
+          console.error("Failed to process refund wallets:", walletError);
+          const errorMsg = walletError?.message || String(walletError);
+          const errorCode = walletError?.code || "unknown";
+          console.error("Wallet error details:", {
+            code: errorCode,
+            message: errorMsg,
+            hostId,
+            guestUid,
+            refundAmount,
+            fullError: walletError,
+          });
+          
+          // Show error to user but don't block the booking update
+          alert(
+            `Warning: Could not process wallet transactions.\n\n` +
+            `Error: ${errorMsg}\n` +
+            `Code: ${errorCode}\n\n` +
+            `The refund has been recorded in the booking, but wallet updates may have failed.\n` +
+            `Please check the console for more details.`
+          );
+        }
+      }
+      
+      // Update booking with refund information
+      // IMPORTANT: Preserve the original guest UID (don't overwrite it with host's UID)
+      try {
+        await updateDoc(doc(database, "bookings", refundTarget.id), {
+          refundAmount: refundAmount,
+          refundPercentage: refundModalPercentage,
+          refundedAt: serverTimestamp(),
+          refundedBy: currentUser.uid, // Track who processed the refund
+          uid: guestUid, // CRITICAL: Preserve the original guest UID
+          // Preserve hostId and ownerId so security rules can verify host ownership
+          hostId: refundTarget?.hostId || currentUser.uid,
+          ownerId: refundTarget?.ownerId || refundTarget?.hostId || currentUser.uid,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (updateError) {
+        console.error("Failed to update booking with refund info:", updateError);
+        const errorMsg = updateError?.message || String(updateError);
+        throw new Error(`Failed to update booking: ${errorMsg}`);
+      }
+      
+      // Send EmailJS to the guest (best effort, don't fail if this fails)
+      let emailSent = false;
+      try {
+        const emailRes = await sendCancellationEmail({
+          booking: refundTarget,
+          reasonText: refundTarget?.cancelReason || "Refund processed by host",
+          refundAmount: refundAmount,
+          guestEmail: refundTarget?.guestEmail,
+          guestName: refundTarget?.guestName,
+        });
+        emailSent = emailRes?.ok || false;
+      } catch (emailError) {
+        console.error("Failed to send refund email:", emailError);
+        // Don't throw - email is not critical
+      }
+      
+      // Show success message
+      const base = `Refund processed successfully for booking ${refundTarget?.id ? `(#${refundTarget.id.slice(0, 8).toUpperCase()})` : ""}.`;
+      const refundNote = refundAmount > 0 
+        ? `\n\nRefund: ₱${refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${refundModalPercentage}%) has been credited to the guest's E-Wallet.`
+        : "\n\nNo refund was processed.";
+      const emailNote = emailSent
+        ? "\n\nA confirmation email has been sent to the guest."
+        : "\n\nWe couldn't send the confirmation email right now, but the refund is processed.";
+      
+      alert(base + refundNote + emailNote);
+      
+      // Reset flow UI
+      setRefundModalOpen(false);
+      setRefundTarget(null);
+      setRefundModalPolicyText("");
+      setRefundModalPercentage(100);
+    } catch (error) {
+      console.error("Process refund failed:", error);
+      const errorMsg = error?.message || String(error) || "Unknown error";
+      alert(`Failed to process refund: ${errorMsg}\n\nPlease check the console for more details.`);
+    } finally {
+      setSubmittingRefund(false);
+    }
   };
 
   const handleReasonNext = async (reasonText) => {
@@ -1745,21 +2761,194 @@ export default function TodayTab() {
       const currentUser = auth.currentUser;
       if (!currentUser) throw new Error("Not signed in");
       
+      const bookingTotal = numberOr(cancelTarget?.totalPrice, 0);
+      const refundAmount = (bookingTotal * refundPercentage) / 100;
+      const guestUid = cancelTarget?.uid || null;
+      
+      // 1) Process refund: credit guest wallet and deduct from host wallet
+      if (refundAmount > 0 && guestUid) {
+        // Get host ID from booking
+        const hostId = cancelTarget?.hostId || cancelTarget?.ownerId || currentUser.uid;
+        
+        if (!hostId) {
+          console.warn("Host ID not found in booking, using current user UID");
+        }
+        
+        try {
+          await runTransaction(database, async (tx) => {
+            // STEP 1: ALL READS FIRST (Firestore requirement)
+            const wrefGuest = doc(database, "guestWallets", guestUid);
+            const wrefHost = doc(database, "wallets", hostId);
+            
+            const wSnapGuest = await tx.get(wrefGuest);
+            const wSnapHost = await tx.get(wrefHost);
+            
+            // Calculate balances
+            const guestCurrentBal = Number(wSnapGuest.data()?.balance || 0);
+            const guestNewBal = guestCurrentBal + refundAmount;
+            
+            const hostCurrentBal = Number(wSnapHost.data()?.balance || 0);
+            const hostNewBal = Math.max(0, hostCurrentBal - refundAmount); // Ensure balance doesn't go negative
+            
+            // STEP 2: ALL WRITES AFTER ALL READS
+            const walletTxGuestRef = doc(collection(database, "guestWallets", guestUid, "transactions"));
+            const walletTxHostRef = doc(collection(database, "wallets", hostId, "transactions"));
+            
+            // Credit guest wallet
+            tx.set(
+              wrefGuest,
+              {
+                uid: guestUid,
+                balance: guestNewBal,
+                currency: "PHP",
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true }
+            );
+            
+            // Log refund transaction in guest wallet
+            tx.set(walletTxGuestRef, {
+              uid: guestUid,
+              type: "refund",
+              delta: +refundAmount,
+              amount: refundAmount,
+              status: "completed",
+              method: "system",
+              note: `Refund for cancelled booking ${cancelTarget.id}${cancelTarget?.listingTitle ? ` — ${cancelTarget.listingTitle}` : ""}`,
+              metadata: { 
+                bookingId: cancelTarget.id, 
+                listingId: cancelTarget?.listingId || null,
+                refundPercentage,
+                cancelledBy: currentUser.uid,
+              },
+              balanceAfter: guestNewBal,
+              timestamp: serverTimestamp(),
+            });
+            
+            // Deduct from host wallet (create if doesn't exist, then update)
+            if (!wSnapHost.exists()) {
+              tx.set(wrefHost, {
+                uid: hostId,
+                balance: hostNewBal,
+                currency: "PHP",
+                updatedAt: serverTimestamp(),
+              });
+            } else {
+              tx.set(
+                wrefHost,
+                {
+                  uid: hostId,
+                  balance: hostNewBal,
+                  currency: "PHP",
+                  updatedAt: serverTimestamp(),
+                },
+                { merge: true }
+              );
+            }
+            
+            // Log refund deduction transaction in host wallet
+            tx.set(walletTxHostRef, {
+              uid: hostId,
+              type: "refund_deduction",
+              delta: -refundAmount,
+              amount: refundAmount,
+              status: "completed",
+              method: "system",
+              note: `Refund deduction for cancelled booking ${cancelTarget.id}${cancelTarget?.listingTitle ? ` — ${cancelTarget.listingTitle}` : ""}`,
+              metadata: { 
+                bookingId: cancelTarget.id, 
+                listingId: cancelTarget?.listingId || null,
+                refundPercentage,
+                guestUid: guestUid,
+                cancelledBy: currentUser.uid,
+              },
+              balanceAfter: hostNewBal,
+              timestamp: serverTimestamp(),
+            });
+          });
+          console.log(`Refund processed: ₱${refundAmount} credited to guest ${guestUid}, deducted from host ${hostId}`);
+        } catch (walletError) {
+          console.error("Failed to process refund wallets:", walletError);
+          const errorMsg = walletError?.message || String(walletError);
+          const errorCode = walletError?.code || "unknown";
+          console.error("Wallet error details:", {
+            code: errorCode,
+            message: errorMsg,
+            hostId,
+            guestUid,
+            refundAmount,
+            fullError: walletError,
+          });
+          
+          // Show error to user but don't block the cancellation
+          alert(
+            `Warning: Could not process wallet transactions.\n\n` +
+            `Error: ${errorMsg}\n` +
+            `Code: ${errorCode}\n\n` +
+            `The booking will still be cancelled, but wallet updates may have failed.\n` +
+            `Please check the console for more details.`
+          );
+        }
+      }
+      
+      // 2) Mark booking cancelled in Firestore
+      // IMPORTANT: Preserve the original guest UID (don't overwrite it with host's UID)
+      // The guest UID is needed so the booking appears in the guest's cancelled list
+      const originalGuestUid = cancelTarget?.uid || null;
+      if (!originalGuestUid) {
+        throw new Error("Guest UID not found in booking");
+      }
+      
       await updateDoc(doc(database, "bookings", cancelTarget.id), {
         status: "cancelled",
         cancelReason: cancelReason,
+        refundAmount: refundAmount,
+        refundPercentage: refundPercentage,
         cancelledAt: serverTimestamp(),
-        uid: currentUser.uid,
+        cancelledBy: currentUser.uid, // Track who cancelled (host in this case)
+        uid: originalGuestUid, // CRITICAL: Preserve the original guest UID
+        // Preserve hostId and ownerId so security rules can verify host ownership
+        hostId: cancelTarget?.hostId || currentUser.uid,
+        ownerId: cancelTarget?.ownerId || cancelTarget?.hostId || currentUser.uid,
         updatedAt: serverTimestamp(),
       });
       
+      // 3) Send EmailJS to the guest
+      const res = await sendCancellationEmail({
+        booking: cancelTarget,
+        reasonText: cancelReason,
+        refundAmount: refundAmount,
+        guestEmail: cancelTarget?.guestEmail,
+        guestName: cancelTarget?.guestName,
+      });
+      
+      // 4) Show success message
+      const base = `Booking ${cancelTarget?.id ? `(#${cancelTarget.id.slice(0, 8).toUpperCase()}) ` : ""}was cancelled successfully.`;
+      const refundNote = refundAmount > 0 
+        ? `\n\nRefund: ₱${refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${refundPercentage}%) has been credited to the guest's E-Wallet.`
+        : "\n\nNo refund was processed.";
+      const emailNote = res.ok
+        ? "\n\nA confirmation email has been sent to the guest."
+        : "\n\nWe couldn't send the confirmation email right now, but the booking is cancelled.";
+      
+      alert(base + refundNote + emailNote);
+      
+      // 5) Reset flow UI
       setConfirmOpen(false);
       setCancelTarget(null);
       setCancelReason("");
       setPolicyText("");
+      setRefundPercentage(100);
     } catch (error) {
       console.error("Cancel booking failed:", error);
-      alert("Failed to cancel booking. Please try again.");
+      const errorMsg = error?.message || String(error) || "Unknown error";
+      const errorCode = error?.code || "unknown";
+      console.error("Cancel error details:", {
+        code: errorCode,
+        message: errorMsg,
+        fullError: error,
+      });
+      alert(`Failed to cancel booking: ${errorMsg}\n\nCode: ${errorCode}\n\nPlease check the console for more details.`);
     } finally {
       setSubmittingCancel(false);
     }
@@ -1831,7 +3020,12 @@ export default function TodayTab() {
             return (
               <button
                 key={tabItem.key}
-                onClick={() => setTab(tabItem.key)}
+                onClick={() => {
+                  setTab(tabItem.key);
+                  if (tabItem.key !== "cancelled") {
+                    setCancelledFilter("all"); // Reset filter when switching away from cancelled
+                  }
+                }}
                 className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
                   isActive
                     ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white shadow"
@@ -1844,6 +3038,34 @@ export default function TodayTab() {
           })}
         </div>
       </div>
+
+      {/* Sub-tabs for Cancelled Bookings */}
+      {tab === "cancelled" && (
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-xl border border-white/60 bg-white/80 backdrop-blur-sm p-1 shadow-sm">
+            {[
+              { key: "all", label: "All" },
+              { key: "for_refund", label: "For Refund" },
+              { key: "refunded", label: "Refunded" },
+            ].map((filterItem) => {
+              const isActive = cancelledFilter === filterItem.key;
+              return (
+                <button
+                  key={filterItem.key}
+                  onClick={() => setCancelledFilter(filterItem.key)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                    isActive
+                      ? "bg-gradient-to-r from-emerald-600 to-emerald-700 text-white shadow"
+                      : "text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  {filterItem.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Statistics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
@@ -1915,10 +3137,22 @@ export default function TodayTab() {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
           {tabbedBookings.map((booking) => {
             const category = normalizeCategory(booking.listing?.category || booking.listingCategory || "");
+            const hostUid = authUser?.uid || null;
+            const bookingUid = booking?.uid || null;
+            const refundAmount = numberOr(booking?.refundAmount, 0);
+            // Show refund button if: cancelled by guest (not host) and not yet refunded
+            const showRefundButton = tab === "cancelled" && 
+              cancelledFilter === "for_refund" &&
+              bookingUid && 
+              bookingUid !== hostUid && 
+              refundAmount === 0;
+            
             const commonProps = {
               b: booking,
               onRequestCancel: startCancel,
               onRequestDetails: startDetails,
+              onRequestRefund: startRefund,
+              showRefundButton: showRefundButton,
             };
 
             if (category.startsWith("experience")) return <ExperienceCard key={booking.id} {...commonProps} />;
@@ -1945,6 +3179,29 @@ export default function TodayTab() {
         listingTitle={cancelTarget?.listing?.title || cancelTarget?.listingTitle}
         policyText={policyText}
         submitting={submittingCancel}
+        bookingTotal={numberOr(cancelTarget?.totalPrice, 0)}
+        refundPercentage={refundPercentage}
+        onRefundPercentageChange={setRefundPercentage}
+        refundAmount={(numberOr(cancelTarget?.totalPrice, 0) * refundPercentage) / 100}
+      />
+
+      {/* Refund Modal */}
+      <RefundModal
+        open={refundModalOpen}
+        onClose={() => {
+          setRefundModalOpen(false);
+          setRefundTarget(null);
+          setRefundModalPolicyText("");
+          setRefundModalPercentage(100);
+        }}
+        onConfirm={handleConfirmRefund}
+        listingTitle={refundTarget?.listing?.title || refundTarget?.listingTitle}
+        policyText={refundModalPolicyText}
+        submitting={submittingRefund}
+        bookingTotal={numberOr(refundTarget?.totalPrice, 0)}
+        refundPercentage={refundModalPercentage}
+        onRefundPercentageChange={setRefundModalPercentage}
+        refundAmount={(numberOr(refundTarget?.totalPrice, 0) * refundModalPercentage) / 100}
       />
 
       {/* Details Modal */}

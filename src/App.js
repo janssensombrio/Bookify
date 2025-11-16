@@ -26,6 +26,7 @@ import AdminListingsPage from "./pages/admin/listings.jsx";
 import AdminBookingsPage from "./pages/admin/bookings.jsx";
 import AdminWalletPage from "./pages/admin/wallet.jsx";
 import AdminGuestsPage from "./pages/admin/guests.jsx";
+import AdminRewardsPage from "./pages/admin/rewards.jsx";
 import AddListingsPage from "./pages/admin/add-listings-page.jsx";
 import AddExperiencesPage from "./pages/admin/add-experiences-page.jsx";
 import AddServicesPage from "./pages/admin/add-services-page.jsx";
@@ -66,6 +67,7 @@ function App() {
             <Route path="/admin/listings" element={<AdminListingsPage />} />
             <Route path="/admin/bookings" element={<AdminBookingsPage />} />
             <Route path="/admin/wallet" element={<AdminWalletPage />} />
+            <Route path="/admin/rewards" element={<AdminRewardsPage />} />
             <Route path="/admin/add-listings" element={<AddListingsPage />} />
             <Route path="/admin/add-experiences" element={<AddExperiencesPage />} />
             <Route path="/admin/add-services" element={<AddServicesPage />} />

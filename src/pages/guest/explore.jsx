@@ -578,7 +578,7 @@ export const Explore = () => {
               {/* Recommended for you section */}
               {recommendedListings.length > 0 && (
                 <div className="mb-10">
-                  <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center gap-3 mb-6 mt-8">
                     <div className="h-1 w-12 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full" />
                     <h2 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-700 bg-clip-text text-transparent">
                       Recommended for you
@@ -588,14 +588,14 @@ export const Explore = () => {
                   <p className="text-slate-600 text-sm mb-6">
                     Based on your previous bookings, we think you'll love these {selectedCategory.toLowerCase()}
                   </p>
-                  <ListingCardContainer category={selectedCategory} items={recommendedListings} hideTitle={true} />
+                  <ListingCardContainer category={selectedCategory} items={recommendedListings} hideTitle={true} /> 
                 </div>
               )}
 
               {/* Regular listings */}
               <div className={recommendedListings.length > 0 ? "mt-12" : ""}>
                 {recommendedListings.length > 0 && (
-                  <div className="flex items-center gap-3 mb-6">
+                  <div className="flex items-center gap-3 mb-6 mt-8">
                     <div className="h-1 w-12 bg-gradient-to-r from-slate-400 to-slate-500 rounded-full" />
                     <h2 className="text-2xl sm:text-3xl font-bold text-slate-800">
                       All {selectedCategory}
@@ -603,7 +603,7 @@ export const Explore = () => {
                     <div className="h-1 flex-1 bg-gradient-to-r from-slate-500 to-transparent rounded-full" />
                   </div>
                 )}
-                <ListingCardContainer category={selectedCategory} items={listings} />
+            <ListingCardContainer category={selectedCategory} items={listings} />
               </div>
             </>
           )}
