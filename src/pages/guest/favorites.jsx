@@ -18,9 +18,6 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
-import HomeDetailsModal from "../../components/HomeDetailsModal";
-import ExperienceDetailsModal from "../../components/ExperienceDetailsModal";
-import ServiceDetailsModal from "../../components/ServiceDetailsModal";
 
 import { Menu, Heart, Compass, Home } from "lucide-react";
 
@@ -28,7 +25,6 @@ const FavoritesPage = () => {
   const navigate = useNavigate();
   const { sidebarOpen, setSidebarOpen } = useSidebar();
 
-  const [selectedListingId, setSelectedListingId] = useState(null);
   const [favorites, setFavorites] = useState([]); // listingId[]
   const [favoriteListings, setFavoriteListings] = useState([]); // full listing docs (published only)
   const [loading, setLoading] = useState(true);
@@ -226,10 +222,17 @@ const FavoritesPage = () => {
             <>
               {favoriteListings.length > 0 ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6">
-                  {favoriteListings.map((item) => (
+                  {favoriteListings.map((item) => {
+                    const getRoute = (category) => {
+                      if (category === "Homes") return `/homes/${item.id}`;
+                      if (category === "Experiences") return `/experiences/${item.id}`;
+                      if (category === "Services") return `/services/${item.id}`;
+                      return `/homes/${item.id}`; // default
+                    };
+                    return (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedListingId(item.id)}
+                      onClick={() => navigate(getRoute(item.category))}
                       className="group text-left rounded-3xl bg-white/80 border border-white/40 shadow-lg hover:shadow-xl transition overflow-hidden"
                     >
                       <div className="relative">
@@ -280,7 +283,8 @@ const FavoritesPage = () => {
                         )}
                       </div>
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="glass rounded-3xl p-8 bg-white/70 border border-white/40 shadow text-center">
@@ -293,33 +297,6 @@ const FavoritesPage = () => {
           )}
         </div>
       </main>
-
-      {/* Details Modals */}
-      {selectedListingId && (
-        <>
-          {favoriteListings.find((it) => it.id === selectedListingId)?.category ===
-            "Homes" && (
-            <HomeDetailsModal
-              listingId={selectedListingId}
-              onClose={() => setSelectedListingId(null)}
-            />
-          )}
-          {favoriteListings.find((it) => it.id === selectedListingId)?.category ===
-            "Experiences" && (
-            <ExperienceDetailsModal
-              listingId={selectedListingId}
-              onClose={() => setSelectedListingId(null)}
-            />
-          )}
-          {favoriteListings.find((it) => it.id === selectedListingId)?.category ===
-            "Services" && (
-            <ServiceDetailsModal
-              listingId={selectedListingId}
-              onClose={() => setSelectedListingId(null)}
-            />
-          )}
-        </>
-      )}
 
       {/* Hosting Policies (always shown for non-hosts on action) */}
       {showPoliciesModal && (

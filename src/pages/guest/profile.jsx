@@ -25,10 +25,7 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 import HostCategModal from "../../components/host-categ-modal.jsx";
 import HostPoliciesModal from "./components/HostPoliciesModal.jsx";
 
-// (optional) listing detail modals if triggered from wishlist/recent sections
-import HomeDetailsModal from "../../components/HomeDetailsModal";
-import ExperienceDetailsModal from "../../components/ExperienceDetailsModal";
-import ServiceDetailsModal from "../../components/ServiceDetailsModal";
+// Listing details now navigate to pages instead of modals
 
 import {
   User,
@@ -1243,7 +1240,6 @@ export default function ProfilePage() {
   const [bookLoading, setBookLoading] = useState(true);
   const [bookings, setBookings] = useState([]);
 
-  const [modal, setModal] = useState(null); // {type:'home'|'experience'|'service', id}
   const [tab, setTab] = useState("wishlist"); // wishlist | recent | settings
   const [wishlistFilter, setWishlistFilter] = useState("home"); // home | experience | service
   const [arrayPrefTooltip, setArrayPrefTooltip] = useState(null); // { label, items, x, y }
@@ -1837,32 +1833,6 @@ export default function ProfilePage() {
                         );
                       })()}
                     </div>
-
-                    {/* Wishlist Items Grid */}
-                    {favLoading ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                          <CardSkeleton key={i} />
-                        ))}
-                      </div>
-                    ) : (
-                      (() => {
-                        const filtered = favoriteListings.filter((item) => item.kind === wishlistFilter);
-                        
-                        return filtered.length > 0 ? (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {filtered.map((item) => (
-                              <TinyListingCard
-                                key={item.id}
-                                item={item}
-                                kind={item.kind}
-                                onClick={() => setModal({ type: item.kind, id: item.id })}
-                      />
-                            ))}
-                    </div>
-                        ) : null;
-                      })()
-                    )}
                   </div>
                 )}
 
@@ -1880,14 +1850,22 @@ export default function ProfilePage() {
                       </div>
                     ) : bookings.length ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {bookings.map(({ booking, listing, kind }) => (
+                        {bookings.map(({ booking, listing, kind }) => {
+                          const getRoute = (kind) => {
+                            if (kind === "home") return `/homes/${listing.id}`;
+                            if (kind === "experience") return `/experiences/${listing.id}`;
+                            if (kind === "service") return `/services/${listing.id}`;
+                            return `/homes/${listing.id}`; // default
+                          };
+                          return (
                           <TinyListingCard
                             key={booking.id}
                             item={listing}
                             kind={kind}
-                            onClick={() => setModal({ type: kind, id: listing.id })}
+                            onClick={() => navigate(getRoute(kind))}
                           />
-                        ))}
+                          );
+                        })}
                       </div>
                     ) : (
                       <p className="text-sm text-slate-600">No recent bookings yet.</p>
@@ -2927,21 +2905,6 @@ export default function ProfilePage() {
                 )}
         </div>
       </main>
-
-      {/* Details Modals (optional) */}
-      {modal?.type && (
-        <div className="fixed inset-0">
-          {modal.type === "home" && (
-            <HomeDetailsModal listingId={modal.id} onClose={() => setModal(null)} />
-          )}
-          {modal.type === "experience" && (
-            <ExperienceDetailsModal listingId={modal.id} onClose={() => setModal(null)} />
-          )}
-          {modal.type === "service" && (
-            <ServiceDetailsModal listingId={modal.id} onClose={() => setModal(null)} />
-          )}
-        </div>
-      )}
 
       {/* NEW: Points Modal */}
       <PointsModal

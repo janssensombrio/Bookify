@@ -676,7 +676,7 @@ function FullScreenLoader({ text = "Processing…" }) {
   );
 }
 
-function ResultModal({ open, kind = "info", title, message, onClose, primaryLabel = "OK" }) {
+function ResultModal({ open, kind = "info", title, message, onClose, primaryLabel = "OK", preventClose = false }) {
   if (!open) return null;
   const Icon = kind === "success" ? CheckCircle2 : kind === "error" ? AlertCircle : null;
   const tone =
@@ -684,7 +684,10 @@ function ResultModal({ open, kind = "info", title, message, onClose, primaryLabe
 
   return createPortal(
     <div className="fixed inset-0 z-[2147483646] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div 
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm" 
+        onClick={preventClose ? undefined : onClose} 
+      />
       <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-5">
         <div className="flex items-start gap-3">
           {Icon && (
@@ -701,8 +704,9 @@ function ResultModal({ open, kind = "info", title, message, onClose, primaryLabe
         </div>
         <div className="mt-4 flex justify-end">
           <button
-            onClick={onClose}
-            className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            onClick={preventClose ? undefined : onClose}
+            disabled={preventClose}
+            className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {primaryLabel}
           </button>
@@ -2131,12 +2135,14 @@ A confirmation email will follow shortly.`
       {/* ===== Header ===== */}
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
-          <button
-            onClick={onClose}
-            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
-          >
-            <ChevronLeft className="w-4 h-4" /> Back
-          </button>
+          {auth.currentUser && (
+            <button
+              onClick={onClose}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+            >
+              <ChevronLeft className="w-4 h-4" /> Back
+            </button>
+          )}
 
           <h1 className="text-base sm:text-lg font-semibold text-slate-900 truncate">
             {service.title || "Untitled"}
@@ -3178,6 +3184,7 @@ A confirmation email will follow shortly.`
         title={modal.title}
         message={modal.message}
         onClose={closeModal}
+        preventClose={pointsModal.open}
       />
 
       {/* Share toast notification */}

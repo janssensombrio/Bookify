@@ -1201,17 +1201,6 @@ export default function MessagesPage() {
             <button
               onClick={() => {
                 setMenuOpen(false);
-                archiveConversation();
-              }}
-              disabled={archiving}
-              className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left text-sm sm:text-base text-slate-700 active:bg-slate-50/80 md:hover:bg-slate-50/80 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
-            >
-              <Archive className="w-3.5 h-3.5 sm:w-4 sm:h-4" size={14} />
-              <span className="font-medium">{archiving ? "Archiving…" : "Archive conversation"}</span>
-            </button>
-            <button
-              onClick={() => {
-                setMenuOpen(false);
                 setConfirmOpen(true);
               }}
               className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left text-sm sm:text-base text-red-600 active:bg-red-50/80 md:hover:bg-red-50/80 transition-colors duration-200 border-t border-white/60 touch-manipulation"

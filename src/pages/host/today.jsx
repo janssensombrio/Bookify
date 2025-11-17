@@ -50,6 +50,7 @@ import {
   Sun,
   Wifi,
   Tag,
+  Volume2,
 } from "lucide-react";
 
 /* ---------------- EmailJS config ---------------- */
@@ -1323,7 +1324,7 @@ function labelIcon(label) {
   if (L.includes("cleanliness")) return Sparkles;
   if (L.includes("scent")) return Sun;
   if (L.includes("sheets") || L.includes("thread") || L.includes("towels") || L.includes("pillow") || L.includes("duvet") || L.includes("mattress")) return BedDouble;
-  if (L.includes("noise")) return Clock;
+  if (L.includes("noise")) return Volume2;
   if (L.includes("quiet hours")) return Clock;
   if (L.includes("lighting") || L.includes("hot water")) return Sun;
   if (L.includes("wi-fi") || L.includes("wifi") || L.includes("workspace")) return Wifi;
@@ -1334,24 +1335,25 @@ function labelIcon(label) {
 
 // Guest Profile Modal Component
 const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
-  const [wishlistItems, setWishlistItems] = useState([]);
   const [preferences, setPreferences] = useState(null);
   const [loading, setLoading] = useState(false);
   const [guestProfile, setGuestProfile] = useState(null);
 
   // Determine the category filter based on listing category
   const categoryFilter = useMemo(() => {
-    const cat = normalizeCategory(listingCategory || "");
-    if (cat.startsWith("home")) return "home";
-    if (cat.startsWith("service")) return "service";
-    if (cat.startsWith("experience")) return "experience";
+    const cat = (listingCategory || "").toString().toLowerCase().trim();
+    // Check for "experience" first since it's more specific
+    if (cat.includes("experience")) return "experience";
+    // Then check for "service"
+    if (cat.includes("service")) return "service";
+    // Finally check for "home"
+    if (cat.includes("home")) return "home";
     return "home"; // default
   }, [listingCategory]);
 
-  // Load guest profile and wishlist
+  // Load guest profile and preferences
   useEffect(() => {
     if (!open || !guest?.uid) {
-      setWishlistItems([]);
       setGuestProfile(null);
       setPreferences(null);
       return;
@@ -1371,7 +1373,7 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
         if (!isActive) return;
         setGuestProfile(profile);
 
-        // Load preferences
+        // Load preferences for the specific category
         if (prefSnap?.exists()) {
           const prefData = prefSnap.data() || {};
           // Get preferences for the specific category
@@ -1381,55 +1383,8 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
         } else {
           setPreferences({});
         }
-
-        // Load favorites
-        const favRef = collection(database, "favorites");
-        const qFav = query(favRef, where("userId", "==", guest.uid));
-        const snap = await getDocs(qFav);
-        const favData = snap.docs.map((d) => d.data());
-
-        // Load full listing data
-        const listingsPromises = favData.map(async (f) => {
-          if (!f.listingId) return null;
-          try {
-            const found = await getListingLike(database, f.listingId);
-            if (!found || !found.snap.exists()) return null;
-
-            const data = found.snap.data() || {};
-            if (data.status !== "published") return null;
-
-            // Determine kind from category or collection name
-            const kindFromCategory = categoryToKind(data.category || data.type || data.kind);
-            const kindFromCollection = (found.col || "").toLowerCase().startsWith("exp")
-              ? "experience"
-              : (found.col || "").toLowerCase().startsWith("serv")
-              ? "service"
-              : (found.col || "").toLowerCase().startsWith("home")
-              ? "home"
-              : null;
-
-            const kind = kindFromCategory || kindFromCollection || "home";
-
-            return {
-              id: found.snap.id,
-              ...data,
-              kind,
-            };
-          } catch (err) {
-            console.warn("Failed to load listing:", f.listingId, err);
-            return null;
-          }
-        });
-
-        const listings = (await Promise.all(listingsPromises)).filter(Boolean);
-        
-        if (!isActive) return;
-        
-        // Filter by category
-        const filtered = listings.filter((item) => item.kind === categoryFilter);
-        setWishlistItems(filtered);
       } catch (error) {
-        console.error("Error loading guest profile/wishlist:", error);
+        console.error("Error loading guest profile/preferences:", error);
       } finally {
         if (isActive) setLoading(false);
       }
@@ -1500,12 +1455,12 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* Preferences Section */}
+          {/* Wishlist Preferences Section */}
           <div className="space-y-4">
             <div className="flex items-center gap-2">
-              <CategoryIcon size={20} className="text-blue-600" />
+              <Heart size={20} className="text-rose-500" />
               <h3 className="text-lg font-semibold text-slate-900">
-                Preferences — {categoryInfo.label}
+                Wishlist — {categoryInfo.label}
               </h3>
             </div>
             
@@ -1540,71 +1495,6 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
                 </div>
               );
             })()}
-          </div>
-
-          {/* Wishlist Section */}
-          <div className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Heart size={20} className="text-rose-500" />
-              <h3 className="text-lg font-semibold text-slate-900">
-                Wishlist — {categoryInfo.label}
-              </h3>
-              <span className="text-sm text-slate-500">
-                ({wishlistItems.length} {wishlistItems.length === 1 ? "item" : "items"})
-              </span>
-            </div>
-
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 size={24} className="animate-spin text-blue-600" />
-                <span className="ml-3 text-slate-600">Loading wishlist...</span>
-              </div>
-            ) : wishlistItems.length === 0 ? (
-              <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-200">
-                <Heart size={48} className="mx-auto text-slate-300 mb-3" />
-                <p className="text-slate-600">No {categoryInfo.label.toLowerCase()} in wishlist</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {wishlistItems.map((item) => {
-                  const photo = item.photos?.[0] || item.cover || null;
-                  const price = item.price || item.pricePerNight || item.basePrice || 0;
-                  return (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition-shadow"
-                    >
-                      {photo && (
-                        <div className="aspect-video bg-slate-200 overflow-hidden">
-                          <img
-                            src={photo}
-                            alt={item.title || "Listing"}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      )}
-                      <div className="p-4">
-                        <h4 className="font-semibold text-slate-900 line-clamp-1 mb-1">
-                          {item.title || "Untitled"}
-                        </h4>
-                        {item.location && (
-                          <p className="text-sm text-slate-600 line-clamp-1 mb-2 flex items-center gap-1">
-                            <MapPin size={12} />
-                            {item.location}
-                          </p>
-                        )}
-                        {price > 0 && (
-                          <p className="text-base font-bold text-blue-600">
-                            {peso(price)}
-                            {item.kind === "home" && <span className="text-xs font-normal text-slate-500">/night</span>}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
       </div>
