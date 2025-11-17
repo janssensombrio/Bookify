@@ -46,24 +46,36 @@ const normalizeUserDoc = (d = {}, fallbackUid) => {
 };
 
 const Avatar = ({ url, alt, size = 40, name = "U" }) => {
+  const [imageError, setImageError] = useState(false);
   const initial = (name?.[0] || "U").toUpperCase();
-  return url ? (
+  
+  // Reset error state when URL changes
+  useEffect(() => {
+    setImageError(false);
+  }, [url]);
+  
+  if (!url || imageError) {
+    return (
+      <div
+        className="rounded-full bg-blue-600 text-white grid place-items-center"
+        style={{ width: size, height: size }}
+      >
+        <span className="font-semibold" style={{ fontSize: size * 0.4 }}>{initial}</span>
+      </div>
+    );
+  }
+  
+  return (
     <img
       src={url}
       alt={alt || name}
       className="rounded-full object-cover"
       style={{ width: size, height: size }}
       referrerPolicy="no-referrer"
-      crossOrigin="anonymous"
       loading="lazy"
+      onError={() => setImageError(true)}
+      onLoad={() => setImageError(false)}
     />
-  ) : (
-    <div
-      className="rounded-full bg-blue-600 text-white grid place-items-center"
-      style={{ width: size, height: size }}
-    >
-      <span className="font-semibold">{initial}</span>
-    </div>
   );
 };
 

@@ -4,9 +4,11 @@ import AdminSidebar from "./components/AdminSidebar.jsx";
 import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import HostProfileModal from "./components/HostProfileModal.jsx";
 import BookifyLogo from "../../components/bookify-logo.jsx";
+import DateRangeFilter from "./components/DateRangeFilter.jsx";
 import { database, auth } from "../../config/firebase";
 import { collection, getDocs, doc, setDoc, query, orderBy, getDoc } from "firebase/firestore";
-import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu, Settings, Save, Edit2, FileText, Percent } from "lucide-react";
+import { CheckCircle2, XCircle, Search, ChevronLeft, ChevronsLeft, ChevronRight, ChevronsRight, Download, Menu, Settings, Save, Edit2, FileText, Percent, Printer } from "lucide-react";
+import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
 
@@ -20,43 +22,6 @@ function formatDate(ts) {
   }
 }
 
-// Time filter helpers
-const getTimeRange = (filter) => {
-  const now = new Date();
-  switch (filter) {
-    case "today": {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-      return { start, end };
-    }
-    case "thisWeek": {
-      const day = now.getDay();
-      const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Monday
-      const start = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth(), diff + 6, 23, 59, 59, 999);
-      return { start, end };
-    }
-    case "thisMonth": {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
-      return { start, end };
-    }
-    case "thisYear": {
-      const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-      const end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
-      return { start, end };
-    }
-    default:
-      return { start: null, end: null };
-  }
-};
-
-const isInTimeRange = (date, range) => {
-  if (!range.start || !range.end) return true;
-  if (!date) return false;
-  const d = date?.toDate ? date.toDate() : new Date(date);
-  return d >= range.start && d <= range.end;
-};
 
 export default function AdminHostsPage() {
   const navigate = useNavigate();
@@ -72,7 +37,7 @@ export default function AdminHostsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [verifiedFilter, setVerifiedFilter] = useState("all"); // all, verified, unverified
   const [activeFilter, setActiveFilter] = useState("all"); // all, active, inactive
-  const [timeFilter, setTimeFilter] = useState("all"); // all, today, thisWeek, thisMonth, thisYear
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
 
 
   // Service Fees & Policies state
@@ -98,6 +63,7 @@ export default function AdminHostsPage() {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [selectedHostId, setSelectedHostId] = useState(null);
   const [showHostModal, setShowHostModal] = useState(false);
+  const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
   /* --- Load settings from Firestore --- */
   useEffect(() => {
@@ -202,9 +168,34 @@ export default function AdminHostsPage() {
   /* --- search, filter & sort --- */
   const normalizedSearch = (s) => String(s || "").trim().toLowerCase();
   
+  // Helper to check if date is in range
+  const isDateInRange = (date, range) => {
+    if (!range.start && !range.end) return true;
+    if (!date) return false;
+    try {
+      const d = date?.toDate ? date.toDate() : new Date(date);
+      if (isNaN(d.getTime())) return false;
+      
+      if (range.start) {
+        const startDate = new Date(range.start);
+        startDate.setHours(0, 0, 0, 0);
+        if (d < startDate) return false;
+      }
+      
+      if (range.end) {
+        const endDate = new Date(range.end);
+        endDate.setHours(23, 59, 59, 999);
+        if (d > endDate) return false;
+      }
+      
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const filteredHosts = useMemo(() => {
     let filtered = hosts;
-    const timeRange = getTimeRange(timeFilter);
     
     // Search filter
     if (searchTerm) {
@@ -218,9 +209,9 @@ export default function AdminHostsPage() {
       });
     }
     
-    // Time filter
-    if (timeFilter !== "all") {
-      filtered = filtered.filter((h) => isInTimeRange(h.createdAt, timeRange));
+    // Date range filter
+    if (!isDateInRange(null, dateRange)) {
+      filtered = filtered.filter((h) => isDateInRange(h.createdAt, dateRange));
     }
     
     // Verified filter
@@ -259,7 +250,7 @@ export default function AdminHostsPage() {
     });
     
     return filtered;
-  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir, timeFilter]);
+  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir, dateRange]);
 
   const totalPages = Math.max(1, Math.ceil(filteredHosts.length / pageSize));
   useEffect(() => {
@@ -318,24 +309,23 @@ export default function AdminHostsPage() {
     }
   };
   
-  // Export PDF via download
-  const exportPDF = async () => {
-    try {
-      const rows = filteredHosts || [];
+  // Generate HTML content for PDF
+  const generatePDFHTML = () => {
+    const rows = filteredHosts || [];
 
-      const escapeHtml = (str) => {
-        if (str == null) return "";
-        return String(str)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-      };
+    const escapeHtml = (str) => {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    };
 
-      const nowStr = new Date().toLocaleString();
+    const nowStr = new Date().toLocaleString();
 
-      const html = [];
-      html.push(`<!doctype html>
+    const html = [];
+    html.push(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -347,7 +337,7 @@ export default function AdminHostsPage() {
     }
     @page{ margin: 18mm; }
     *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
-    body{ margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    body{ margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
 
     .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     .brand{ display:flex; align-items:center; gap:12px; }
@@ -412,26 +402,26 @@ export default function AdminHostsPage() {
     </thead>
     <tbody>`);
 
-      for (const h of rows) {
-        const verifiedClass = h.isVerified ? "verified" : "unverified";
-        const activeClass = h.active ? "active" : "inactive";
-        const verifiedText = h.isVerified ? "Verified" : "Unverified";
-        const activeText = h.active ? "Active" : "Inactive";
-        const joinedDate = h.createdAt 
-          ? (h.createdAt?.toDate ? h.createdAt.toDate().toLocaleDateString() : new Date(h.createdAt).toLocaleDateString())
-          : "—";
+    for (const h of rows) {
+      const verifiedClass = h.isVerified ? "verified" : "unverified";
+      const activeClass = h.active ? "active" : "inactive";
+      const verifiedText = h.isVerified ? "Verified" : "Unverified";
+      const activeText = h.active ? "Active" : "Inactive";
+      const joinedDate = h.createdAt 
+        ? (h.createdAt?.toDate ? h.createdAt.toDate().toLocaleDateString() : new Date(h.createdAt).toLocaleDateString())
+        : "—";
 
-        html.push(`<tr>
-        <td class="mono">${escapeHtml(String(h.id).slice(0, 8))}…</td>
-        <td>${escapeHtml(h.name)}</td>
-        <td>${escapeHtml(h.email)}</td>
-        <td><span class="status"><span class="dot ${verifiedClass}"></span>${escapeHtml(verifiedText)}</span></td>
-        <td><span class="status"><span class="dot ${activeClass}"></span>${escapeHtml(activeText)}</span></td>
-        <td>${escapeHtml(joinedDate)}</td>
-      </tr>`);
-      }
+      html.push(`<tr>
+      <td class="mono">${escapeHtml(String(h.id).slice(0, 8))}…</td>
+      <td>${escapeHtml(h.name)}</td>
+      <td>${escapeHtml(h.email)}</td>
+      <td><span class="status"><span class="dot ${verifiedClass}"></span>${escapeHtml(verifiedText)}</span></td>
+      <td><span class="status"><span class="dot ${activeClass}"></span>${escapeHtml(activeText)}</span></td>
+      <td>${escapeHtml(joinedDate)}</td>
+    </tr>`);
+    }
 
-      html.push(`</tbody>
+    html.push(`</tbody>
   </table>
 
   <div class="footer">
@@ -441,6 +431,140 @@ export default function AdminHostsPage() {
 
 </body>
 </html>`);
+
+    return html.join("");
+  };
+
+  // Export PDF via preview
+  const exportPDF = () => {
+    try {
+      const htmlContent = generatePDFHTML();
+      const filename = `hosts_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      setPdfPreview({ open: true, htmlContent, filename });
+    } catch (e) {
+      console.error("Failed to generate PDF preview", e);
+      alert("Failed to generate PDF preview: " + String(e));
+    }
+  };
+
+  // Print table
+  const printTable = () => {
+    try {
+      const rows = filteredHosts || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Hosts Report</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { width: 32px; height: 32px; border-radius: 6px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    .summary { margin: 16px 0; padding: 12px; background: #f8fafc; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="${BookifyIcon}" alt="Bookify logo"/>
+      <h1>Bookify <small>Hosts Report</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${rows.length.toLocaleString()} hosts
+    </div>
+  </div>
+  
+  <div class="summary">
+    <strong>Summary:</strong> ${metrics.total.toLocaleString()} total hosts, ${metrics.verified.toLocaleString()} verified, ${metrics.active.toLocaleString()} active
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Verified</th>
+        <th>Active</th>
+        <th>Joined</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((h) => {
+        const verifiedText = h.isVerified ? "Verified" : "Unverified";
+        const activeText = h.active ? "Active" : "Inactive";
+        const joinedDate = h.createdAt 
+          ? (h.createdAt?.toDate ? h.createdAt.toDate().toLocaleDateString() : new Date(h.createdAt).toLocaleDateString())
+          : "—";
+        return `<tr>
+          <td class="mono">${escapeHtml(String(h.id).slice(0, 8))}…</td>
+          <td>${escapeHtml(h.name)}</td>
+          <td>${escapeHtml(h.email)}</td>
+          <td>${escapeHtml(verifiedText)}</td>
+          <td>${escapeHtml(activeText)}</td>
+          <td>${escapeHtml(joinedDate)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Hosts Report • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
+    }
+  };
+
+  // Download PDF from preview
+  const handleDownloadPDF = async () => {
+    try {
+      // Determine which HTML generator to use based on filename
+      const htmlContent = pdfPreview.filename.includes("settings") 
+        ? generateSettingsPDFHTML() 
+        : generatePDFHTML();
+      const filename = pdfPreview.filename;
 
       // Load html2pdf library dynamically
       const loadHtml2Pdf = () => {
@@ -457,40 +581,37 @@ export default function AdminHostsPage() {
         });
       };
 
-      try {
-        const html2pdf = await loadHtml2Pdf();
-        const element = document.createElement("div");
-        element.innerHTML = html.join("");
-        document.body.appendChild(element);
+      const html2pdf = await loadHtml2Pdf();
+      const element = document.createElement("div");
+      element.innerHTML = htmlContent;
+      document.body.appendChild(element);
 
-        const opt = {
-          margin: [18, 18],
-          filename: `hosts_export_${new Date().toISOString().slice(0, 10)}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        };
+      const opt = {
+        margin: [18, 18],
+        filename: filename,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      };
 
-        await html2pdf().set(opt).from(element).save();
-        document.body.removeChild(element);
-      } catch (err) {
-        // Fallback to print dialog if library fails
-        const win = window.open("", "_blank");
-        if (!win) {
-          alert("Unable to open print window. Please allow popups for this site.");
-          return;
-        }
-        win.document.open();
-        win.document.write(html.join(""));
-        win.document.close();
-        setTimeout(() => {
-          win.focus();
-          win.print();
-        }, 500);
+      await html2pdf().set(opt).from(element).save();
+      document.body.removeChild(element);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
+    } catch (err) {
+      // Fallback to print dialog if library fails
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
       }
-    } catch (e) {
-      console.error("Failed to export PDF", e);
-      alert("Failed to export PDF: " + String(e));
+      win.document.open();
+      win.document.write(generatePDFHTML());
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 500);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
     }
   };
 
@@ -532,21 +653,20 @@ export default function AdminHostsPage() {
     }
   };
 
-  /* --- Export Settings PDF --- */
-  const exportSettingsPDF = async () => {
-    try {
-      const escapeHtml = (str) => {
-        if (str == null) return "";
-        return String(str)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-      };
+  // Generate Settings PDF HTML
+  const generateSettingsPDFHTML = () => {
+    const escapeHtml = (str) => {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    };
 
-      const nowStr = new Date().toLocaleString();
-      const html = [];
-      html.push(`<!doctype html>
+    const nowStr = new Date().toLocaleString();
+    const html = [];
+    html.push(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -555,7 +675,7 @@ export default function AdminHostsPage() {
     :root{ --brand:#2563eb; --ink:#0f172a; --muted:#64748b; --line:#e5e7eb; --bg:#ffffff; --subtle:#f8fafc; --thead:#f1f5f9; }
     @page{ margin: 18mm; }
     *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
-    body{ margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    body{ margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
     .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     .brand{ display:flex; align-items:center; gap:12px; }
     .brand img{ width:28px; height:28px; border-radius:6px; object-fit:cover; }
@@ -614,66 +734,31 @@ export default function AdminHostsPage() {
   <div class="section">
     <h2>Hosting Policies</h2>
     <div class="policy-list">`);
-      
-      settings.policies.forEach((policy, idx) => {
-        html.push(`<div class="policy-item">
-          <span class="policy-num">${idx + 1}.</span> ${escapeHtml(policy)}
-        </div>`);
-      });
+    
+    settings.policies.forEach((policy, idx) => {
+      html.push(`<div class="policy-item">
+        <span class="policy-num">${idx + 1}.</span> ${escapeHtml(policy)}
+      </div>`);
+    });
 
-      html.push(`</div>
+    html.push(`</div>
   </div>
 
 </body>
 </html>`);
 
-      const loadHtml2Pdf = () => {
-        return new Promise((resolve, reject) => {
-          if (window.html2pdf) {
-            resolve(window.html2pdf);
-            return;
-          }
-          const script = document.createElement("script");
-          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-          script.onload = () => resolve(window.html2pdf);
-          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
-          document.head.appendChild(script);
-        });
-      };
+    return html.join("");
+  };
 
-      try {
-        const html2pdf = await loadHtml2Pdf();
-        const element = document.createElement("div");
-        element.innerHTML = html.join("");
-        document.body.appendChild(element);
-
-        const opt = {
-          margin: [18, 18],
-          filename: `host_policies_settings_${new Date().toISOString().slice(0, 10)}.pdf`,
-          image: { type: "jpeg", quality: 0.98 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        };
-
-        await html2pdf().set(opt).from(element).save();
-        document.body.removeChild(element);
-      } catch (err) {
-        const win = window.open("", "_blank");
-        if (!win) {
-          alert("Unable to open print window. Please allow popups for this site.");
-          return;
-        }
-        win.document.open();
-        win.document.write(html.join(""));
-        win.document.close();
-        setTimeout(() => {
-          win.focus();
-          win.print();
-        }, 500);
-      }
+  /* --- Export Settings PDF via preview --- */
+  const exportSettingsPDF = () => {
+    try {
+      const htmlContent = generateSettingsPDFHTML();
+      const filename = `host_policies_settings_${new Date().toISOString().slice(0, 10)}.pdf`;
+      setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
-      console.error("Failed to export settings PDF", e);
-      alert("Failed to export PDF: " + String(e));
+      console.error("Failed to generate settings PDF preview", e);
+      alert("Failed to generate PDF preview: " + String(e));
     }
   };
 
@@ -728,21 +813,16 @@ export default function AdminHostsPage() {
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <TailwindDropdown
-                    value={timeFilter}
-                    onChange={(e) => {
-                      setTimeFilter(e.target.value);
-                      setPage(1);
-                    }}
-                    options={[
-                      { value: "all", label: "All Time" },
-                      { value: "today", label: "Today" },
-                      { value: "thisWeek", label: "This Week" },
-                      { value: "thisMonth", label: "This Month" },
-                      { value: "thisYear", label: "This Year" },
-                    ]}
-                    className="sm:min-w-[120px]"
-                  />
+                  <div className="min-w-[200px]">
+                    <DateRangeFilter
+                      value={dateRange}
+                      onChange={(val) => {
+                        setDateRange(val);
+                        setPage(1);
+                      }}
+                      placeholder="Select date range"
+                    />
+                  </div>
                   <TailwindDropdown
                     value={verifiedFilter}
                     onChange={(e) => {
@@ -819,6 +899,14 @@ export default function AdminHostsPage() {
                       <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
                     </svg>
                     <span className="hidden xs:inline">Export PDF</span><span className="xs:hidden">PDF</span>
+                  </button>
+                  <button
+                    title="Print"
+                    onClick={printTable}
+                    className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+                  >
+                    <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+                    <span className="hidden xs:inline">Print</span>
                   </button>
                   <TailwindDropdown
                     value={String(pageSize)}
@@ -1211,6 +1299,14 @@ export default function AdminHostsPage() {
         }}
         hostId={selectedHostId}
         hostData={hosts.find((h) => h.id === selectedHostId)}
+      />
+
+      <PDFPreviewModal
+        open={pdfPreview.open}
+        htmlContent={pdfPreview.htmlContent}
+        filename={pdfPreview.filename}
+        onClose={() => setPdfPreview({ open: false, htmlContent: "", filename: "" })}
+        onDownload={handleDownloadPDF}
       />
     </div>
   );

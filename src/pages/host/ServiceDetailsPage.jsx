@@ -639,7 +639,6 @@ function HostAvatar({ host }) {
           alt="Host avatar"
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
           loading="lazy"
           onError={() => setOk(false)}
         />
@@ -3261,7 +3260,6 @@ function UserAvatar({ user }) {
           alt="User avatar"
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
           loading="lazy"
           onError={() => setOk(false)}
         />

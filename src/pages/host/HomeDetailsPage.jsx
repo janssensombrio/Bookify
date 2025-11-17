@@ -271,7 +271,6 @@ function ReviewerAvatar({ name, photoURL, size = 40 }) {
           alt={`${name || "Guest"} avatar`}
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
           loading="lazy"
           onError={() => setOk(false)}
         />
@@ -520,7 +519,6 @@ function HostSectionForGuest({ host, listing, reviews, avgRating }) {
             alt="Host avatar"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
-            crossOrigin="anonymous"
             loading="lazy"
             onError={() => setOk(false)}
           />

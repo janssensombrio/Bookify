@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Menu, Printer } from "lucide-react";
 import AdminSidebar from "./components/AdminSidebar.jsx";
 import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { database } from "../../config/firebase";
@@ -8,7 +8,8 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 import { collection, getDocs, query, where, documentId } from "firebase/firestore";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
-import { getTimeRange, isInTimeRange } from "../../utils/timeFilters";
+import DateRangeFilter from "./components/DateRangeFilter.jsx";
+import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
 
 // small helpers
 const chunk = (arr, size = 10) => {
@@ -65,9 +66,10 @@ export default function AdminBookingsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, confirmed, cancelled
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [timeFilter, setTimeFilter] = useState("all"); // all, today, thisWeek, thisMonth, thisYear
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
   useEffect(() => {
     (async () => {
@@ -161,13 +163,38 @@ export default function AdminBookingsPage() {
     return Array.from(cats).sort();
   }, [bookings]);
 
+  // Helper to check if date is in range
+  const isDateInRange = (date, range) => {
+    if (!range.start && !range.end) return true;
+    if (!date) return false;
+    try {
+      const d = date?.toDate ? date.toDate() : new Date(date);
+      if (isNaN(d.getTime())) return false;
+      
+      if (range.start) {
+        const startDate = new Date(range.start);
+        startDate.setHours(0, 0, 0, 0);
+        if (d < startDate) return false;
+      }
+      
+      if (range.end) {
+        const endDate = new Date(range.end);
+        endDate.setHours(23, 59, 59, 999);
+        if (d > endDate) return false;
+      }
+      
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   // SORTED & FILTERED
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
-    const timeRange = getTimeRange(timeFilter);
     const filtered = bookings.filter((b) => {
-      // time filter
-      if (timeFilter !== "all" && !isInTimeRange(b.createdAt, timeRange)) return false;
+      // date range filter
+      if (!isDateInRange(b.createdAt, dateRange)) return false;
       // status filter
       if (statusFilter !== "all" && b.status !== statusFilter) return false;
       // category filter
@@ -211,7 +238,7 @@ export default function AdminBookingsPage() {
       const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
       return tb - ta;
     });
-  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter, timeFilter]);
+  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -318,24 +345,35 @@ export default function AdminBookingsPage() {
     }
   };
 
-  // export PDF via download
-  const exportPDF = async () => {
-    try {
-      const rows = sorted || [];
+  // Generate HTML content for PDF
+  const generatePDFHTML = () => {
+    const rows = sorted || [];
+    const safeMetrics = metrics || {
+      total: rows.length,
+      totalRevenue: rows.reduce((sum, b) => sum + (b.totalPrice || 0), 0),
+      confirmed: rows.filter((b) => b.status === "confirmed").length,
+      totalGuests: rows.reduce((sum, b) => sum + (b.guests || 1), 0),
+    };
 
-      const escapeHtml = (str) => {
-        if (str == null) return "";
-        return String(str)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
-      };
+    const escapeHtml = (str) => {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    };
 
-      const nowStr = new Date().toLocaleString();
+    const formatPesoSafe = (v) => {
+      const n = Number(v || 0);
+      if (!Number.isFinite(n)) return "—";
+      return `₱${n.toLocaleString()}`;
+    };
 
-      const html = [];
-      html.push(`<!doctype html>
+    const nowStr = new Date().toLocaleString();
+
+    const html = [];
+    html.push(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -347,7 +385,7 @@ export default function AdminBookingsPage() {
     }
     @page{ margin: 18mm; }
     *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
-    body{ margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    body{ margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
 
     .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     .brand{ display:flex; align-items:center; gap:12px; }
@@ -392,10 +430,10 @@ export default function AdminBookingsPage() {
   </div>
 
   <div class="chips">
-    <span class="chip"><span class="dot"></span><b>Total Bookings:</b> ${metrics.total.toLocaleString()}</span>
-    <span class="chip"><span class="dot"></span><b>Revenue:</b> ${formatPeso(metrics.totalRevenue)}</span>
-    <span class="chip"><span class="dot"></span><b>Confirmed:</b> ${metrics.confirmed.toLocaleString()}</span>
-    <span class="chip"><span class="dot"></span><b>Guests:</b> ${metrics.totalGuests.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Total Bookings:</b> ${safeMetrics.total.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Revenue:</b> ${formatPesoSafe(safeMetrics.totalRevenue)}</span>
+    <span class="chip"><span class="dot"></span><b>Confirmed:</b> ${safeMetrics.confirmed.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Guests:</b> ${safeMetrics.totalGuests.toLocaleString()}</span>
   </div>
 
   <table>
@@ -424,7 +462,7 @@ export default function AdminBookingsPage() {
         <td>${escapeHtml(b.listingTitle)}</td>
         <td>${escapeHtml(category)}</td>
         <td class="num">${b.guests || 1}</td>
-        <td class="num">${b.totalPrice != null ? escapeHtml(formatPeso(b.totalPrice)) : "—"}</td>
+        <td class="num">${b.totalPrice != null ? escapeHtml(formatPesoSafe(b.totalPrice)) : "—"}</td>
         <td><span class="status"><span class="dot ${statusClass}"></span>${escapeHtml(b.status)}</span></td>
         <td><span class="status"><span class="dot ${paymentClass}"></span>${escapeHtml(b.paymentStatus)}</span></td>
       </tr>`);
@@ -441,53 +479,169 @@ export default function AdminBookingsPage() {
 </body>
 </html>`);
 
-    // Load html2pdf library dynamically
-    const loadHtml2Pdf = () => {
-      return new Promise((resolve, reject) => {
-        if (window.html2pdf) {
-          resolve(window.html2pdf);
-          return;
-        }
-        const script = document.createElement("script");
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-        script.onload = () => resolve(window.html2pdf);
-        script.onerror = () => reject(new Error("Failed to load html2pdf library"));
-        document.head.appendChild(script);
-      });
-    };
+    return html.join("");
+  };
 
+  // export PDF via preview
+  const exportPDF = () => {
     try {
+      const htmlContent = generatePDFHTML();
+      const filename = `bookings_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      setPdfPreview({ open: true, htmlContent, filename });
+    } catch (e) {
+      console.error("Failed to generate PDF preview", e);
+      alert("Failed to generate PDF preview: " + String(e));
+    }
+  };
+
+  // Print table
+  const printTable = () => {
+    try {
+      const rows = sorted || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Bookings Report</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { width: 32px; height: 32px; border-radius: 6px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    .summary { margin: 16px 0; padding: 12px; background: #f8fafc; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .num { text-align: right; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="${BookifyIcon}" alt="Bookify logo"/>
+      <h1>Bookify <small>Bookings Report</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${rows.length.toLocaleString()} bookings
+    </div>
+  </div>
+  
+  <div class="summary">
+    <strong>Summary:</strong> ${metrics.total.toLocaleString()} total bookings, ${formatPeso(metrics.totalRevenue)} revenue, ${metrics.confirmed.toLocaleString()} confirmed
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Guest</th>
+        <th>Listing</th>
+        <th>Category</th>
+        <th class="num">Guests</th>
+        <th class="num">Total</th>
+        <th>Status</th>
+        <th>Payment</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((b) => {
+        const category = b.category || "—";
+        return `<tr>
+          <td class="mono">${escapeHtml(String(b.id).slice(0, 8))}…</td>
+          <td>${escapeHtml(b.guestName)}</td>
+          <td>${escapeHtml(b.listingTitle)}</td>
+          <td>${escapeHtml(category)}</td>
+          <td class="num">${b.guests || 1}</td>
+          <td class="num">${b.totalPrice != null ? escapeHtml(formatPeso(b.totalPrice)) : "—"}</td>
+          <td>${escapeHtml(b.status)}</td>
+          <td>${escapeHtml(b.paymentStatus)}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Bookings Report • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
+    }
+  };
+
+  // Download PDF from preview
+  const handleDownloadPDF = async () => {
+    try {
+      const htmlContent = generatePDFHTML();
+      const filename = pdfPreview.filename;
+
+      // Load html2pdf library dynamically
+      const loadHtml2Pdf = () => {
+        return new Promise((resolve, reject) => {
+          if (window.html2pdf) {
+            resolve(window.html2pdf);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          script.onload = () => resolve(window.html2pdf);
+          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
+          document.head.appendChild(script);
+        });
+      };
+
       const html2pdf = await loadHtml2Pdf();
       const element = document.createElement("div");
-      element.innerHTML = html.join("");
-      
-      // Hide the element to prevent layout shifts/glitching
-      element.style.position = "absolute";
-      element.style.left = "-9999px";
-      element.style.top = "-9999px";
-      element.style.width = "210mm"; // A4 width
-      element.style.visibility = "hidden";
-      element.style.opacity = "0";
-      element.style.pointerEvents = "none";
-      
+      element.innerHTML = htmlContent;
       document.body.appendChild(element);
 
       const opt = {
         margin: [18, 18],
-        filename: `bookings_export_${new Date().toISOString().slice(0, 10)}.pdf`,
+        filename: filename,
         image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
+        html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
       };
 
       await html2pdf().set(opt).from(element).save();
-      
-      // Remove element after a short delay to ensure PDF generation is complete
-      setTimeout(() => {
-        if (element.parentNode) {
-          document.body.removeChild(element);
-        }
-      }, 100);
+      document.body.removeChild(element);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
     } catch (err) {
       // Fallback to print dialog if library fails
       const win = window.open("", "_blank");
@@ -496,16 +650,13 @@ export default function AdminBookingsPage() {
         return;
       }
       win.document.open();
-      win.document.write(html.join(""));
+      win.document.write(generatePDFHTML());
       win.document.close();
       setTimeout(() => {
         win.focus();
         win.print();
       }, 500);
-    }
-    } catch (e) {
-      console.error("Failed to export PDF", e);
-      alert("Failed to export PDF: " + String(e));
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
     }
   };
 
@@ -648,18 +799,13 @@ export default function AdminBookingsPage() {
 
           {/* Second Row: Time, Status, Sort & Export */}
             <div className="flex flex-wrap items-center gap-2">
-            <TailwindDropdown
-              value={timeFilter}
-              onChange={(e) => setTimeFilter(e.target.value)}
-              options={[
-                { value: "all", label: "All Time" },
-                { value: "today", label: "Today" },
-                { value: "thisWeek", label: "This Week" },
-                { value: "thisMonth", label: "This Month" },
-                { value: "thisYear", label: "This Year" },
-              ]}
-              className="min-w-[120px]"
-            />
+            <div className="min-w-[200px]">
+              <DateRangeFilter
+                value={dateRange}
+                onChange={setDateRange}
+                placeholder="Select date range"
+              />
+            </div>
             <TailwindDropdown
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
@@ -714,6 +860,14 @@ export default function AdminBookingsPage() {
                 <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
               </svg>
                 <span className="hidden sm:inline">PDF</span>
+            </button>
+            <button
+              title="Print"
+              onClick={printTable}
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+            >
+              <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+              <span className="hidden xs:inline">Print</span>
             </button>
             </div>
           </div>
@@ -890,6 +1044,14 @@ export default function AdminBookingsPage() {
           </div>
         </main>
       </div>
+
+      <PDFPreviewModal
+        open={pdfPreview.open}
+        htmlContent={pdfPreview.htmlContent}
+        filename={pdfPreview.filename}
+        onClose={() => setPdfPreview({ open: false, htmlContent: "", filename: "" })}
+        onDownload={handleDownloadPDF}
+      />
     </div>
   );
 }

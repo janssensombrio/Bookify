@@ -1,6 +1,7 @@
 // src/pages/wallet/WalletPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { PayPalButtons } from "@paypal/react-paypal-js";
 import {
   Wallet as WalletIcon,
   Plus,
@@ -19,6 +20,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Menu,
+  X,
 } from "lucide-react";
 
 import {
@@ -101,11 +103,16 @@ function Modal({ open, title, icon: Icon, children, onClose }) {
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
-            {Icon ? <Icon size={18} /> : <Shield size={18} />}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
+              {Icon ? <Icon size={18} /> : <Shield size={18} />}
+            </div>
+            <h3 className="text-lg font-semibold">{title}</h3>
           </div>
-          <h3 className="text-lg font-semibold">{title}</h3>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg transition">
+            <X size={20} className="text-slate-400" />
+          </button>
         </div>
         {children}
       </div>
@@ -363,40 +370,53 @@ export default function WalletPage() {
     setTimeout(() => setToast(null), 2500);
   };
 
-  // Add Funds Modal
+  // Add Funds Modal (PayPal Top-Up)
   const [showAdd, setShowAdd] = useState(false);
   const [addAmount, setAddAmount] = useState("");
+  const [processingTopUp, setProcessingTopUp] = useState(false);
 
-  const handleAddFunds = async () => {
-    const amt = Number(addAmount);
-    if (!amt || amt <= 0) return popToast("error", "Enter a valid amount.");
-    if (!uid) return popToast("error", "Not signed in.");
-    setBusy(true);
+  // Handle PayPal top-up success
+  const handleTopUpSuccess = async (details) => {
+    if (!uid) {
+      popToast("error", "Not signed in.");
+      return;
+    }
+
+    const amount = Number(addAmount);
+    if (!amount || amount <= 0) {
+      popToast("error", "Invalid top-up amount.");
+      return;
+    }
+
+    setProcessingTopUp(true);
     try {
       await runTransaction(database, async (tx) => {
         const wref = doc(database, "guestWallets", uid);
         const wSnap = await tx.get(wref);
-        const wb = Number(wSnap.data()?.balance || 0);
-        const nb = wb + amt;
+        const currentBal = Number(wSnap.data()?.balance || 0);
+        const newBal = currentBal + amount;
 
+        // Create transaction record
         const tref = doc(collection(database, "guestWallets", uid, "transactions"));
         tx.set(tref, {
-          uid, // <-- satisfy rules expecting ownership on transaction doc
+          uid,
           type: "topup",
-          delta: +amt,
-          amount: amt,
+          delta: +amount,
+          amount: amount,
           status: "completed",
-          method: "Manual",
-          // no counterparty field when N/A
-          balanceAfter: nb,
+          method: "paypal",
+          note: `Top-up via PayPal - Order ID: ${details?.id || "N/A"}`,
+          balanceAfter: newBal,
+          paypalOrderId: details?.id || null,
           timestamp: serverTimestamp(),
         });
 
+        // Update wallet balance
         tx.set(
           wref,
           {
             uid,
-            balance: nb,
+            balance: newBal,
             currency: "PHP",
             updatedAt: serverTimestamp(),
           },
@@ -406,12 +426,12 @@ export default function WalletPage() {
 
       setShowAdd(false);
       setAddAmount("");
-      popToast("success", "Funds added.");
+      popToast("success", `Successfully topped up ${peso(amount)} to your wallet.`);
     } catch (e) {
-      console.error(e);
-      popToast("error", e?.code === "permission-denied" ? "Insufficient permissions for this write." : (e?.message || "Add funds failed."));
+      console.error("Top-up error:", e);
+      popToast("error", e?.code === "permission-denied" ? "Insufficient permissions." : (e?.message || "Top-up failed. Please contact support."));
     } finally {
-      setBusy(false);
+      setProcessingTopUp(false);
     }
   };
 
@@ -877,26 +897,92 @@ export default function WalletPage() {
       )}
 
       {/* ===== Modals ===== */}
-      {/* Add Funds */}
-      <Modal open={showAdd} title="Add Funds" icon={Plus} onClose={() => !busy && setShowAdd(false)}>
-        <div className="space-y-3">
-          <label className="block">
-            <span className="text-sm text-slate-700">Amount (PHP)</span>
+      {/* Add Funds (PayPal Top-Up) */}
+      <Modal open={showAdd} title="Top Up Wallet" icon={Plus} onClose={() => !processingTopUp && setShowAdd(false)}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
             <input
               type="number"
-              inputMode="decimal"
-              step="0.01"
-              min="0"
               value={addAmount}
               onChange={(e) => setAddAmount(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2"
               placeholder="0.00"
+              min="0.01"
+              step="0.01"
+              className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={processingTopUp}
             />
-          </label>
+            <p className="text-xs text-slate-500 mt-1">Enter the amount you want to add to your wallet</p>
+          </div>
+          
+          {addAmount && Number(addAmount) > 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-slate-700">Top-up Amount:</span>
+                <span className="text-lg font-bold text-blue-600">{peso(Number(addAmount))}</span>
+              </div>
+              <p className="text-xs text-slate-500">Pay securely with PayPal</p>
+            </div>
+          ) : null}
 
-          <div className="flex justify-end gap-2 pt-2">
-            <PillButton variant="ghost" label="Cancel" onClick={() => setShowAdd(false)} disabled={busy} />
-            <PillButton icon={Plus} label={busy ? "Processing…" : "Add funds"} onClick={handleAddFunds} disabled={busy} />
+          {addAmount && Number(addAmount) > 0 && !processingTopUp ? (
+            <div className="pt-2">
+              <PayPalButtons
+                style={{ layout: "vertical" }}
+                createOrder={(data, actions) => {
+                  const value = Number(addAmount).toFixed(2);
+                  return actions.order.create({
+                    purchase_units: [
+                      {
+                        amount: {
+                          value: value,
+                          currency_code: "PHP",
+                        },
+                        description: `Wallet top-up of ${peso(Number(addAmount))}`,
+                      },
+                    ],
+                  });
+                }}
+                onApprove={async (data, actions) => {
+                  try {
+                    const details = await actions.order.capture();
+                    await handleTopUpSuccess(details);
+                  } catch (error) {
+                    console.error("PayPal approval error:", error);
+                    popToast("error", "Payment processing failed. Please try again.");
+                    setProcessingTopUp(false);
+                  }
+                }}
+                onError={(err) => {
+                  console.error("PayPal error:", err);
+                  popToast("error", "Payment failed. Please try again.");
+                  setProcessingTopUp(false);
+                }}
+                onCancel={() => {
+                  setProcessingTopUp(false);
+                }}
+              />
+            </div>
+          ) : null}
+
+          {processingTopUp ? (
+            <div className="flex items-center justify-center gap-2 py-4">
+              <Loader2 size={20} className="animate-spin text-blue-600" />
+              <span className="text-sm text-slate-600">Processing payment...</span>
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              onClick={() => {
+                setShowAdd(false);
+                setAddAmount("");
+              }}
+              disabled={processingTopUp}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-50 rounded-xl transition disabled:opacity-50"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       </Modal>

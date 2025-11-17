@@ -81,24 +81,36 @@ const normalizeUserDoc = (d = {}, fallbackUid) => {
 };
 
 const Avatar = ({ url, alt, size = 40, name = "U" }) => {
+  const [imageError, setImageError] = useState(false);
   const initial = (name?.[0] || "U").toUpperCase();
-  return url ? (
+  
+  // Reset error state when URL changes
+  useEffect(() => {
+    setImageError(false);
+  }, [url]);
+  
+  if (!url || imageError) {
+    return (
+      <div
+        className="rounded-full bg-blue-600 text-white grid place-items-center"
+        style={{ width: size, height: size }}
+      >
+        <span className="font-semibold" style={{ fontSize: size * 0.4 }}>{initial}</span>
+      </div>
+    );
+  }
+  
+  return (
     <img
       src={url}
       alt={alt || name}
       className="rounded-full object-cover"
       style={{ width: size, height: size }}
       referrerPolicy="no-referrer"
-      crossOrigin="anonymous"
       loading="lazy"
+      onError={() => setImageError(true)}
+      onLoad={() => setImageError(false)}
     />
-  ) : (
-    <div
-      className="rounded-full bg-blue-600 text-white grid place-items-center"
-      style={{ width: size, height: size }}
-    >
-      <span className="font-semibold">{initial}</span>
-    </div>
   );
 };
 
@@ -251,6 +263,7 @@ const GuestMessagesPage = () => {
   const menuRef = useRef(null);
   const menuButtonRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const [showArchived, setShowArchived] = useState(false);
 
   // Typing indicator state
   const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
@@ -727,6 +740,15 @@ const GuestMessagesPage = () => {
     });
   }, [conversationUserIds, hiddenAtMap, archivedAtMap, lastActivityMs]);
 
+  /* ---------- archived conversations list ---------- */
+  const archivedConversations = useMemo(() => {
+    return conversationUserIds.filter((uid) => {
+      const archivedAt = archivedAtMap[uid] ?? 0;
+      // Only show archived conversations
+      return archivedAt > 0;
+    });
+  }, [conversationUserIds, archivedAtMap]);
+
   // Keep selected chat visible even if hidden (e.g., deep link)
   const finalConversations = useMemo(() => {
     const arr = visibleConversations.slice();
@@ -750,6 +772,18 @@ const GuestMessagesPage = () => {
           )
         ),
     [finalConversations, userMap]
+  );
+
+  const sortedArchivedConversations = useMemo(
+    () =>
+      archivedConversations
+        .slice()
+        .sort((a, b) =>
+          (userMap[a]?.displayName || a).localeCompare(
+            userMap[b]?.displayName || b
+          )
+        ),
+    [archivedConversations, userMap]
   );
 
   /* ---------- Update last seen (server) + emit optimistic (client) ---------- */
@@ -866,6 +900,17 @@ const GuestMessagesPage = () => {
       alert("Failed to archive conversation. Please try again.");
     } finally {
       setArchiving(false);
+    }
+  };
+
+  /* ---------- unarchive conversation ---------- */
+  const unarchiveConversation = async (uid) => {
+    if (!currentUid || !uid) return;
+    try {
+      await deleteDoc(doc(database, "users", currentUid, "archivedConversations", uid));
+    } catch (e) {
+      console.error("Failed to unarchive conversation:", e);
+      alert("Failed to unarchive conversation. Please try again.");
     }
   };
 
@@ -1182,42 +1227,97 @@ const GuestMessagesPage = () => {
                 
                 <div className="relative z-10 flex flex-col min-h-0 flex-1">
                   <div className="flex-shrink-0 mb-3 md:mb-4">
-                    <div className="flex items-center gap-2 mb-1">
-                      <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
-                      <h3 className="text-base sm:text-lg font-semibold text-slate-900">Conversations</h3>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
+                        <h3 className="text-base sm:text-lg font-semibold text-slate-900">
+                          {showArchived ? "Archived" : "Conversations"}
+                        </h3>
+                      </div>
+                      {archivedConversations.length > 0 && (
+                        <button
+                          onClick={() => setShowArchived(!showArchived)}
+                          className="text-xs sm:text-sm text-blue-600 hover:text-blue-700 font-medium px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+                        >
+                          {showArchived ? "Show Active" : `Archived (${archivedConversations.length})`}
+                        </button>
+                      )}
                     </div>
-                    <p className="text-xs sm:text-sm text-slate-600">View all your conversations.</p>
+                    <p className="text-xs sm:text-sm text-slate-600">
+                      {showArchived ? "View your archived conversations." : "View all your conversations."}
+                    </p>
                   </div>
 
                   <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent min-h-0">
-                    {sortedConversations.length === 0 ? (
-                      <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
-                    ) : (
-                      <div className="space-y-2 overflow-x-hidden">
-                        {sortedConversations.map((uid) => {
-                          const data = userMap[uid] || { displayName: uid, photoURL: null };
-                          const active = selectedChatUid === uid;
-                          return (
-                            <div key={uid} className="overflow-hidden -mx-1 px-1">
-                              <button
-                                onClick={() => setSelectedChatUid(uid)}
-                                className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
+                    {showArchived ? (
+                      sortedArchivedConversations.length === 0 ? (
+                        <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No archived conversations</div>
+                      ) : (
+                        <div className="space-y-2 overflow-x-hidden">
+                          {sortedArchivedConversations.map((uid) => {
+                            const data = userMap[uid] || { displayName: uid, photoURL: null };
+                            const active = selectedChatUid === uid;
+                            return (
+                              <div key={uid} className="overflow-hidden -mx-1 px-1">
+                                <div className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 ${
                                   active 
                                     ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
-                                    : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
-                                }`}
-                                title={data.displayName}
-                              >
-                                <Avatar url={data.photoURL} name={data.displayName} size={36} />
-                                <div className="text-left min-w-0 flex-1 overflow-hidden">
-                                  <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
-                                  <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                    : "bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md"
+                                }`}>
+                                  <button
+                                    onClick={() => setSelectedChatUid(uid)}
+                                    className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0"
+                                    title={data.displayName}
+                                  >
+                                    <Avatar url={data.photoURL} name={data.displayName} size={36} />
+                                    <div className="text-left min-w-0 flex-1 overflow-hidden">
+                                      <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                      <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                    </div>
+                                  </button>
+                                  <button
+                                    onClick={() => unarchiveConversation(uid)}
+                                    className="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
+                                    title="Unarchive"
+                                  >
+                                    <Archive className={`w-4 h-4 ${active ? "text-white" : "text-slate-600"}`} />
+                                  </button>
                                 </div>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )
+                    ) : (
+                      sortedConversations.length === 0 ? (
+                        <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
+                      ) : (
+                        <div className="space-y-2 overflow-x-hidden">
+                          {sortedConversations.map((uid) => {
+                            const data = userMap[uid] || { displayName: uid, photoURL: null };
+                            const active = selectedChatUid === uid;
+                            return (
+                              <div key={uid} className="overflow-hidden -mx-1 px-1">
+                                <button
+                                  onClick={() => setSelectedChatUid(uid)}
+                                  className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
+                                    active 
+                                      ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
+                                      : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
+                                  }`}
+                                  title={data.displayName}
+                                >
+                                  <Avatar url={data.photoURL} name={data.displayName} size={36} />
+                                  <div className="text-left min-w-0 flex-1 overflow-hidden">
+                                    <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                    <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                  </div>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )
                     )}
                   </div>
                 </div>
@@ -1420,6 +1520,17 @@ const GuestMessagesPage = () => {
               right: `${menuPosition.right}px`,
             }}
           >
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                archiveConversation();
+              }}
+              disabled={archiving}
+              className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left text-sm sm:text-base text-slate-700 active:bg-slate-50/80 md:hover:bg-slate-50/80 transition-colors duration-200 touch-manipulation disabled:opacity-50"
+            >
+              <Archive className="w-3.5 h-3.5 sm:w-4 sm:h-4" size={14} />
+              <span className="font-medium">{archiving ? "Archiving..." : "Archive conversation"}</span>
+            </button>
             <button
               onClick={() => {
                 setMenuOpen(false);

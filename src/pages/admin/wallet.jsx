@@ -15,6 +15,10 @@ import {
   Menu,
   ChevronLeft,
   ChevronRight,
+  Filter,
+  X,
+  Calendar,
+  Printer,
 } from "lucide-react";
 
 import {
@@ -34,6 +38,9 @@ import { auth, database } from "../../config/firebase";
 import AdminSidebar from "./components/AdminSidebar.jsx";
 import { useSidebar } from "../../context/SidebarContext";
 import BookifyLogo from "../../components/bookify-logo.jsx";
+import DateRangeFilter from "./components/DateRangeFilter.jsx";
+import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
+import BookifyIcon from "../../media/favorite.png";
 
 // Admin wallet ID constant
 const ADMIN_WALLET_ID = "admin";
@@ -145,6 +152,14 @@ export default function AdminWalletPage() {
   const [endReached, setEndReached] = useState(false);
   const [filter, setFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
+  
+  // Filter states
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [userTypeFilter, setUserTypeFilter] = useState("all");
+  const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [showFilters, setShowFilters] = useState(false);
 
   // Ensure admin wallet exists + live balance
   useEffect(() => {
@@ -267,32 +282,449 @@ export default function AdminWalletPage() {
     }
   };
 
-  // Filtered view (client side search by type/method/note)
+  // Filtered view (client side search by type/method/note + filters)
   const filtered = useMemo(() => {
+    let result = allTxs;
+    
+    // Text search filter
     const f = (filter || "").trim().toLowerCase();
-    if (!f) return allTxs; // No filter: search all loaded transactions
-    // Has filter: search through all loaded transactions
-    return allTxs.filter((t) => {
-      const hay =
-        `${t.type || ""} ${t.method || ""} ${t.note || ""} ${t?.metadata?.bookingId || ""}`.toLowerCase();
-      return hay.includes(f);
-    });
-  }, [allTxs, filter]);
+    if (f) {
+      result = result.filter((t) => {
+        const hay =
+          `${t.type || ""} ${t.method || ""} ${t.note || ""} ${t?.metadata?.bookingId || ""}`.toLowerCase();
+        return hay.includes(f);
+      });
+    }
+    
+    // Payment method filter
+    if (paymentMethodFilter !== "all") {
+      result = result.filter((t) => {
+        const method = (t.method || "").toLowerCase();
+        return method === paymentMethodFilter.toLowerCase();
+      });
+    }
+    
+    // Category/Type filter
+    if (categoryFilter !== "all") {
+      result = result.filter((t) => {
+        const type = (t.type || "").toLowerCase();
+        return type === categoryFilter.toLowerCase();
+      });
+    }
+    
+    // User type filter (guest or host)
+    if (userTypeFilter !== "all") {
+      result = result.filter((t) => {
+        const hasPayerUid = !!(t?.metadata?.payerUid);
+        const hasHostUid = !!(t?.metadata?.hostUid);
+        
+        if (userTypeFilter === "guest") {
+          // Guest transactions have payerUid (the guest who paid)
+          return hasPayerUid;
+        } else if (userTypeFilter === "host") {
+          // Host-related transactions have hostUid
+          return hasHostUid && !hasPayerUid;
+        }
+        return true;
+      });
+    }
+    
+    // Date range filter
+    if (dateRange.start) {
+      const startDate = new Date(dateRange.start);
+      startDate.setHours(0, 0, 0, 0);
+      result = result.filter((t) => {
+        try {
+          const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+          return txDate >= startDate;
+        } catch {
+          return false;
+        }
+      });
+    }
+    
+    if (dateRange.end) {
+      const endDate = new Date(dateRange.end);
+      endDate.setHours(23, 59, 59, 999);
+      result = result.filter((t) => {
+        try {
+          const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+          return txDate <= endDate;
+        } catch {
+          return false;
+        }
+      });
+    }
+    
+    return result;
+  }, [allTxs, filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange]);
 
+  // Get unique payment methods and categories from transactions
+  const uniqueMethods = useMemo(() => {
+    const methods = new Set();
+    allTxs.forEach((t) => {
+      if (t.method) methods.add(t.method);
+    });
+    return Array.from(methods).sort();
+  }, [allTxs]);
+  
+  const uniqueCategories = useMemo(() => {
+    const categories = new Set();
+    allTxs.forEach((t) => {
+      if (t.type) categories.add(t.type);
+    });
+    return Array.from(categories).sort();
+  }, [allTxs]);
+  
+  // Check if any filters are active
+  const hasActiveFilters = paymentMethodFilter !== "all" || 
+    categoryFilter !== "all" || 
+    userTypeFilter !== "all" || 
+    dateRange.start || 
+    dateRange.end;
+  
   // Pagination for filtered results
   const filteredTotalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const filteredStartIdx = filter ? (currentPage - 1) * PAGE_SIZE : startIdx;
-  const filteredEndIdx = filter ? filteredStartIdx + PAGE_SIZE : endIdx;
-  const paginatedFiltered = filter 
+  const filteredStartIdx = hasActiveFilters || filter ? (currentPage - 1) * PAGE_SIZE : startIdx;
+  const filteredEndIdx = hasActiveFilters || filter ? filteredStartIdx + PAGE_SIZE : endIdx;
+  const paginatedFiltered = hasActiveFilters || filter
     ? filtered.slice(filteredStartIdx, filteredEndIdx)
     : paginatedTxs;
 
-  // Reset to page 1 when filter changes
+  // Reset to page 1 when any filter changes
   useEffect(() => {
-    if (filter) {
-      setCurrentPage(1);
+    setCurrentPage(1);
+  }, [filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange]);
+  
+  // Clear all filters
+  const clearFilters = () => {
+    setPaymentMethodFilter("all");
+    setCategoryFilter("all");
+    setUserTypeFilter("all");
+    setDateRange({ start: "", end: "" });
+    setFilter("");
+  };
+
+  // Print transactions
+  const printTable = () => {
+    try {
+      const rows = filtered || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+      const formatPeso = (v) => {
+        const n = Number(v || 0);
+        if (!Number.isFinite(n)) return "—";
+        return `₱${n.toLocaleString()}`;
+      };
+      const formatDate = (ts) => {
+        if (!ts) return "—";
+        const d = ts?.toDate ? ts.toDate() : new Date(ts);
+        return d.toLocaleString();
+      };
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Transaction History</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    .summary { margin: 16px 0; padding: 12px; background: #f8fafc; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .num { text-align: right; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <h1>Bookify <small>Transaction History</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${rows.length.toLocaleString()} transactions
+    </div>
+  </div>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Method</th>
+        <th>User</th>
+        <th class="num">Amount</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((t) => {
+        const date = formatDate(t.timestamp || t.createdAt);
+        const userType = t.userType || "—";
+        const amount = formatPeso(t.amount || t.delta);
+        return `<tr>
+          <td>${escapeHtml(date)}</td>
+          <td>${escapeHtml(t.type || "—")}</td>
+          <td>${escapeHtml(t.method || "—")}</td>
+          <td>${escapeHtml(userType)}</td>
+          <td class="num">${escapeHtml(amount)}</td>
+          <td>${escapeHtml(t.note || "—")}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Transaction History • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
     }
-  }, [filter]);
+  };
+
+  // Generate HTML content for PDF
+  const generatePDFHTML = () => {
+    const rows = filtered || [];
+    const escapeHtml = (str) => {
+      if (str == null) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    };
+
+    const formatPesoSafe = (v) => {
+      const n = Number(v || 0);
+      if (!Number.isFinite(n)) return "—";
+      return `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+
+    const nowStr = new Date().toLocaleString();
+    const totalTransactions = rows.length;
+    const totalCredits = rows.filter((t) => t.delta >= 0).reduce((sum, t) => sum + Math.abs(t.delta), 0);
+    const totalDebits = rows.filter((t) => t.delta < 0).reduce((sum, t) => sum + Math.abs(t.delta), 0);
+    const completedCount = rows.filter((t) => t.status === "completed").length;
+
+    const html = [];
+    html.push(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Wallet Transactions Report</title>
+  <style>
+    :root{
+      --brand:#2563eb; --ink:#0f172a; --muted:#64748b; --line:#e5e7eb; --bg:#ffffff;
+      --subtle:#f8fafc; --thead:#f1f5f9;
+    }
+    @page{ margin: 18mm; }
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
+    body{ margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+
+    .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+    .brand{ display:flex; align-items:center; gap:12px; }
+    .brand img{ width:28px; height:28px; border-radius:6px; object-fit:cover; }
+    .brand h1{ font-size:16px; line-height:1.1; margin:0; }
+    .brand small{ color:var(--muted); display:block; font-weight:500; }
+    .meta{ text-align:right; color:var(--muted); font-size:11px; }
+
+    .chips{ display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 18px; }
+    .chip{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--line); border-radius:999px; background:#fff; font-size:11px; color:#1f2937; }
+    .chip b{ font-size:12px; color:#0f172a; }
+    .chip .dot{ width:8px; height:8px; border-radius:50%; background:var(--brand); display:inline-block; }
+
+    table{ width:100%; border-collapse:separate; border-spacing:0; table-layout:fixed; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    thead{ background:var(--thead); display: table-header-group; }
+    thead th{ text-align:left; padding:10px 12px; font-size:11px; color:#334155; border-bottom:1px solid var(--line); font-weight:600; }
+    tbody td{ padding:10px 12px; border-bottom:1px solid var(--line); background:#fff; vertical-align:top; }
+    tbody tr:nth-child(even) td{ background:var(--subtle); }
+    .mono{ font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:11px; color:#475569; }
+    .num{ text-align:right; }
+    .status{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:11px; font-weight:600; border:1px solid var(--line); background:#fff; color:#1f2937; }
+    .status .dot{ width:8px; height:8px; border-radius:50%; display:inline-block; }
+    .dot.completed{ background:#10b981; }
+    .dot.pending{ background:#f59e0b; }
+    .dot.failed{ background:#ef4444; }
+    .method{ display:inline-flex; align-items:center; padding:4px 8px; border-radius:6px; font-size:11px; font-weight:500; background:#dbeafe; color:#1e40af; border:1px solid #bfdbfe; }
+    .credit{ color:#10b981; }
+    .debit{ color:#ef4444; }
+
+    .footer{ position:fixed; bottom:10mm; left:18mm; right:18mm; color:var(--muted); font-size:11px; display:flex; justify-content:space-between; }
+    tfoot{ display: table-footer-group; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">
+      <img src="${BookifyIcon}" alt="Bookify logo"/>
+      <h1>Bookify <small>Wallet Transactions Report</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Rows: ${totalTransactions.toLocaleString()}
+    </div>
+  </div>
+
+  <div class="chips">
+    <span class="chip"><span class="dot"></span><b>Total Transactions:</b> ${totalTransactions.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Total Credits:</b> ${formatPesoSafe(totalCredits)}</span>
+    <span class="chip"><span class="dot"></span><b>Total Debits:</b> ${formatPesoSafe(totalDebits)}</span>
+    <span class="chip"><span class="dot"></span><b>Completed:</b> ${completedCount.toLocaleString()}</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width:18%;">Type</th>
+        <th style="width:15%;">Date</th>
+        <th style="width:12%;">Method</th>
+        <th class="num" style="width:12%;">Amount</th>
+        <th class="num" style="width:12%;">Balance</th>
+        <th style="width:10%;">Status</th>
+        <th style="width:21%;">Details</th>
+      </tr>
+    </thead>
+    <tbody>`);
+
+    for (const t of rows) {
+      const sign = t.delta >= 0 ? "+" : "–";
+      const absAmount = Math.abs(t.delta);
+      const isCredit = t.delta >= 0;
+      const statusClass = t.status === "completed" ? "completed" : t.status === "pending" ? "pending" : "failed";
+      const amountClass = isCredit ? "credit" : "debit";
+
+      html.push(`<tr>
+        <td>${escapeHtml(t.type?.replace(/_/g, " ") || "Transaction")}</td>
+        <td>${escapeHtml(formatDate(t.timestamp))}</td>
+        <td>${t.method ? `<span class="method">${escapeHtml(t.method)}</span>` : "—"}</td>
+        <td class="num ${amountClass}">${sign}${escapeHtml(formatPesoSafe(absAmount))}</td>
+        <td class="num">${escapeHtml(formatPesoSafe(t.balanceAfter ?? 0))}</td>
+        <td>${escapeHtml(t.status || "completed")}</td>
+        <td>
+          ${t?.note ? `<div style="font-size:10px; color:#64748b;">"${escapeHtml(t.note)}"</div>` : ""}
+          ${t?.metadata?.bookingId ? `<div style="font-size:10px; color:#64748b;">Booking: ${escapeHtml(String(t.metadata.bookingId).slice(0, 8))}…</div>` : ""}
+          ${!t?.note && !t?.metadata?.bookingId ? "—" : ""}
+        </td>
+      </tr>`);
+    }
+
+    html.push(`</tbody>
+  </table>
+
+  <div class="footer">
+    <div>Bookify • Wallet Transactions export</div>
+    <div>Page <span class="page-num"></span></div>
+  </div>
+
+</body>
+</html>`);
+
+    return html.join("");
+  };
+
+  // export PDF via preview
+  const exportPDF = () => {
+    try {
+      const htmlContent = generatePDFHTML();
+      const filename = `wallet_transactions_${new Date().toISOString().slice(0, 10)}.pdf`;
+      setPdfPreview({ open: true, htmlContent, filename });
+    } catch (e) {
+      console.error("Failed to generate PDF preview", e);
+      alert("Failed to generate PDF preview: " + String(e));
+    }
+  };
+
+  // Download PDF from preview
+  const handleDownloadPDF = async () => {
+    try {
+      const htmlContent = generatePDFHTML();
+      const filename = pdfPreview.filename || `wallet_transactions_${new Date().toISOString().slice(0, 10)}.pdf`;
+
+      // Load html2pdf library dynamically
+      const loadHtml2Pdf = () => {
+        return new Promise((resolve, reject) => {
+          if (window.html2pdf) {
+            resolve(window.html2pdf);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          script.onload = () => resolve(window.html2pdf);
+          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
+          document.head.appendChild(script);
+        });
+      };
+
+      const html2pdf = await loadHtml2Pdf();
+      const element = document.createElement("div");
+      element.innerHTML = htmlContent;
+      document.body.appendChild(element);
+
+      const opt = {
+        margin: [18, 18],
+        filename: filename,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      };
+
+      await html2pdf().set(opt).from(element).save();
+      document.body.removeChild(element);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
+    } catch (err) {
+      // Fallback to print dialog if library fails
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(generatePDFHTML());
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 500);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
+    }
+  };
 
   // CSV export
   const exportCSV = () => {
@@ -367,6 +799,20 @@ export default function AdminWalletPage() {
             <FileDown size={16} />
             <span className="font-medium text-sm">Export CSV</span>
           </button>
+          <button
+            onClick={exportPDF}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-600"
+          >
+            <FileDown size={16} />
+            <span className="font-medium text-sm">Export PDF</span>
+          </button>
+          <button
+            onClick={printTable}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-600"
+          >
+            <Printer size={16} />
+            <span className="font-medium text-sm">Print</span>
+          </button>
         </div>
       </div>
 
@@ -420,8 +866,8 @@ export default function AdminWalletPage() {
             {/* Balance + actions */}
             {balanceCard}
 
-            {/* Search */}
-            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
+            {/* Search and Filters */}
+            <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 space-y-4">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
@@ -434,16 +880,114 @@ export default function AdminWalletPage() {
                     className="pl-9 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 outline-none focus:ring-4 focus:ring-blue-100"
                   />
                 </div>
-                <div className="hidden sm:block text-xs text-slate-500">
+                <button
+                  onClick={() => setShowFilters(!showFilters)}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl border transition ${
+                    hasActiveFilters
+                      ? "bg-blue-50 border-blue-300 text-blue-700"
+                      : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+                  }`}
+                >
+                  <Filter size={16} />
+                  <span className="font-medium text-sm">Filters</span>
+                  {hasActiveFilters && (
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-semibold">
+                      {[paymentMethodFilter !== "all", categoryFilter !== "all", userTypeFilter !== "all", dateRange.start, dateRange.end].filter(Boolean).length}
+                    </span>
+                  )}
+                </button>
+                {hasActiveFilters && (
+                  <button
+                    onClick={clearFilters}
+                    className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm"
+                  >
+                    <X size={14} />
+                    Clear
+                  </button>
+                )}
+                <div className="hidden sm:block text-xs text-slate-500 whitespace-nowrap">
                   Showing {filtered.length} of {allTxs.length}
                 </div>
               </div>
+              
+              {/* Filter Panel */}
+              {showFilters && (
+                <div className="pt-4 border-t border-slate-200 space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* Payment Method Filter */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                        Payment Method
+                      </label>
+                      <select
+                        value={paymentMethodFilter}
+                        onChange={(e) => setPaymentMethodFilter(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="all">All Methods</option>
+                        {uniqueMethods.map((method) => (
+                          <option key={method} value={method}>
+                            {method.charAt(0).toUpperCase() + method.slice(1)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* Category/Type Filter */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                        Category/Type
+                      </label>
+                      <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="all">All Categories</option>
+                        {uniqueCategories.map((category) => (
+                          <option key={category} value={category}>
+                            {category.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    {/* User Type Filter */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                        User Type
+                      </label>
+                      <select
+                        value={userTypeFilter}
+                        onChange={(e) => setUserTypeFilter(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="all">All Users</option>
+                        <option value="guest">Guest</option>
+                        <option value="host">Host</option>
+                      </select>
+                    </div>
+                    
+                    {/* Date Range Filter */}
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                        Date Range
+                      </label>
+                      <DateRangeFilter
+                        value={dateRange}
+                        onChange={setDateRange}
+                        placeholder="Select date range"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Transactions */}
             <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-slate-900">Service Fee Transactions</h4>
+                <h4 className="font-semibold text-slate-900">Payments & Methods</h4>
                 {txLoading && (
                   <span className="inline-flex items-center gap-1 text-sm text-slate-500">
                     <Loader2 size={14} className="animate-spin" /> Loading…
@@ -456,10 +1000,80 @@ export default function AdminWalletPage() {
                   <AlertCircle size={16} /> {txError}
                 </div>
               ) : paginatedFiltered.length ? (
-                <div className="divide-y divide-slate-100">
-                  {paginatedFiltered.map((t) => (
-                    <TxRow key={t.id} tx={t} />
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-200">
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Type</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Method</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Amount</th>
+                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Balance</th>
+                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Status</th>
+                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Details</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {paginatedFiltered.map((t) => {
+                        const sign = t.delta >= 0 ? "+" : "–";
+                        const absAmount = Math.abs(t.delta);
+                        const isCredit = t.delta >= 0;
+                        const iconBg = isCredit ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700";
+                        const Icon = isCredit ? ArrowDownLeft : ArrowUpRight;
+                        const statusKind =
+                          t.status === "completed" ? "success" : t.status === "pending" ? "warning" : "danger";
+                        
+                        return (
+                          <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2">
+                                <div className={`h-8 w-8 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
+                                  <Icon size={16} />
+                                </div>
+                                <span className="font-medium text-slate-900 text-sm">
+                                  {t.type?.replace(/_/g, " ") || "Transaction"}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+                              {formatDate(t.timestamp)}
+                            </td>
+                            <td className="py-3 px-4">
+                              {t.method ? (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                  {t.method}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
+                            <td className={`py-3 px-4 text-right text-sm font-semibold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
+                              {sign}{peso(absAmount)}
+                            </td>
+                            <td className="py-3 px-4 text-right text-sm text-slate-600 whitespace-nowrap">
+                              {peso(t.balanceAfter ?? 0)}
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <Badge kind={statusKind}>{t.status || "completed"}</Badge>
+                            </td>
+                            <td className="py-3 px-4 text-sm text-slate-600">
+                              <div className="space-y-0.5">
+                                {t?.note && (
+                                  <div className="text-xs">"{t.note}"</div>
+                                )}
+                                {t?.metadata?.bookingId && (
+                                  <div className="text-xs">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
+                                )}
+                                {!t?.note && !t?.metadata?.bookingId && (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               ) : txLoading ? (
                 <div className="space-y-3">
@@ -475,7 +1089,7 @@ export default function AdminWalletPage() {
               {allTxs.length > 0 && (
                 <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 border-t border-slate-200">
                   <div className="text-xs sm:text-sm text-slate-600">
-                    {filter ? (
+                    {hasActiveFilters || filter ? (
                       <>
                         Showing{" "}
                         <span className="font-medium text-slate-800">
@@ -498,7 +1112,7 @@ export default function AdminWalletPage() {
                     )}
                   </div>
                   <div className="flex items-center gap-1.5 sm:gap-2">
-                    {filter ? (
+                    {hasActiveFilters || filter ? (
                       <>
                         <button
                           disabled={currentPage <= 1}
@@ -546,6 +1160,17 @@ export default function AdminWalletPage() {
           </div>
         </main>
       </div>
+      
+      {/* PDF Preview Modal */}
+      {pdfPreview && (
+        <PDFPreviewModal
+          open={pdfPreview.open}
+          htmlContent={pdfPreview.htmlContent}
+          filename={pdfPreview.filename}
+          onClose={() => setPdfPreview({ open: false, htmlContent: "", filename: "" })}
+          onDownload={handleDownloadPDF}
+        />
+      )}
     </div>
   );
 }

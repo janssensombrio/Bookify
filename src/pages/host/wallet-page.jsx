@@ -1,6 +1,7 @@
 // src/pages/host/wallet-page.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { PayPalButtons } from "@paypal/react-paypal-js";
 import {
   Wallet as WalletIcon,
   Plus,
@@ -17,6 +18,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  X,
 } from "lucide-react";
 
 import {
@@ -99,7 +101,7 @@ function Modal({ open, title, icon: Icon, children, onClose }) {
             <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg transition">
-            <AlertCircle size={20} className="text-slate-400" />
+            <X size={20} className="text-slate-400" />
           </button>
         </div>
         <div className="p-6">{children}</div>
@@ -289,6 +291,11 @@ export default function HostWalletPage() {
   const [wdMethod, setWdMethod] = useState("Bank");
   const [wdNote, setWdNote] = useState("");
 
+  // Top Up Modal
+  const [showTopUp, setShowTopUp] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState("");
+  const [processingTopUp, setProcessingTopUp] = useState(false);
+
   const handleWithdraw = async () => {
     const amt = Number(wdAmount);
     if (!amt || amt <= 0) return popToast("error", "Enter a valid amount.");
@@ -332,6 +339,61 @@ export default function HostWalletPage() {
       popToast("error", e?.code === "permission-denied" ? "Insufficient permissions for this write." : (e?.message || "Withdrawal failed."));
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Handle PayPal top-up success
+  const handleTopUpSuccess = async (details) => {
+    if (!uid) {
+      popToast("error", "Not signed in.");
+      return;
+    }
+
+    const amount = Number(topUpAmount);
+    if (!amount || amount <= 0) {
+      popToast("error", "Invalid top-up amount.");
+      return;
+    }
+
+    setProcessingTopUp(true);
+    try {
+      await runTransaction(database, async (tx) => {
+        const wref = doc(database, "wallets", uid);
+        const wSnap = await tx.get(wref);
+        const currentBal = Number(wSnap.data()?.balance || 0);
+        const newBal = currentBal + amount;
+
+        // Create transaction record
+        const tref = doc(collection(database, "wallets", uid, "transactions"));
+        tx.set(tref, {
+          uid,
+          type: "top_up",
+          delta: amount,
+          amount: amount,
+          status: "completed",
+          method: "paypal",
+          note: `Top-up via PayPal - Order ID: ${details?.id || "N/A"}`,
+          balanceAfter: newBal,
+          paypalOrderId: details?.id || null,
+          timestamp: serverTimestamp(),
+        });
+
+        // Update wallet balance
+        tx.set(
+          wref,
+          { uid, balance: newBal, currency: "PHP", updatedAt: serverTimestamp() },
+          { merge: true }
+        );
+      });
+
+      setShowTopUp(false);
+      setTopUpAmount("");
+      popToast("success", `Successfully topped up ${peso(amount)} to your wallet.`);
+    } catch (e) {
+      console.error("Top-up error:", e);
+      popToast("error", e?.code === "permission-denied" ? "Insufficient permissions." : (e?.message || "Top-up failed. Please contact support."));
+    } finally {
+      setProcessingTopUp(false);
     }
   };
 
@@ -422,9 +484,9 @@ export default function HostWalletPage() {
           <PillButton icon={FileDown} label="Export CSV" onClick={exportToCSV} variant="ghost" />
           <PillButton
             icon={Plus}
-            label="Withdraw"
-            onClick={() => setShowWd(true)}
-            disabled={busy || loadingWallet || wallet.balance <= 0}
+            label="Top Up"
+            onClick={() => setShowTopUp(true)}
+            disabled={busy || loadingWallet}
           />
         </div>
       </div>
@@ -538,6 +600,96 @@ export default function HostWalletPage() {
           </>
         )}
       </div>
+
+      {/* Top Up Modal */}
+      <Modal open={showTopUp} title="Top Up Wallet" icon={Plus} onClose={() => !processingTopUp && setShowTopUp(false)}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Amount</label>
+            <input
+              type="number"
+              value={topUpAmount}
+              onChange={(e) => setTopUpAmount(e.target.value)}
+              placeholder="0.00"
+              min="0.01"
+              step="0.01"
+              className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={processingTopUp}
+            />
+            <p className="text-xs text-slate-500 mt-1">Enter the amount you want to add to your wallet</p>
+          </div>
+          
+          {topUpAmount && Number(topUpAmount) > 0 ? (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-medium text-slate-700">Top-up Amount:</span>
+                <span className="text-lg font-bold text-blue-600">{peso(Number(topUpAmount))}</span>
+              </div>
+              <p className="text-xs text-slate-500">Pay securely with PayPal</p>
+            </div>
+          ) : null}
+
+          {topUpAmount && Number(topUpAmount) > 0 && !processingTopUp ? (
+            <div className="pt-2">
+              <PayPalButtons
+                style={{ layout: "vertical" }}
+                createOrder={(data, actions) => {
+                  const value = Number(topUpAmount).toFixed(2);
+                  return actions.order.create({
+                    purchase_units: [
+                      {
+                        amount: {
+                          value: value,
+                          currency_code: "PHP",
+                        },
+                        description: `Wallet top-up of ${peso(Number(topUpAmount))}`,
+                      },
+                    ],
+                  });
+                }}
+                onApprove={async (data, actions) => {
+                  try {
+                    const details = await actions.order.capture();
+                    await handleTopUpSuccess(details);
+                  } catch (error) {
+                    console.error("PayPal approval error:", error);
+                    popToast("error", "Payment processing failed. Please try again.");
+                    setProcessingTopUp(false);
+                  }
+                }}
+                onError={(err) => {
+                  console.error("PayPal error:", err);
+                  popToast("error", "Payment failed. Please try again.");
+                  setProcessingTopUp(false);
+                }}
+                onCancel={() => {
+                  setProcessingTopUp(false);
+                }}
+              />
+            </div>
+          ) : null}
+
+          {processingTopUp ? (
+            <div className="flex items-center justify-center gap-2 py-4">
+              <Loader2 size={20} className="animate-spin text-blue-600" />
+              <span className="text-sm text-slate-600">Processing payment...</span>
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-3 pt-2">
+            <button
+              onClick={() => {
+                setShowTopUp(false);
+                setTopUpAmount("");
+              }}
+              disabled={processingTopUp}
+              className="px-4 py-2 text-slate-700 hover:bg-slate-50 rounded-xl transition disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Withdraw Modal */}
       <Modal open={showWd} title="Withdraw Funds" icon={ArrowUpRight} onClose={() => !busy && setShowWd(false)}>

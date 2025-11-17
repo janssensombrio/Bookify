@@ -51,6 +51,7 @@ import {
   Wifi,
   Tag,
   Volume2,
+  CheckCircle2,
 } from "lucide-react";
 
 /* ---------------- EmailJS config ---------------- */
@@ -1205,6 +1206,72 @@ const RefundModal = ({
   );
 };
 
+const RefundSuccessModal = ({ 
+  open, 
+  onClose, 
+  bookingId,
+  refundAmount,
+  refundPercentage,
+  emailSent,
+}) => {
+  if (!open) return null;
+  
+  return (
+    <Overlay onBackdropClick={onClose}>
+      <div className="relative z-10 w-full sm:w-[560px]">
+        <div className="mx-3 sm:mx-0 rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-6">
+          <div className="flex items-start gap-3">
+            <div className="shrink-0 grid place-items-center w-12 h-12 rounded-2xl bg-gradient-to-b from-emerald-600 to-emerald-800 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_20px_rgba(16,185,129,0.35)] ring-1 ring-white/10">
+              <CheckCircle2 size={20} className="text-white" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-xl font-semibold tracking-tight text-slate-900">Refund Processed Successfully</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                {bookingId ? `Booking #${bookingId.slice(0, 8).toUpperCase()}` : "The refund"} has been processed successfully.
+              </p>
+              
+              {refundAmount > 0 ? (
+                <div className="mt-4 p-4 rounded-xl border border-emerald-200 bg-emerald-50">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-emerald-900">Refund Amount:</span>
+                    <span className="text-lg font-bold text-emerald-700">
+                      ₱{refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-700">
+                    {refundPercentage}% refund has been credited to the guest's E-Wallet
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-4 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                  <p className="text-sm text-slate-600">No refund was processed.</p>
+                </div>
+              )}
+              
+              <div className="mt-4 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                <p className="text-xs text-slate-600">
+                  {emailSent 
+                    ? "✓ A confirmation email has been sent to the guest."
+                    : "⚠ We couldn't send the confirmation email right now, but the refund is processed."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center justify-end">
+            <button
+              onClick={onClose}
+              className="h-10 px-6 rounded-xl text-white bg-gradient-to-b from-emerald-600 to-emerald-800 shadow-[inset_0_1px_0_rgba(255,255,255,0.2),0_8px_16px_rgba(16,185,129,0.35)] hover:from-emerald-500 hover:to-emerald-700 active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 transition"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      </div>
+    </Overlay>
+  );
+};
+
 // Helper function to get listing from any collection
 async function getListingLike(database, idOrRef) {
   if (!idOrRef) return null;
@@ -1338,6 +1405,7 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
   const [preferences, setPreferences] = useState(null);
   const [loading, setLoading] = useState(false);
   const [guestProfile, setGuestProfile] = useState(null);
+  const [guestPhotoError, setGuestPhotoError] = useState(false);
 
   // Determine the category filter based on listing category
   const categoryFilter = useMemo(() => {
@@ -1356,11 +1424,13 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
     if (!open || !guest?.uid) {
       setGuestProfile(null);
       setPreferences(null);
+      setGuestPhotoError(false);
       return;
     }
 
     let isActive = true;
     setLoading(true);
+    setGuestPhotoError(false);
 
     const loadData = async () => {
       try {
@@ -1425,13 +1495,14 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
           <div className="flex items-center gap-4">
             <div className="relative w-16 h-16 rounded-full bg-slate-100 border-2 border-slate-200 overflow-hidden grid place-items-center text-slate-700 font-semibold shrink-0">
-              {guestPhoto ? (
+              {guestPhoto && !guestPhotoError ? (
                 <img
                   src={guestPhoto}
                   alt={guestName}
                   className="w-full h-full object-cover"
                   referrerPolicy="no-referrer"
-                  crossOrigin="anonymous"
+                  loading="lazy"
+                  onError={() => setGuestPhotoError(true)}
                 />
               ) : (
                 <span className="text-xl">{guestInitial}</span>
@@ -1510,6 +1581,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const [chatMsgs, setChatMsgs] = useState([]);
   const [chatText, setChatText] = useState("");
   const [showGuestProfile, setShowGuestProfile] = useState(false);
+  const [guestPhotoError, setGuestPhotoError] = useState(false);
   const chatEndRef = useRef(null);
   const navigate = useNavigate();
 
@@ -1521,6 +1593,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
     if (!open || !booking) return;
     
     let isActive = true;
+    setGuestPhotoError(false);
     
     const loadData = async () => {
       const [freshListing, guestProfile] = await Promise.all([
@@ -1841,14 +1914,14 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                 <div className="flex items-center justify-between gap-4">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative w-12 h-12 rounded-full bg-white/70 border border-white/60 overflow-hidden grid place-items-center text-gray-900 font-semibold ring-4 ring-white/60 shrink-0">
-                      {guestPhoto ? (
+                      {guestPhoto && !guestPhotoError ? (
                         <img
                           src={guestPhoto}
                           alt={guestName}
                           className="w-full h-full object-cover"
                           referrerPolicy="no-referrer"
-                          crossOrigin="anonymous"
                           loading="lazy"
+                          onError={() => setGuestPhotoError(true)}
                         />
                       ) : (
                         <span className="text-base">{guestInitial}</span>
@@ -2114,6 +2187,9 @@ export default function TodayTab() {
   const [refundModalPolicyText, setRefundModalPolicyText] = useState("");
   const [refundModalPercentage, setRefundModalPercentage] = useState(100);
   const [submittingRefund, setSubmittingRefund] = useState(false);
+  // Refund success modal state
+  const [refundSuccessModalOpen, setRefundSuccessModalOpen] = useState(false);
+  const [refundSuccessData, setRefundSuccessData] = useState(null);
 
   // Auth state listener
   useEffect(() => {
@@ -2438,7 +2514,28 @@ export default function TodayTab() {
       const currentUser = auth.currentUser;
       if (!currentUser) throw new Error("Not signed in");
       
+      // Validate refund percentage
+      if (refundModalPercentage < 0 || refundModalPercentage > 100) {
+        throw new Error("Refund percentage must be between 0 and 100.");
+      }
+      
+      // Check if booking has already been refunded
+      const existingRefundAmount = numberOr(refundTarget?.refundAmount, 0);
+      if (existingRefundAmount > 0) {
+        throw new Error(`This booking has already been refunded (₱${existingRefundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}). Cannot process duplicate refund.`);
+      }
+      
+      // Check if booking is cancelled
+      const bookingStatus = (refundTarget?.status || "").toLowerCase();
+      if (!["cancelled", "canceled", "rejected"].includes(bookingStatus)) {
+        throw new Error("Refunds can only be processed for cancelled bookings.");
+      }
+      
       const bookingTotal = numberOr(refundTarget?.totalPrice, 0);
+      if (bookingTotal <= 0) {
+        throw new Error("Invalid booking total. Cannot process refund.");
+      }
+      
       const refundAmount = (bookingTotal * refundModalPercentage) / 100;
       const guestUid = refundTarget?.uid || null;
       
@@ -2469,7 +2566,13 @@ export default function TodayTab() {
             const guestNewBal = guestCurrentBal + refundAmount;
             
             const hostCurrentBal = Number(wSnapHost.data()?.balance || 0);
-            const hostNewBal = Math.max(0, hostCurrentBal - refundAmount); // Ensure balance doesn't go negative
+            
+            // Check if host has sufficient balance
+            if (hostCurrentBal < refundAmount) {
+              throw new Error(`Insufficient host wallet balance. Required: ₱${refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}, Available: ₱${hostCurrentBal.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+            }
+            
+            const hostNewBal = hostCurrentBal - refundAmount;
             
             // STEP 2: ALL WRITES AFTER ALL READS
             const walletTxGuestRef = doc(collection(database, "guestWallets", guestUid, "transactions"));
@@ -2574,8 +2677,24 @@ export default function TodayTab() {
       
       // Update booking with refund information
       // IMPORTANT: Preserve the original guest UID (don't overwrite it with host's UID)
+      // Also check if booking still exists and hasn't been refunded by another process
       try {
-        await updateDoc(doc(database, "bookings", refundTarget.id), {
+        const bookingRef = doc(database, "bookings", refundTarget.id);
+        const bookingSnap = await getDoc(bookingRef);
+        
+        if (!bookingSnap.exists()) {
+          throw new Error("Booking no longer exists. Cannot process refund.");
+        }
+        
+        const currentBookingData = bookingSnap.data();
+        const currentRefundAmount = numberOr(currentBookingData?.refundAmount, 0);
+        
+        // Double-check: prevent duplicate refund if another process already refunded
+        if (currentRefundAmount > 0) {
+          throw new Error(`This booking has already been refunded (₱${currentRefundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}). Cannot process duplicate refund.`);
+        }
+        
+        await updateDoc(bookingRef, {
           refundAmount: refundAmount,
           refundPercentage: refundModalPercentage,
           refundedAt: serverTimestamp(),
@@ -2608,22 +2727,22 @@ export default function TodayTab() {
         // Don't throw - email is not critical
       }
       
-      // Show success message
-      const base = `Refund processed successfully for booking ${refundTarget?.id ? `(#${refundTarget.id.slice(0, 8).toUpperCase()})` : ""}.`;
-      const refundNote = refundAmount > 0 
-        ? `\n\nRefund: ₱${refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} (${refundModalPercentage}%) has been credited to the guest's E-Wallet.`
-        : "\n\nNo refund was processed.";
-      const emailNote = emailSent
-        ? "\n\nA confirmation email has been sent to the guest."
-        : "\n\nWe couldn't send the confirmation email right now, but the refund is processed.";
-      
-      alert(base + refundNote + emailNote);
+      // Show success modal
+      setRefundSuccessData({
+        bookingId: refundTarget?.id || null,
+        refundAmount: refundAmount,
+        refundPercentage: refundModalPercentage,
+        emailSent: emailSent,
+      });
       
       // Reset flow UI
       setRefundModalOpen(false);
       setRefundTarget(null);
       setRefundModalPolicyText("");
       setRefundModalPercentage(100);
+      
+      // Show success modal
+      setRefundSuccessModalOpen(true);
     } catch (error) {
       console.error("Process refund failed:", error);
       const errorMsg = error?.message || String(error) || "Unknown error";
@@ -2678,7 +2797,13 @@ export default function TodayTab() {
             const guestNewBal = guestCurrentBal + refundAmount;
             
             const hostCurrentBal = Number(wSnapHost.data()?.balance || 0);
-            const hostNewBal = Math.max(0, hostCurrentBal - refundAmount); // Ensure balance doesn't go negative
+            
+            // Check if host has sufficient balance
+            if (hostCurrentBal < refundAmount) {
+              throw new Error(`Insufficient host wallet balance. Required: ₱${refundAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}, Available: ₱${hostCurrentBal.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
+            }
+            
+            const hostNewBal = hostCurrentBal - refundAmount;
             
             // STEP 2: ALL WRITES AFTER ALL READS
             const walletTxGuestRef = doc(collection(database, "guestWallets", guestUid, "transactions"));
@@ -2789,7 +2914,29 @@ export default function TodayTab() {
         throw new Error("Guest UID not found in booking");
       }
       
-      await updateDoc(doc(database, "bookings", cancelTarget.id), {
+      // Check if booking still exists and hasn't been cancelled/refunded already
+      const bookingRef = doc(database, "bookings", cancelTarget.id);
+      const bookingSnap = await getDoc(bookingRef);
+      
+      if (!bookingSnap.exists()) {
+        throw new Error("Booking no longer exists. Cannot cancel.");
+      }
+      
+      const currentBookingData = bookingSnap.data();
+      const currentStatus = (currentBookingData?.status || "").toLowerCase();
+      
+      // Check if already cancelled
+      if (["cancelled", "canceled", "rejected"].includes(currentStatus)) {
+        throw new Error("This booking has already been cancelled.");
+      }
+      
+      // Check if already refunded (shouldn't happen in cancel flow, but safety check)
+      const currentRefundAmount = numberOr(currentBookingData?.refundAmount, 0);
+      if (currentRefundAmount > 0 && refundAmount > 0) {
+        console.warn("Booking already has a refund amount, but proceeding with cancellation.");
+      }
+      
+      await updateDoc(bookingRef, {
         status: "cancelled",
         cancelReason: cancelReason,
         refundAmount: refundAmount,
@@ -2958,7 +3105,7 @@ export default function TodayTab() {
       )}
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
         {/* Total Bookings */}
         <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
           <div className="flex items-center justify-between">
@@ -2994,6 +3141,19 @@ export default function TodayTab() {
             </div>
             <div className="p-3 rounded-xl bg-amber-100/80">
               <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-amber-600" />
+            </div>
+          </div>
+        </div>
+
+        {/* Cancelled Bookings */}
+        <div className="rounded-2xl bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md p-4 sm:p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">Cancelled</p>
+              <p className="text-2xl sm:text-3xl font-bold text-slate-900 mt-1">{stats.cancelledCount}</p>
+            </div>
+            <div className="p-3 rounded-xl bg-rose-100/80">
+              <XCircle className="w-5 h-5 sm:w-6 sm:h-6 text-rose-600" />
             </div>
           </div>
         </div>
@@ -3092,6 +3252,19 @@ export default function TodayTab() {
         refundPercentage={refundModalPercentage}
         onRefundPercentageChange={setRefundModalPercentage}
         refundAmount={(numberOr(refundTarget?.totalPrice, 0) * refundModalPercentage) / 100}
+      />
+
+      {/* Refund Success Modal */}
+      <RefundSuccessModal
+        open={refundSuccessModalOpen}
+        onClose={() => {
+          setRefundSuccessModalOpen(false);
+          setRefundSuccessData(null);
+        }}
+        bookingId={refundSuccessData?.bookingId || null}
+        refundAmount={refundSuccessData?.refundAmount || 0}
+        refundPercentage={refundSuccessData?.refundPercentage || 0}
+        emailSent={refundSuccessData?.emailSent || false}
       />
 
       {/* Details Modal */}

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Menu, Printer } from "lucide-react";
 import AdminSidebar from "./components/AdminSidebar.jsx";
 import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { database } from "../../config/firebase";
@@ -8,6 +8,7 @@ import BookifyLogo from "../../components/bookify-logo.jsx";
 import { collection, getDocs, query, where, documentId } from "firebase/firestore";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
+import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
 // small helpers
 const chunk = (arr, size = 10) => {
   const out = [];
@@ -91,6 +92,7 @@ export default function AdminListingsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
   useEffect(() => {
     (async () => {
@@ -432,9 +434,8 @@ export default function AdminListingsPage() {
     }
   };
 
-  // export PDF via download
-const exportPDF = async () => {
-  try {
+  // Generate HTML content for PDF
+  const generatePDFHTML = () => {
     const rows = sorted || [];
 
     // quick aggregates for header chips
@@ -462,7 +463,7 @@ const exportPDF = async () => {
     }
     @page{ margin: 18mm; }
     *{-webkit-print-color-adjust:exact; print-color-adjust:exact; box-sizing:border-box;}
-    body{ margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    body{ margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
 
     .header{ display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     .brand{ display:flex; align-items:center; gap:12px; }
@@ -558,30 +559,164 @@ const exportPDF = async () => {
 </body>
 </html>`);
 
-    // Load html2pdf library dynamically
-    const loadHtml2Pdf = () => {
-      return new Promise((resolve, reject) => {
-        if (window.html2pdf) {
-          resolve(window.html2pdf);
-          return;
-        }
-        const script = document.createElement("script");
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-        script.onload = () => resolve(window.html2pdf);
-        script.onerror = () => reject(new Error("Failed to load html2pdf library"));
-        document.head.appendChild(script);
-      });
-    };
+    return html.join("");
+  };
 
+  // export PDF via preview
+  const exportPDF = () => {
     try {
+      const htmlContent = generatePDFHTML();
+      const filename = `listings_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      setPdfPreview({ open: true, htmlContent, filename });
+    } catch (e) {
+      console.error("Failed to generate PDF preview", e);
+      alert("Failed to generate PDF preview: " + String(e));
+    }
+  };
+
+  // Print table
+  const printTable = () => {
+    try {
+      const rows = sorted || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+      const totalListings = rows.length;
+      const totalBookings = rows.reduce((s, r) => s + (r.bookingCount || 0), 0);
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Listings Report</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { width: 32px; height: 32px; border-radius: 6px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    .summary { margin: 16px 0; padding: 12px; background: #f8fafc; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .num { text-align: right; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <img src="${BookifyIcon}" alt="Bookify logo"/>
+      <h1>Bookify <small>Listings Report</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${totalListings.toLocaleString()} listings
+    </div>
+  </div>
+  
+  <div class="summary">
+    <strong>Summary:</strong> ${totalListings.toLocaleString()} listings, ${totalBookings.toLocaleString()} total bookings
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Title</th>
+        <th>Host</th>
+        <th>Category</th>
+        <th>Location</th>
+        <th class="num">Price</th>
+        <th class="num">Bookings</th>
+        <th class="num">Rating</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((r) => {
+        return `<tr>
+          <td class="mono">${escapeHtml(String(r.id).slice(0, 8))}…</td>
+          <td>${escapeHtml(r.title || "")}</td>
+          <td>${escapeHtml(r.hostName || r.hostUid || "")}</td>
+          <td>${escapeHtml(r.category || "")}</td>
+          <td>${escapeHtml(r.location || "")}</td>
+          <td class="num">${r.price != null ? escapeHtml(formatPeso(r.price)) : "—"}</td>
+          <td class="num">${escapeHtml(String(r.bookingCount || 0))}</td>
+          <td class="num">${r.ratingCount ? escapeHtml(`${(r.ratingAvg || 0).toFixed(1)} (${r.ratingCount})`) : "—"}</td>
+          <td>${escapeHtml(r.status || "—")}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Listings Report • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
+    }
+  };
+
+  // Download PDF from preview
+  const handleDownloadPDF = async () => {
+    try {
+      const htmlContent = generatePDFHTML();
+      const filename = pdfPreview.filename;
+
+      // Load html2pdf library dynamically
+      const loadHtml2Pdf = () => {
+        return new Promise((resolve, reject) => {
+          if (window.html2pdf) {
+            resolve(window.html2pdf);
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          script.onload = () => resolve(window.html2pdf);
+          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
+          document.head.appendChild(script);
+        });
+      };
+
       const html2pdf = await loadHtml2Pdf();
       const element = document.createElement("div");
-      element.innerHTML = html.join("");
+      element.innerHTML = htmlContent;
       document.body.appendChild(element);
 
       const opt = {
         margin: [18, 18],
-        filename: `listings_export_${new Date().toISOString().slice(0, 10)}.pdf`,
+        filename: filename,
         image: { type: "jpeg", quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
@@ -589,6 +724,7 @@ const exportPDF = async () => {
 
       await html2pdf().set(opt).from(element).save();
       document.body.removeChild(element);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
     } catch (err) {
       // Fallback to print dialog if library fails
       const win = window.open("", "_blank");
@@ -597,18 +733,15 @@ const exportPDF = async () => {
         return;
       }
       win.document.open();
-      win.document.write(html.join(""));
+      win.document.write(generatePDFHTML());
       win.document.close();
       setTimeout(() => {
         win.focus();
         win.print();
       }, 500);
+      setPdfPreview({ open: false, htmlContent: "", filename: "" });
     }
-  } catch (e) {
-    console.error("Failed to export PDF", e);
-    alert("Failed to export PDF: " + String(e));
-  }
-};
+  };
 
 // small HTML escape helper for exportPDF
 function escapeHtml(str) {
@@ -822,6 +955,14 @@ function escapeHtml(str) {
               </svg>
               <span className="hidden xs:inline">Export PDF</span><span className="xs:hidden">PDF</span>
             </button>
+            <button
+              title="Print"
+              onClick={printTable}
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+            >
+              <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
+              <span className="hidden xs:inline">Print</span>
+            </button>
           </div>
           </div>
         </div>
@@ -984,6 +1125,14 @@ function escapeHtml(str) {
           </div>
         </main>
       </div>
+
+      <PDFPreviewModal
+        open={pdfPreview.open}
+        htmlContent={pdfPreview.htmlContent}
+        filename={pdfPreview.filename}
+        onClose={() => setPdfPreview({ open: false, htmlContent: "", filename: "" })}
+        onDownload={handleDownloadPDF}
+      />
     </div>
   );
 }

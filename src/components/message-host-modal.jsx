@@ -68,7 +68,6 @@ function HostAvatar({ host, size = 48, ring = true }) {
           alt={deriveName(host)}
           className="w-full h-full object-cover"
           referrerPolicy="no-referrer"
-          crossOrigin="anonymous"
           loading="lazy"
           onError={() => setImgOk(false)}
         />

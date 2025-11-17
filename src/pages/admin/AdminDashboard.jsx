@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   XCircle,
   MapPin,
+  Printer,
   ChevronLeft,
   ChevronRight,
   Menu,
@@ -630,6 +631,207 @@ export default function AdminDashboard() {
     downloadBlob(csv, `bookings${labelSuffix.replace(/\s|\(|\)/g, "_")}.csv`);
   };
 
+  // Print bookings table
+  const printBookingsTable = () => {
+    try {
+      const rows = filteredBookings || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+      const formatPeso = (v) => {
+        const n = Number(v || 0);
+        if (!Number.isFinite(n)) return "—";
+        return `₱${n.toLocaleString()}`;
+      };
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Recent Bookings</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .num { text-align: right; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <h1>Bookify <small>Recent Bookings</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${rows.length.toLocaleString()} bookings
+    </div>
+  </div>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Guest</th>
+        <th>Listing</th>
+        <th>When</th>
+        <th>Status</th>
+        <th class="num">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((b) => {
+        const when = b.checkIn ? new Date(b.checkIn).toLocaleDateString() : (b.schedule?.date ? new Date(b.schedule.date).toLocaleDateString() : "—");
+        return `<tr>
+          <td class="mono">${escapeHtml(String(b.id).slice(0, 8))}…</td>
+          <td>${escapeHtml(b.guestName || "—")}</td>
+          <td>${escapeHtml(b.listingTitle || "—")}</td>
+          <td>${escapeHtml(when)}</td>
+          <td>${escapeHtml(b.status || "—")}</td>
+          <td class="num">${b.totalPrice != null ? escapeHtml(formatPeso(b.totalPrice)) : "—"}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Recent Bookings • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
+    }
+  };
+
+  // Print hosts table
+  const printHostsTable = () => {
+    try {
+      const rows = filteredHosts || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      };
+
+      const nowStr = new Date().toLocaleString();
+
+      const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bookify — Recent Hosts</title>
+  <style>
+    @page { margin: 15mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand h1 { font-size: 18px; margin: 0; }
+    .brand small { color: #64748b; display: block; font-size: 12px; }
+    .meta { text-align: right; color: #64748b; font-size: 11px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead { background: #f1f5f9; }
+    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
+    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
+    tr:nth-child(even) { background: #f8fafc; }
+    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
+    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="brand">
+      <h1>Bookify <small>Recent Hosts</small></h1>
+    </div>
+    <div class="meta">
+      Generated: ${escapeHtml(nowStr)}<br/>
+      Total: ${rows.length.toLocaleString()} hosts
+    </div>
+  </div>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Email</th>
+        <th>Address</th>
+        <th>Verified</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map((h) => {
+        return `<tr>
+          <td class="mono">${escapeHtml(String(h.id).slice(0, 8))}…</td>
+          <td>${escapeHtml(h.name || "—")}</td>
+          <td>${escapeHtml(h.email || "—")}</td>
+          <td>${escapeHtml(h.address || "—")}</td>
+          <td>${h.isVerified ? "Yes" : "No"}</td>
+        </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Bookify • Recent Hosts • Generated on ${escapeHtml(nowStr)}
+  </div>
+</body>
+</html>`;
+
+      const win = window.open("", "_blank");
+      if (!win) {
+        alert("Unable to open print window. Please allow popups for this site.");
+        return;
+      }
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => {
+        win.focus();
+        win.print();
+      }, 250);
+    } catch (e) {
+      console.error("Failed to print", e);
+      alert("Failed to print: " + String(e));
+    }
+  };
+
   const exportHostsCSV = () => {
     const csv = toCSV(
       filteredHosts.map((h) => ({
@@ -1093,6 +1295,12 @@ export default function AdminDashboard() {
                     className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-slate-200 px-2.5 sm:px-3 py-1.5 text-slate-600 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700"
                   >
                     <Download size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">CSV</span>
+                  </button>
+                  <button
+                    onClick={printHostsTable}
+                    className="inline-flex items-center gap-1.5 sm:gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 sm:px-3 py-1.5 text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-100"
+                  >
+                    <Printer size={14} className="sm:w-4 sm:h-4" /> <span className="hidden sm:inline">Print</span>
                   </button>
                   <button
                     onClick={() => navigate("/admin/hosts")}
