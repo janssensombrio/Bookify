@@ -159,6 +159,7 @@ export default function AdminWalletPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [userTypeFilter, setUserTypeFilter] = useState("all");
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
   const [showFilters, setShowFilters] = useState(false);
 
   // Ensure admin wallet exists + live balance
@@ -329,35 +330,74 @@ export default function AdminWalletPage() {
       });
     }
     
-    // Date range filter
-    if (dateRange.start) {
-      const startDate = new Date(dateRange.start);
-      startDate.setHours(0, 0, 0, 0);
-      result = result.filter((t) => {
-        try {
-          const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
-          return txDate >= startDate;
-        } catch {
-          return false;
+    // time filter (takes precedence over dateRange if set)
+    if (timeFilter !== "all") {
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let timeRange = null;
+      
+      switch (timeFilter) {
+        case "today":
+          timeRange = { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
+          break;
+        case "week": {
+          const dayOfWeek = now.getDay();
+          const startOfWeek = new Date(today);
+          startOfWeek.setDate(today.getDate() - dayOfWeek);
+          timeRange = { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
+          break;
         }
-      });
-    }
-    
-    if (dateRange.end) {
-      const endDate = new Date(dateRange.end);
-      endDate.setHours(23, 59, 59, 999);
-      result = result.filter((t) => {
-        try {
-          const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
-          return txDate <= endDate;
-        } catch {
-          return false;
+        case "month": {
+          timeRange = { start: new Date(now.getFullYear(), now.getMonth(), 1), end: new Date(now.getFullYear(), now.getMonth() + 1, 1) };
+          break;
         }
-      });
+        case "year": {
+          timeRange = { start: new Date(now.getFullYear(), 0, 1), end: new Date(now.getFullYear() + 1, 0, 1) };
+          break;
+        }
+      }
+      
+      if (timeRange) {
+        result = result.filter((t) => {
+          try {
+            const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+            return txDate >= timeRange.start && txDate < timeRange.end;
+          } catch {
+            return false;
+          }
+        });
+      }
+    } else {
+      // Date range filter (only if timeFilter is "all")
+      if (dateRange.start) {
+        const startDate = new Date(dateRange.start);
+        startDate.setHours(0, 0, 0, 0);
+        result = result.filter((t) => {
+          try {
+            const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+            return txDate >= startDate;
+          } catch {
+            return false;
+          }
+        });
+      }
+      
+      if (dateRange.end) {
+        const endDate = new Date(dateRange.end);
+        endDate.setHours(23, 59, 59, 999);
+        result = result.filter((t) => {
+          try {
+            const txDate = t.timestamp?.toDate ? t.timestamp.toDate() : new Date(t.timestamp);
+            return txDate <= endDate;
+          } catch {
+            return false;
+          }
+        });
+      }
     }
     
     return result;
-  }, [allTxs, filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange]);
+  }, [allTxs, filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange, timeFilter]);
 
   // Get unique payment methods and categories from transactions
   const uniqueMethods = useMemo(() => {
@@ -380,6 +420,7 @@ export default function AdminWalletPage() {
   const hasActiveFilters = paymentMethodFilter !== "all" || 
     categoryFilter !== "all" || 
     userTypeFilter !== "all" || 
+    timeFilter !== "all" ||
     dateRange.start || 
     dateRange.end;
   
@@ -394,14 +435,26 @@ export default function AdminWalletPage() {
   // Reset to page 1 when any filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange]);
+  }, [filter, paymentMethodFilter, categoryFilter, userTypeFilter, dateRange, timeFilter]);
   
+  // Get time filter label for display
+  const getTimeFilterLabel = (filter) => {
+    switch (filter) {
+      case "today": return "Today";
+      case "week": return "This Week";
+      case "month": return "This Month";
+      case "year": return "This Year";
+      default: return "All Time";
+    }
+  };
+
   // Clear all filters
   const clearFilters = () => {
     setPaymentMethodFilter("all");
     setCategoryFilter("all");
     setUserTypeFilter("all");
     setDateRange({ start: "", end: "" });
+    setTimeFilter("all");
     setFilter("");
   };
 
@@ -419,6 +472,7 @@ export default function AdminWalletPage() {
       };
 
       const nowStr = new Date().toLocaleString();
+      const timeFilterLabel = getTimeFilterLabel(timeFilter);
       const formatPeso = (v) => {
         const n = Number(v || 0);
         if (!Number.isFinite(n)) return "—";
@@ -462,6 +516,7 @@ export default function AdminWalletPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Total: ${rows.length.toLocaleString()} transactions
     </div>
   </div>
@@ -537,6 +592,7 @@ export default function AdminWalletPage() {
     };
 
     const nowStr = new Date().toLocaleString();
+    const timeFilterLabel = getTimeFilterLabel(timeFilter);
     const totalTransactions = rows.length;
     const totalCredits = rows.filter((t) => t.delta >= 0).reduce((sum, t) => sum + Math.abs(t.delta), 0);
     const totalDebits = rows.filter((t) => t.delta < 0).reduce((sum, t) => sum + Math.abs(t.delta), 0);
@@ -598,6 +654,7 @@ export default function AdminWalletPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Rows: ${totalTransactions.toLocaleString()}
     </div>
   </div>
@@ -680,7 +737,8 @@ export default function AdminWalletPage() {
   const exportPDF = () => {
     try {
       const htmlContent = generatePDFHTML();
-      const filename = `wallet_transactions_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      const filename = `wallet_transactions_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
       setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
       console.error("Failed to generate PDF preview", e);
@@ -775,7 +833,8 @@ export default function AdminWalletPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "admin-wallet-transactions.csv";
+    const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+    a.download = `admin-wallet-transactions_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -801,8 +860,8 @@ export default function AdminWalletPage() {
             <WalletIcon size={18} />
           </div>
           <div>
-            <div className="text-xs uppercase tracking-wide text-slate-500">Admin Wallet Balance</div>
-            <div className="text-2xl font-bold text-slate-900">
+            <div className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Admin Wallet Balance</div>
+            <div className="text-3xl sm:text-4xl font-bold text-slate-900">
               {loadingWallet ? <Line w="120px" /> : peso(wallet.balance)}
             </div>
           </div>
@@ -814,21 +873,21 @@ export default function AdminWalletPage() {
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-white hover:bg-slate-50 text-slate-800 border border-slate-200"
           >
             <FileDown size={16} />
-            <span className="font-medium text-sm">Export CSV</span>
+            <span className="font-semibold text-sm sm:text-base">Export CSV</span>
           </button>
           <button
             onClick={exportPDF}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-600"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl min-h-10 shadow-sm transition bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-600"
           >
             <FileDown size={16} />
-            <span className="font-medium text-sm">Export PDF</span>
+            <span className="font-semibold text-sm sm:text-base">Export PDF</span>
           </button>
           <button
             onClick={printTable}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl min-h-10 shadow-sm transition bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-600"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl min-h-10 shadow-sm transition bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-600"
           >
             <Printer size={16} />
-            <span className="font-medium text-sm">Print</span>
+            <span className="font-semibold text-sm sm:text-base">Print</span>
           </button>
         </div>
       </div>
@@ -933,13 +992,13 @@ export default function AdminWalletPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* Payment Method Filter */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                         Payment Method
                       </label>
                       <select
                         value={paymentMethodFilter}
                         onChange={(e) => setPaymentMethodFilter(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="all">All Methods</option>
                         {uniqueMethods.map((method) => (
@@ -952,13 +1011,13 @@ export default function AdminWalletPage() {
                     
                     {/* Category/Type Filter */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                         Category/Type
                       </label>
                       <select
                         value={categoryFilter}
                         onChange={(e) => setCategoryFilter(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="all">All Categories</option>
                         {uniqueCategories.map((category) => (
@@ -971,13 +1030,13 @@ export default function AdminWalletPage() {
                     
                     {/* User Type Filter */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                         User Type
                       </label>
                       <select
                         value={userTypeFilter}
                         onChange={(e) => setUserTypeFilter(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="all">All Users</option>
                         <option value="guest">Guest</option>
@@ -985,9 +1044,27 @@ export default function AdminWalletPage() {
                       </select>
                     </div>
                     
+                    {/* Time Filter */}
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                        Time Period
+                      </label>
+                      <select
+                        value={timeFilter}
+                        onChange={(e) => setTimeFilter(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="all">All Time</option>
+                        <option value="today">Today</option>
+                        <option value="week">This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="year">This Year</option>
+                      </select>
+                    </div>
+                    
                     {/* Date Range Filter */}
                     <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1.5">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">
                         Date Range
                       </label>
                       <DateRangeFilter
@@ -1004,10 +1081,10 @@ export default function AdminWalletPage() {
             {/* Transactions */}
             <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="font-semibold text-slate-900">Payments & Methods</h4>
+                <h4 className="font-bold text-lg text-slate-900">Payments & Methods</h4>
                 {txLoading && (
-                  <span className="inline-flex items-center gap-1 text-sm text-slate-500">
-                    <Loader2 size={14} className="animate-spin" /> Loading…
+                  <span className="inline-flex items-center gap-1 text-base text-slate-600">
+                    <Loader2 size={16} className="animate-spin" /> Loading…
                   </span>
                 )}
               </div>
@@ -1018,16 +1095,16 @@ export default function AdminWalletPage() {
                 </div>
               ) : paginatedFiltered.length ? (
                 <div className="overflow-x-auto">
-                  <table className="w-full">
+                  <table className="w-full text-base">
                     <thead>
-                      <tr className="border-b border-slate-200">
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Type</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Method</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Amount</th>
-                        <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Balance</th>
-                        <th className="text-center py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Status</th>
-                        <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Details</th>
+                      <tr className="border-b-2 border-slate-300">
+                        <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Type</th>
+                        <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Date</th>
+                        <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Method</th>
+                        <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Amount</th>
+                        <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Balance</th>
+                        <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Status</th>
+                        <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Details</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1042,44 +1119,44 @@ export default function AdminWalletPage() {
                         
                         return (
                           <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                            <td className="py-3 px-4">
-                              <div className="flex items-center gap-2">
-                                <div className={`h-8 w-8 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
-                                  <Icon size={16} />
+                            <td className="py-4 px-4">
+                              <div className="flex items-center gap-3">
+                                <div className={`h-10 w-10 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
+                                  <Icon size={18} />
                                 </div>
-                                <span className="font-medium text-slate-900 text-sm">
+                                <span className="font-semibold text-slate-900 text-sm sm:text-base">
                                   {t.type?.replace(/_/g, " ") || "Transaction"}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+                            <td className="py-4 px-4 text-sm sm:text-base text-slate-700 whitespace-nowrap font-medium">
                               {formatDate(t.timestamp)}
                             </td>
-                            <td className="py-3 px-4">
+                            <td className="py-4 px-4">
                               {t.method ? (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-md text-sm font-medium bg-blue-50 text-blue-700 border border-blue-200">
                                   {t.method}
                                 </span>
                               ) : (
                                 <span className="text-slate-400">—</span>
                               )}
                             </td>
-                            <td className={`py-3 px-4 text-right text-sm font-semibold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
+                            <td className={`py-4 px-4 text-right text-sm sm:text-base font-bold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
                               {sign}{peso(absAmount)}
                             </td>
-                            <td className="py-3 px-4 text-right text-sm text-slate-600 whitespace-nowrap">
+                            <td className="py-4 px-4 text-right text-sm sm:text-base text-slate-700 whitespace-nowrap font-medium">
                               {peso(t.balanceAfter ?? 0)}
                             </td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-4 px-4 text-center">
                               <Badge kind={statusKind}>{t.status || "completed"}</Badge>
                             </td>
-                            <td className="py-3 px-4 text-sm text-slate-600">
-                              <div className="space-y-0.5">
+                            <td className="py-4 px-4 text-sm sm:text-base text-slate-700">
+                              <div className="space-y-1">
                                 {t?.note && (
-                                  <div className="text-xs">"{t.note}"</div>
+                                  <div className="text-sm">"{t.note}"</div>
                                 )}
                                 {t?.metadata?.bookingId && (
-                                  <div className="text-xs">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
+                                  <div className="text-sm">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
                                 )}
                                 {!t?.note && !t?.metadata?.bookingId && (
                                   <span className="text-slate-400">—</span>

@@ -1283,9 +1283,24 @@ const GuestMessagesPage = () => {
                   <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent min-h-0">
                     {showArchived ? (
                       sortedArchivedConversations.length === 0 ? (
-                        <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No archived conversations</div>
+                        <div className="text-center py-6">
+                          <div className="text-xs sm:text-sm text-slate-600 mb-3">No archived conversations</div>
+                          <button
+                            onClick={() => setShowArchived(false)}
+                            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-md"
+                          >
+                            View All Messages
+                          </button>
+                        </div>
                       ) : (
                         <div className="space-y-2 overflow-x-hidden">
+                          <button
+                            onClick={() => setShowArchived(false)}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md mb-2"
+                          >
+                            <ArrowLeft size={16} />
+                            View All Messages
+                          </button>
                           {sortedArchivedConversations.map((uid) => {
                             const data = userMap[uid] || { displayName: uid, photoURL: null };
                             const active = selectedChatUid === uid;

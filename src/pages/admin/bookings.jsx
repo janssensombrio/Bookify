@@ -93,6 +93,7 @@ export default function AdminBookingsPage() {
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, confirmed, cancelled
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
@@ -224,6 +225,46 @@ export default function AdminBookingsPage() {
     }
   };
 
+  // Helper function to get date range based on time filter
+  const getTimeFilterRange = (filter) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    switch (filter) {
+      case "today":
+        return { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
+      case "week": {
+        const dayOfWeek = now.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - dayOfWeek);
+        return { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
+      }
+      case "month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        return { start: startOfMonth, end: endOfMonth };
+      }
+      case "year": {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const endOfYear = new Date(now.getFullYear() + 1, 0, 1);
+        return { start: startOfYear, end: endOfYear };
+      }
+      default:
+        return null; // "all" - no date filtering
+    }
+  };
+
+  // Get time filter label for display
+  const getTimeFilterLabel = (filter) => {
+    switch (filter) {
+      case "today": return "Today";
+      case "week": return "This Week";
+      case "month": return "This Month";
+      case "year": return "This Year";
+      default: return "All Time";
+    }
+  };
+
   // SORTED & FILTERED - using wallet transactions
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
@@ -231,8 +272,17 @@ export default function AdminBookingsPage() {
       // Only show positive transactions (service fees/revenue)
       if (t.delta <= 0) return false;
       
-      // date range filter
-      if (!isDateInRange(t.timestamp, dateRange)) return false;
+      // time filter (takes precedence over dateRange if set)
+      if (timeFilter !== "all") {
+        const timeRange = getTimeFilterRange(timeFilter);
+        if (timeRange) {
+          const timestamp = t.timestamp?.toDate ? t.timestamp.toDate() : (t.timestamp instanceof Date ? t.timestamp : new Date(t.timestamp));
+          if (!timestamp || timestamp < timeRange.start || timestamp >= timeRange.end) return false;
+        }
+      } else {
+        // date range filter (only if timeFilter is "all")
+        if (!isDateInRange(t.timestamp, dateRange)) return false;
+      }
       
       // status filter
       if (statusFilter !== "all") {
@@ -284,14 +334,14 @@ export default function AdminBookingsPage() {
       const tb = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime());
       return tb - ta;
     });
-  }, [walletTransactions, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange]);
+  }, [walletTransactions, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange, timeFilter]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   useEffect(() => {
     if (page > totalPages) setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter, categoryFilter, pageSize, sorted.length]);
+  }, [search, statusFilter, categoryFilter, timeFilter, pageSize, sorted.length]);
 
   const pagedTransactions = sorted.slice((page - 1) * pageSize, page * pageSize);
 
@@ -375,7 +425,8 @@ export default function AdminBookingsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `bookings_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      a.download = `bookings_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -389,11 +440,14 @@ export default function AdminBookingsPage() {
   // Generate HTML content for PDF
   const generatePDFHTML = () => {
     const rows = sorted || [];
-    const safeMetrics = metrics || {
+    // Calculate metrics from filtered transactions
+    const filteredMetrics = {
       total: rows.length,
-      totalRevenue: rows.reduce((sum, b) => sum + (b.totalPrice || 0), 0),
-      confirmed: rows.filter((b) => b.status === "confirmed").length,
-      totalGuests: rows.reduce((sum, b) => sum + (b.guests || 1), 0),
+      totalRevenue: rows.reduce((sum, t) => sum + Math.abs(t.delta || 0), 0),
+      confirmed: rows.filter((t) => t.status === "completed").length,
+      pending: rows.filter((t) => t.status === "pending").length,
+      cancelled: rows.filter((t) => t.status === "cancelled" || t.status === "refunded").length,
+      totalGuests: 0, // Not available in transactions
     };
 
     const escapeHtml = (str) => {
@@ -412,6 +466,7 @@ export default function AdminBookingsPage() {
     };
 
     const nowStr = new Date().toLocaleString();
+    const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
     const html = [];
     html.push(`<!doctype html>
@@ -466,15 +521,16 @@ export default function AdminBookingsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Rows: ${rows.length.toLocaleString()}
     </div>
   </div>
 
   <div class="chips">
-    <span class="chip"><span class="dot"></span><b>Total Bookings:</b> ${safeMetrics.total.toLocaleString()}</span>
-    <span class="chip"><span class="dot"></span><b>Revenue:</b> ${formatPesoSafe(safeMetrics.totalRevenue)}</span>
-    <span class="chip"><span class="dot"></span><b>Confirmed:</b> ${safeMetrics.confirmed.toLocaleString()}</span>
-    <span class="chip"><span class="dot"></span><b>Guests:</b> ${safeMetrics.totalGuests.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Total Transactions:</b> ${filteredMetrics.total.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Revenue:</b> ${formatPesoSafe(filteredMetrics.totalRevenue)}</span>
+    <span class="chip"><span class="dot"></span><b>Completed:</b> ${filteredMetrics.confirmed.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Pending:</b> ${filteredMetrics.pending.toLocaleString()}</span>
   </div>
 
   <table>
@@ -511,7 +567,7 @@ export default function AdminBookingsPage() {
 
   <div style="margin-top: 24px; padding: 16px; background: var(--subtle); border: 1px solid var(--line); border-radius: 12px; display: flex; justify-content: space-between; align-items: center;">
     <div style="font-size: 14px; font-weight: 600; color: var(--ink);">Grand Total Revenue:</div>
-    <div style="font-size: 18px; font-weight: 700; color: var(--brand);">${formatPesoSafe(safeMetrics.totalRevenue)}</div>
+    <div style="font-size: 18px; font-weight: 700; color: var(--brand);">${formatPesoSafe(filteredMetrics.totalRevenue)}</div>
   </div>
 
   <div class="footer">
@@ -529,7 +585,8 @@ export default function AdminBookingsPage() {
   const exportPDF = () => {
     try {
       const htmlContent = generatePDFHTML();
-      const filename = `bookings_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      const filename = `bookings_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
       setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
       console.error("Failed to generate PDF preview", e);
@@ -541,6 +598,14 @@ export default function AdminBookingsPage() {
   const printTable = () => {
     try {
       const rows = sorted || [];
+      // Calculate metrics from filtered transactions
+      const filteredMetrics = {
+        total: rows.length,
+        totalRevenue: rows.reduce((sum, t) => sum + Math.abs(t.delta || 0), 0),
+        confirmed: rows.filter((t) => t.status === "completed").length,
+        pending: rows.filter((t) => t.status === "pending").length,
+      };
+      
       const escapeHtml = (str) => {
         if (str == null) return "";
         return String(str)
@@ -550,7 +615,14 @@ export default function AdminBookingsPage() {
           .replace(/"/g, "&quot;");
       };
 
+      const formatPeso = (v) => {
+        const n = Number(v || 0);
+        if (!Number.isFinite(n)) return "—";
+        return `₱${n.toLocaleString()}`;
+      };
+
       const nowStr = new Date().toLocaleString();
+      const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
       const html = `<!doctype html>
 <html>
@@ -586,12 +658,13 @@ export default function AdminBookingsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Total: ${rows.length.toLocaleString()} bookings
     </div>
   </div>
   
   <div class="summary">
-    <strong>Summary:</strong> ${metrics.total.toLocaleString()} total bookings, ${formatPeso(metrics.totalRevenue)} revenue, ${metrics.confirmed.toLocaleString()} confirmed
+    <strong>Summary:</strong> ${filteredMetrics.total.toLocaleString()} total transactions, ${formatPeso(filteredMetrics.totalRevenue)} revenue, ${filteredMetrics.confirmed.toLocaleString()} completed
   </div>
 
   <table>
@@ -758,13 +831,13 @@ export default function AdminBookingsPage() {
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
           {/* Total Bookings */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
-            <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Bookings</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total}</p>
+            <div className="mt-2 sm:mt-3 flex flex-wrap items-center gap-1.5 sm:gap-2 text-sm text-slate-600">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 font-medium">
                 {metrics.confirmed} confirmed
               </span>
-              <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 font-medium">
                 {metrics.pending} pending
               </span>
             </div>
@@ -772,33 +845,33 @@ export default function AdminBookingsPage() {
 
           {/* Revenue */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Revenue</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Revenue</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">
               {formatPeso(metrics.totalRevenue) || "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-sm text-slate-600">
               From {metrics.paid} paid bookings
             </p>
           </div>
 
           {/* Guests & Nights */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Guests</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">
               {metrics.totalGuests.toLocaleString()}
             </p>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-sm text-slate-600">
               {metrics.totalNights.toLocaleString()} total nights
             </p>
           </div>
 
           {/* Top Listing */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Most Booked</p>
-            <p className="mt-1 text-sm sm:text-base font-semibold text-slate-900 truncate" title={metrics.topListing?.listingTitle}>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Most Booked</p>
+            <p className="mt-2 text-base sm:text-lg font-bold text-slate-900 truncate" title={metrics.topListing?.listingTitle}>
               {metrics.topListing?.listingTitle || "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-sm text-slate-600">
               {metrics.topListing?.count || 0} bookings
             </p>
           </div>
@@ -826,7 +899,7 @@ export default function AdminBookingsPage() {
                 placeholder="Search bookings..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
+                className="w-full pl-9 pr-3 py-3 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-base shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
               />
             </div>
             <TailwindDropdown
@@ -849,6 +922,18 @@ export default function AdminBookingsPage() {
                 placeholder="Select date range"
               />
             </div>
+            <TailwindDropdown
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Time" },
+                { value: "today", label: "Today" },
+                { value: "week", label: "This Week" },
+                { value: "month", label: "This Month" },
+                { value: "year", label: "This Year" },
+              ]}
+              className="sm:min-w-[140px]"
+            />
             <TailwindDropdown
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
@@ -873,7 +958,7 @@ export default function AdminBookingsPage() {
               <button
                 title="Toggle sort direction"
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm sm:text-base shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0 font-medium"
               >
                 <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                   <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
@@ -884,7 +969,7 @@ export default function AdminBookingsPage() {
             <button
               title="Export CSV"
               onClick={exportCSV}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
             >
               <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
                 <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
@@ -896,7 +981,7 @@ export default function AdminBookingsPage() {
             <button
               title="Export PDF"
               onClick={exportPDF}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm sm:text-base font-semibold shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
             >
               <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                 <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
@@ -906,7 +991,7 @@ export default function AdminBookingsPage() {
             <button
               title="Print"
               onClick={printTable}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
             >
               <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
               <span className="hidden xs:inline">Print</span>
@@ -937,14 +1022,14 @@ export default function AdminBookingsPage() {
         ) : (
           <div className="relative rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
             <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none rounded-2xl sm:-mx-3 sm:mx-0" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <table className="w-full">
+              <table className="w-full text-base">
                 <thead>
-                  <tr className="border-b border-slate-200">
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Type</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
-                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Amount</th>
-                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Status</th>
-                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Details</th>
+                  <tr className="border-b-2 border-slate-300">
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Type</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Date</th>
+                    <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Amount</th>
+                    <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Status</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Details</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -959,32 +1044,32 @@ export default function AdminBookingsPage() {
                     
                     return (
                       <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <div className={`h-8 w-8 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
-                              <Icon size={16} />
+                        <td className="py-4 px-4">
+                          <div className="flex items-center gap-3">
+                            <div className={`h-10 w-10 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
+                              <Icon size={18} />
                             </div>
-                            <span className="font-medium text-slate-900 text-sm">
+                            <span className="font-semibold text-slate-900 text-sm sm:text-base">
                               {t.type?.replace(/_/g, " ") || "Transaction"}
                             </span>
                           </div>
                         </td>
-                        <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+                        <td className="py-4 px-4 text-sm sm:text-base text-slate-700 whitespace-nowrap font-medium">
                           {formatDateTimeShort(t.timestamp)}
                         </td>
-                        <td className={`py-3 px-4 text-right text-sm font-semibold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
+                        <td className={`py-4 px-4 text-right text-sm sm:text-base font-bold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
                           {sign}{peso(absAmount)}
                         </td>
-                        <td className="py-3 px-4 text-center">
+                        <td className="py-4 px-4 text-center">
                           <Badge kind={statusKind}>{t.status || "completed"}</Badge>
                         </td>
-                        <td className="py-3 px-4 text-sm text-slate-600">
-                          <div className="space-y-0.5">
+                        <td className="py-4 px-4 text-sm sm:text-base text-slate-700">
+                          <div className="space-y-1">
                             {t?.note && (
-                              <div className="text-xs">"{t.note}"</div>
+                              <div className="text-sm">"{t.note}"</div>
                             )}
                             {t?.metadata?.bookingId && (
-                              <div className="text-xs">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
+                              <div className="text-sm">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
                             )}
                             {!t?.note && !t?.metadata?.bookingId && (
                               <span className="text-slate-400">—</span>
@@ -1003,12 +1088,12 @@ export default function AdminBookingsPage() {
         {/* Pagination */}
         {sorted.length > 0 && (
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 pt-4">
-            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+            <div className="text-sm sm:text-base text-slate-600 dark:text-slate-400">
               Showing{" "}
-              <span className="font-medium text-slate-800 dark:text-slate-200">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
                 {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, sorted.length)}
               </span>{" "}
-              of <span className="font-medium text-slate-800 dark:text-slate-200">{sorted.length}</span>
+              of <span className="font-semibold text-slate-800 dark:text-slate-200">{sorted.length}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2">

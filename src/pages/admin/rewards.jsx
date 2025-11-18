@@ -322,7 +322,11 @@ export default function AdminRewardsPage() {
                   <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md hover:bg-blue-700 disabled:opacity-50"
+                    className={`flex-1 inline-flex items-center justify-center gap-2 rounded-xl px-6 py-2.5 text-sm font-semibold text-white shadow-md disabled:opacity-50 ${
+                      formData.id
+                        ? "bg-emerald-600 hover:bg-emerald-700"
+                        : "bg-blue-600 hover:bg-blue-700"
+                    }`}
                   >
                     {saving ? (
                       <>

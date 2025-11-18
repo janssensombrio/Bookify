@@ -88,6 +88,7 @@ export default function AdminListingsPage() {
   const [mode] = useState("all"); // all | booked | rated
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
   const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
@@ -263,10 +264,62 @@ export default function AdminListingsPage() {
     return Array.from(cats).sort();
   }, [listings]);
 
+  // Helper function to get date range based on time filter
+  const getTimeFilterRange = (filter) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    switch (filter) {
+      case "today":
+        return { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
+      case "week": {
+        const dayOfWeek = now.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - dayOfWeek);
+        return { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
+      }
+      case "month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        return { start: startOfMonth, end: endOfMonth };
+      }
+      case "year": {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const endOfYear = new Date(now.getFullYear() + 1, 0, 1);
+        return { start: startOfYear, end: endOfYear };
+      }
+      default:
+        return null; // "all" - no date filtering
+    }
+  };
+
+  // Get time filter label for display
+  const getTimeFilterLabel = (filter) => {
+    switch (filter) {
+      case "today": return "Today";
+      case "week": return "This Week";
+      case "month": return "This Month";
+      case "year": return "This Year";
+      default: return "All Time";
+    }
+  };
+
   // SORTED (fixed useMemo)
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
     let filtered = listings.slice();
+    
+    // Apply time filter
+    if (timeFilter !== "all") {
+      const dateRange = getTimeFilterRange(timeFilter);
+      if (dateRange) {
+        filtered = filtered.filter((l) => {
+          const createdAt = l.createdAt instanceof Date ? l.createdAt : (l.createdAt ? new Date(l.createdAt) : null);
+          if (!createdAt) return false;
+          return createdAt >= dateRange.start && createdAt < dateRange.end;
+        });
+      }
+    }
     
     // Apply category filter
     if (categoryFilter !== "all") {
@@ -323,14 +376,14 @@ export default function AdminListingsPage() {
     }
 
     return base;
-  }, [listings, mode, search, categoryFilter, sortKey, sortDir]);
+  }, [listings, mode, search, categoryFilter, timeFilter, sortKey, sortDir]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   useEffect(() => {
     if (page > totalPages) setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, categoryFilter, pageSize, sorted.length]);
+  }, [search, categoryFilter, timeFilter, pageSize, sorted.length]);
 
   const pagedListings = sorted.slice((page - 1) * pageSize, page * pageSize);
 
@@ -423,7 +476,8 @@ export default function AdminListingsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `listings_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      a.download = `listings_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -449,6 +503,7 @@ export default function AdminListingsPage() {
     const avgPrice = priced.length ? priced.reduce((s, r) => s + Number(r.price), 0) / priced.length : 0;
 
     const nowStr = new Date().toLocaleString();
+    const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
     const html = [];
     html.push(`<!doctype html>
@@ -504,6 +559,7 @@ export default function AdminListingsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Rows: ${totalListings.toLocaleString()}
     </div>
   </div>
@@ -576,7 +632,8 @@ export default function AdminListingsPage() {
   const exportPDF = () => {
     try {
       const htmlContent = generatePDFHTML();
-      const filename = `listings_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      const filename = `listings_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
       setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
       console.error("Failed to generate PDF preview", e);
@@ -598,6 +655,7 @@ export default function AdminListingsPage() {
       };
 
       const nowStr = new Date().toLocaleString();
+      const timeFilterLabel = getTimeFilterLabel(timeFilter);
       const totalListings = rows.length;
       const totalBookings = rows.reduce((s, r) => s + (r.bookingCount || 0), 0);
 
@@ -635,6 +693,7 @@ export default function AdminListingsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Total: ${totalListings.toLocaleString()} listings
     </div>
   </div>
@@ -810,16 +869,16 @@ function escapeHtml(str) {
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
           {/* Total Listings */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Listings</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Listings</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total}</p>
             <div className="mt-2 sm:mt-3 flex items-center gap-2 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 text-xs sm:text-sm font-medium">
                 {metrics.published} published
               </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 text-xs sm:text-sm font-medium">
                 {metrics.draft} draft
               </span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300 text-xs sm:text-sm font-medium">
                 {metrics.archived} archived
               </span>
             </div>
@@ -827,13 +886,13 @@ function escapeHtml(str) {
 
           {/* Bookings */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Bookings</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">
               {metrics.totalBookings.toLocaleString()}
             </p>
-            <p className="mt-2 text-xs text-slate-600">
+            <p className="mt-2 text-sm text-slate-600">
               Top listing:{" "}
-              <span className="font-medium text-slate-800">
+              <span className="font-semibold text-slate-800">
                 {metrics.topBooked?.title || "—"}
               </span>{" "}
               ({metrics.topBooked?.bookingCount || 0})
@@ -842,8 +901,8 @@ function escapeHtml(str) {
 
           {/* Ratings */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Avg Rating</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Avg Rating</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">
               {metrics.avgRating ? metrics.avgRating.toFixed(1) : "—"}
             </p>
             <div className="mt-2 sm:mt-3 h-2 rounded-full bg-slate-100">
@@ -856,23 +915,23 @@ function escapeHtml(str) {
 
           {/* Pricing */}
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Avg Price</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Avg Price</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">
               {metrics.avgPrice ? `₱${Math.round(metrics.avgPrice).toLocaleString()}` : "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-600">Across priced listings</p>
+            <p className="mt-2 text-sm text-slate-600">Across priced listings</p>
           </div>
         </section>
 
         {/* Category distribution */}
         <section className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Category Breakdown</h3>
+            <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Category Breakdown</h3>
             <div className="flex flex-wrap gap-2">
               {metrics.categories.slice(0, 6).map(([name, count]) => (
                 <span
                   key={name}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm dark:bg-slate-900 dark:border-slate-700 dark:text-slate-200"
                 >
                   <span className="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>
                   {name}
@@ -905,7 +964,7 @@ function escapeHtml(str) {
                 placeholder="Search title, category, location or host..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
+                className="w-full pl-9 pr-3 py-3 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-base shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
               />
             </div>
             <TailwindDropdown
@@ -916,6 +975,18 @@ function escapeHtml(str) {
                 ...categories.map((cat) => ({ value: cat, label: cat })),
               ]}
               className="sm:min-w-[160px]"
+            />
+            <TailwindDropdown
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Time" },
+                { value: "today", label: "Today" },
+                { value: "week", label: "This Week" },
+                { value: "month", label: "This Month" },
+                { value: "year", label: "This Year" },
+              ]}
+              className="sm:min-w-[140px]"
             />
           </div>
 
@@ -936,7 +1007,7 @@ function escapeHtml(str) {
               <button
                 title="Toggle sort direction"
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-2 sm:px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs sm:text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0"
+                className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm sm:text-base shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 whitespace-nowrap flex-shrink-0 font-medium"
               >
                 <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                   <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
@@ -946,7 +1017,7 @@ function escapeHtml(str) {
             <button
               title="Export CSV"
               onClick={exportCSV}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 whitespace-nowrap flex-shrink-0"
             >
               <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                 <path d="M3 3a2 2 0 0 0-2 2v5a1 1 0 1 0 2 0V5h14v10H7a1 1 0 1 0 0 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H3Z" />
@@ -958,7 +1029,7 @@ function escapeHtml(str) {
             <button
               title="Export PDF"
               onClick={exportPDF}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm sm:text-base font-semibold shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 whitespace-nowrap flex-shrink-0"
             >
               <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                 <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
@@ -968,7 +1039,7 @@ function escapeHtml(str) {
             <button
               title="Print"
               onClick={printTable}
-              className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+              className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 whitespace-nowrap flex-shrink-0"
             >
               <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
               <span className="hidden xs:inline">Print</span>
@@ -998,41 +1069,41 @@ function escapeHtml(str) {
         ) : (
           <div className="relative rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
             <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none rounded-2xl sm:-mx-3 sm:mx-0" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <table className="w-full text-sm">
+              <table className="w-full text-base">
                 <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur dark:bg-slate-900/80">
-                  <tr className="text-left text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-3 pl-4 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm">ID</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm">Title</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden sm:table-cell">Host</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden md:table-cell">Category</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden lg:table-cell">Location</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm text-right">Price</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm text-right hidden md:table-cell">Bookings</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm text-right hidden lg:table-cell">Rating</th>
-                    <th className="py-3 pr-4 font-semibold text-xs sm:text-sm">Status</th>
+                  <tr className="text-left text-slate-700 dark:text-slate-300 border-b-2 border-slate-300 dark:border-slate-700">
+                    <th className="py-4 pl-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base">ID</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base">Title</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base hidden sm:table-cell">Host</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base hidden md:table-cell">Category</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base hidden lg:table-cell">Location</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base text-right">Price</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base text-right hidden md:table-cell">Bookings</th>
+                    <th className="py-4 pr-2 sm:pr-4 font-bold text-sm sm:text-base text-right hidden lg:table-cell">Rating</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pagedListings.map((l, idx) => (
                     <tr
                       key={l.id}
-                      className={`border-b border-slate-100 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 ${
+                      className={`border-b border-slate-200 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 transition-colors ${
                         idx % 2 === 0 ? "bg-white/70 dark:bg-slate-900/40" : "bg-white/40 dark:bg-slate-900/30"
                       }`}
                     >
-                      <td className="py-3 pl-4 pr-2 sm:pr-4 font-mono text-xs text-slate-500">{String(l.id).slice(0, 8)}…</td>
-                      <td className="py-3 pr-2 sm:pr-4 font-medium text-slate-900 dark:text-slate-100 text-xs sm:text-sm">{l.title}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-xs sm:text-sm hidden sm:table-cell">{l.hostName || l.hostUid || "—"}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-xs sm:text-sm hidden md:table-cell">{l.category || "—"}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-xs sm:text-sm hidden lg:table-cell">{l.location || "—"}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-xs sm:text-sm">
+                      <td className="py-4 pl-4 pr-2 sm:pr-4 font-mono text-sm text-slate-600 dark:text-slate-400">{String(l.id).slice(0, 8)}…</td>
+                      <td className="py-4 pr-2 sm:pr-4 font-semibold text-slate-900 dark:text-slate-100 text-sm sm:text-base leading-relaxed">{l.title}</td>
+                      <td className="py-4 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base hidden sm:table-cell">{l.hostName || l.hostUid || "—"}</td>
+                      <td className="py-4 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base hidden md:table-cell">{l.category || "—"}</td>
+                      <td className="py-4 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base hidden lg:table-cell">{l.location || "—"}</td>
+                      <td className="py-4 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-medium">
                         {l.price != null ? formatPeso(l.price) : "—"}
                       </td>
-                      <td className="py-3 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-xs sm:text-sm hidden md:table-cell">{l.bookingCount || 0}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-xs sm:text-sm hidden lg:table-cell">
+                      <td className="py-4 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-medium hidden md:table-cell">{l.bookingCount || 0}</td>
+                      <td className="py-4 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-medium hidden lg:table-cell">
                         {l.ratingCount ? `${(l.ratingAvg || 0).toFixed(1)} (${l.ratingCount})` : "—"}
                       </td>
-                      <td className="py-3 pr-4 text-xs">
+                      <td className="py-4 pr-4 text-sm">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${badgeClass(l.status)}`}>
                           <span
                             className={`h-1.5 w-1.5 rounded-full ${
@@ -1057,16 +1128,16 @@ function escapeHtml(str) {
         {/* Pagination */}
         {sorted.length > 0 && (
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 pt-4">
-            <div className="text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+            <div className="text-sm sm:text-base text-slate-600 dark:text-slate-400">
               Showing{" "}
-              <span className="font-medium text-slate-800 dark:text-slate-200">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">
                 {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, sorted.length)}
               </span>{" "}
-              of <span className="font-medium text-slate-800 dark:text-slate-200">{sorted.length}</span>
+              of <span className="font-semibold text-slate-800 dark:text-slate-200">{sorted.length}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
               <div className="flex items-center gap-2">
-                <label className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">Rows:</label>
+                <label className="text-sm sm:text-base text-slate-600 dark:text-slate-400 whitespace-nowrap font-medium">Rows:</label>
                 <TailwindDropdown
                   value={String(pageSize)}
                   onChange={(e) => {

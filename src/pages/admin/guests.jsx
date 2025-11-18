@@ -35,6 +35,7 @@ export default function AdminGuestsPage() {
   const [sortDir, setSortDir] = useState("desc");
   const [verifiedFilter, setVerifiedFilter] = useState("all");
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
   const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
   useEffect(() => {
@@ -155,11 +156,62 @@ export default function AdminGuestsPage() {
     }
   };
 
+  // Helper function to get date range based on time filter
+  const getTimeFilterRange = (filter) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    switch (filter) {
+      case "today":
+        return { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
+      case "week": {
+        const dayOfWeek = now.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - dayOfWeek);
+        return { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
+      }
+      case "month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        return { start: startOfMonth, end: endOfMonth };
+      }
+      case "year": {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const endOfYear = new Date(now.getFullYear() + 1, 0, 1);
+        return { start: startOfYear, end: endOfYear };
+      }
+      default:
+        return null; // "all" - no date filtering
+    }
+  };
+
+  // Get time filter label for display
+  const getTimeFilterLabel = (filter) => {
+    switch (filter) {
+      case "today": return "Today";
+      case "week": return "This Week";
+      case "month": return "This Month";
+      case "year": return "This Year";
+      default: return "All Time";
+    }
+  };
+
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
     const filtered = guests.filter((g) => {
       if (verifiedFilter !== "all" && g.verified !== (verifiedFilter === "verified")) return false;
-      if (!isDateInRange(g.createdAt, dateRange)) return false;
+      
+      // time filter (takes precedence over dateRange if set)
+      if (timeFilter !== "all") {
+        const timeRange = getTimeFilterRange(timeFilter);
+        if (timeRange) {
+          const createdAt = g.createdAt?.toDate ? g.createdAt.toDate() : (g.createdAt instanceof Date ? g.createdAt : new Date(g.createdAt));
+          if (!createdAt || createdAt < timeRange.start || createdAt >= timeRange.end) return false;
+        }
+      } else {
+        // date range filter (only if timeFilter is "all")
+        if (!isDateInRange(g.createdAt, dateRange)) return false;
+      }
       if (s) {
         const hay = [g.firstName, g.lastName, g.email, g.id].filter(Boolean).join(" ").toLowerCase();
         return hay.includes(s);
@@ -188,7 +240,7 @@ export default function AdminGuestsPage() {
       const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
       return tb - ta;
     });
-  }, [guests, search, sortKey, sortDir, verifiedFilter, dateRange]);
+  }, [guests, search, sortKey, sortDir, verifiedFilter, dateRange, timeFilter]);
 
   const metrics = useMemo(() => {
     const nonAdmin = guests.filter((g) => String(g.role || "").toLowerCase() !== "admin");
@@ -229,7 +281,8 @@ export default function AdminGuestsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `guests_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      a.download = `guests_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -248,6 +301,7 @@ export default function AdminGuestsPage() {
       return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     };
     const nowStr = new Date().toLocaleString();
+    const timeFilterLabel = getTimeFilterLabel(timeFilter);
     return `<!doctype html>
 <html>
 <head>
@@ -274,7 +328,7 @@ export default function AdminGuestsPage() {
 <body>
   <div class="header">
     <div class="brand"><img src="${BookifyIcon}" alt="logo"/><h1>Bookify <small>Guests Report</small></h1></div>
-    <div class="meta">Generated: ${escapeHtml(nowStr)}<br/>Rows: ${rows.length.toLocaleString()}</div>
+    <div class="meta">Generated: ${escapeHtml(nowStr)}<br/>Period: ${escapeHtml(timeFilterLabel)}<br/>Rows: ${rows.length.toLocaleString()}</div>
   </div>
   <table>
     <thead>
@@ -325,7 +379,8 @@ export default function AdminGuestsPage() {
   const exportPDF = () => {
     try {
       const htmlContent = generatePDFHTML();
-      const filename = `guests_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      const filename = `guests_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
       setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
       console.error("Failed to generate PDF preview", e);
@@ -342,6 +397,7 @@ export default function AdminGuestsPage() {
         return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
       };
       const nowStr = new Date().toLocaleString();
+      const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
       const html = `<!doctype html>
 <html>
@@ -375,6 +431,7 @@ export default function AdminGuestsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Total: ${rows.length.toLocaleString()} guests
     </div>
   </div>
@@ -528,31 +585,31 @@ export default function AdminGuestsPage() {
 
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total}</p>
-            <div className="mt-2 sm:mt-3 flex items-center gap-2 text-xs text-slate-600">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">{metrics.verified} verified</span>
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700">{metrics.unverified} unverified</span>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Guests</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total}</p>
+            <div className="mt-2 sm:mt-3 flex items-center gap-2 text-sm text-slate-600">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium">{metrics.verified} verified</span>
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 text-red-700 font-medium">{metrics.unverified} unverified</span>
             </div>
           </div>
 
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.totalBookings.toLocaleString()}</p>
-            <p className="mt-2 text-xs text-slate-600">Average: {metrics.avgBookingsPerGuest} per guest</p>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Bookings</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.totalBookings.toLocaleString()}</p>
+            <p className="mt-2 text-sm text-slate-600">Average: {metrics.avgBookingsPerGuest} per guest</p>
           </div>
 
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Most Active Guest</p>
-            <p className="mt-1 text-sm sm:text-base font-semibold text-slate-900 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Most Active Guest</p>
+            <p className="mt-2 text-base sm:text-lg font-bold text-slate-900 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
               {metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}
             </p>
-            <p className="mt-2 text-xs text-slate-600">{metrics.mostActive?.bookingCount || 0} bookings</p>
+            <p className="mt-2 text-sm text-slate-600">{metrics.mostActive?.bookingCount || 0} bookings</p>
           </div>
 
           <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Verification Rate</p>
-            <p className="mt-1 text-2xl sm:text-3xl font-bold text-slate-900">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
+            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Verification Rate</p>
+            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
             <div className="mt-2 sm:mt-3 h-2 rounded-full bg-slate-100">
               <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${metrics.total ? (metrics.verified / metrics.total) * 100 : 0}%` }} />
             </div>
@@ -572,7 +629,7 @@ export default function AdminGuestsPage() {
                 placeholder="Search by name, email or ID..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full pl-9 pr-3 py-3 rounded-xl border border-slate-200 bg-white text-base shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
           </div>
@@ -585,6 +642,18 @@ export default function AdminGuestsPage() {
                 placeholder="Select date range"
               />
             </div>
+            <TailwindDropdown
+              value={timeFilter}
+              onChange={(e) => setTimeFilter(e.target.value)}
+              options={[
+                { value: "all", label: "All Time" },
+                { value: "today", label: "Today" },
+                { value: "week", label: "This Week" },
+                { value: "month", label: "This Month" },
+                { value: "year", label: "This Year" },
+              ]}
+              className="sm:min-w-[140px]"
+            />
             <TailwindDropdown
                 value={verifiedFilter}
                 onChange={(e) => setVerifiedFilter(e.target.value)}
@@ -610,28 +679,28 @@ export default function AdminGuestsPage() {
               <button
                 title="Toggle sort direction"
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
+                className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm sm:text-base shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 font-medium"
               >
                 {sortDir === "asc" ? "Asc" : "Desc"}
               </button>
             <button
               title="Export CSV"
               onClick={exportCSV}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             >
               Export CSV
             </button>
             <button
               title="Export PDF"
               onClick={exportPDF}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
+              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm sm:text-base font-semibold shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
             >
               Export PDF
             </button>
             <button
               title="Print"
               onClick={printTable}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-600 text-white text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
             >
               <Printer size={16} />
               Print
@@ -656,40 +725,40 @@ export default function AdminGuestsPage() {
         ) : (
           <div className="relative rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
             <div className="overflow-x-auto rounded-2xl">
-              <table className="min-w-full text-sm">
+              <table className="min-w-full text-base">
                 <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur dark:bg-slate-900/80">
-                  <tr className="text-left text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-3 pl-4 pr-4 font-semibold">ID</th>
-                    <th className="py-3 pr-4 font-semibold">First Name</th>
-                    <th className="py-3 pr-4 font-semibold">Last Name</th>
-                    <th className="py-3 pr-4 font-semibold">Email</th>
-                    <th className="py-3 pr-4 font-semibold text-right">Bookings</th>
-                    <th className="py-3 pr-4 font-semibold text-right">Total Spent</th>
-                    <th className="py-3 pr-4 font-semibold">Status</th>
-                    <th className="py-3 pr-4 font-semibold">Joined</th>
+                  <tr className="text-left text-slate-700 dark:text-slate-300 border-b-2 border-slate-300 dark:border-slate-700">
+                    <th className="py-4 pl-4 pr-4 font-bold text-sm sm:text-base">ID</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">First Name</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Last Name</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Email</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base text-right">Bookings</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base text-right">Total Spent</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Status</th>
+                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Joined</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sorted.map((g, idx) => (
                     <tr
                       key={g.id}
-                      className={`border-b border-slate-100 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 ${
+                      className={`border-b border-slate-200 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 transition-colors ${
                         idx % 2 === 0 ? "bg-white/70 dark:bg-slate-900/40" : "bg-white/40 dark:bg-slate-900/30"
                       }`}
                     >
-                      <td className="py-3 pl-4 pr-4 font-mono text-xs text-slate-500">{String(g.id).slice(0, 8)}…</td>
-                      <td className="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100">{g.firstName || "—"}</td>
-                      <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.lastName || "—"}</td>
-                      <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.email}</td>
-                      <td className="py-3 pr-4 text-right text-slate-900 dark:text-slate-100">{g.bookingCount || 0}</td>
-                      <td className="py-3 pr-4 text-right text-slate-900 dark:text-slate-100 font-medium">₱{(g.totalSpent || 0).toLocaleString()}</td>
-                      <td className="py-3 pr-4 text-xs">
+                      <td className="py-4 pl-4 pr-4 font-mono text-sm text-slate-600 dark:text-slate-400">{String(g.id).slice(0, 8)}…</td>
+                      <td className="py-4 pr-4 font-semibold text-slate-900 dark:text-slate-100 text-sm sm:text-base">{g.firstName || "—"}</td>
+                      <td className="py-4 pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base">{g.lastName || "—"}</td>
+                      <td className="py-4 pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base">{g.email}</td>
+                      <td className="py-4 pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-medium">{g.bookingCount || 0}</td>
+                      <td className="py-4 pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-semibold">₱{(g.totalSpent || 0).toLocaleString()}</td>
+                      <td className="py-4 pr-4 text-sm">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${verificationBadgeClass(g.verified)}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${g.verified ? "bg-emerald-500" : "bg-red-500"}`} />
                           {g.verified ? "Verified" : "Unverified"}
                         </span>
                       </td>
-                      <td className="py-3 pr-4 text-xs text-slate-500">{formatDate(g.createdAt)}</td>
+                      <td className="py-4 pr-4 text-sm sm:text-base text-slate-600 dark:text-slate-400">{formatDate(g.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>

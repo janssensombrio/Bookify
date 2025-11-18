@@ -619,7 +619,15 @@ export default function PointsPage() {
     const delta = Number(tx.delta || 0);
     const isPositive = delta > 0;
     
-    if (type.includes("reward") || type.includes("bonus") || type.includes("signup")) {
+    // Check for reward_redeemed first (before checking for "reward" which would match it)
+    if (type.includes("reward_redeemed")) {
+      return {
+        label: "Reward Redeemed",
+        icon: ShoppingBag,
+        kind: "danger",
+        isPositive: false, // Points are deducted, so negative
+      };
+    } else if (type.includes("reward") || type.includes("bonus") || type.includes("signup")) {
       return {
         label: type.includes("signup") ? "Signup Bonus" : type.includes("booking") ? "Booking Reward" : "Reward",
         icon: Gift,

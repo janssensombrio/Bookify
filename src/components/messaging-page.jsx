@@ -178,6 +178,7 @@ export default function MessagesPage() {
   const [hiddenAtMap, setHiddenAtMap] = useState({}); // { [otherUid]: ms }
   const [archivedAtMap, setArchivedAtMap] = useState({}); // { [otherUid]: ms }
   const [lastActivityMs, setLastActivityMs] = useState({}); // { [otherUid]: ms }
+  const [lastMessages, setLastMessages] = useState({}); // { [otherUid]: { text: string, timestamp: ms } }
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [archiving, setArchiving] = useState(false);
@@ -185,6 +186,7 @@ export default function MessagesPage() {
   const menuRef = useRef(null);
   const menuButtonRef = useRef(null);
   const [menuPosition, setMenuPosition] = useState({ top: 0, right: 0 });
+  const [showArchived, setShowArchived] = useState(false);
 
   // scrolling refs
   const scrollBoxRef = useRef(null);
@@ -240,11 +242,33 @@ export default function MessagesPage() {
     );
   }, [currentUid]);
 
+  /* ---------- subscribe: archivedConversations ---------- */
+  useEffect(() => {
+    if (!currentUid) {
+      setArchivedAtMap({});
+      return;
+    }
+    const colRef = collection(database, "users", currentUid, "archivedConversations");
+    return onSnapshot(
+      colRef,
+      (snap) => {
+        const next = {};
+        snap.forEach((d) => {
+          const aa = d.data()?.archivedAt || null;
+          next[d.id] = tsToMs(aa);
+        });
+        setArchivedAtMap(next);
+      },
+      (err) => console.error("archivedConversations error:", err)
+    );
+  }, [currentUid]);
+
   /* ---------- conversations list & activity (live, index-free) ---------- */
   useEffect(() => {
     if (!currentUid) {
       setConversationUserIds([]);
       setLastActivityMs({});
+      setLastMessages({});
       return;
     }
 
@@ -256,17 +280,32 @@ export default function MessagesPage() {
     let setB = new Set();
     let lastA = new Map();
     let lastB = new Map();
+    let lastMsgA = new Map(); // otherUid -> { text, timestamp }
+    let lastMsgB = new Map();
 
     const emit = () => {
       const ids = Array.from(new Set([...setA, ...setB]));
       setConversationUserIds(ids);
       const merged = {};
+      const mergedMsgs = {};
       ids.forEach((id) => {
         const a = lastA.get(id) ?? 0;
         const b = lastB.get(id) ?? 0;
         merged[id] = Math.max(a, b);
+        
+        // Get the most recent message
+        const msgA = lastMsgA.get(id);
+        const msgB = lastMsgB.get(id);
+        if (msgA && msgB) {
+          mergedMsgs[id] = msgA.timestamp > msgB.timestamp ? msgA : msgB;
+        } else if (msgA) {
+          mergedMsgs[id] = msgA;
+        } else if (msgB) {
+          mergedMsgs[id] = msgB;
+        }
       });
       setLastActivityMs(merged);
+      setLastMessages(mergedMsgs);
     };
 
     const unsub1 = onSnapshot(
@@ -274,13 +313,21 @@ export default function MessagesPage() {
       (snap) => {
         setA = new Set();
         lastA = new Map();
+        lastMsgA = new Map();
         snap.forEach((d) => {
           const m = d.data();
           const other = m?.receiverId;
           if (!other || other === currentUid) return;
           setA.add(other);
           const t = tsToMs(m.timestamp);
-          lastA.set(other, Math.max(lastA.get(other) ?? 0, t));
+          const currentLast = lastA.get(other) ?? 0;
+          if (t >= currentLast) {
+            lastA.set(other, t);
+            lastMsgA.set(other, {
+              text: m.text || m.message || "",
+              timestamp: t,
+            });
+          }
         });
         emit();
       },
@@ -292,13 +339,21 @@ export default function MessagesPage() {
       (snap) => {
         setB = new Set();
         lastB = new Map();
+        lastMsgB = new Map();
         snap.forEach((d) => {
           const m = d.data();
           const other = m?.senderId;
           if (!other || other === currentUid) return;
           setB.add(other);
           const t = tsToMs(m.timestamp);
-          lastB.set(other, Math.max(lastB.get(other) ?? 0, t));
+          const currentLast = lastB.get(other) ?? 0;
+          if (t >= currentLast) {
+            lastB.set(other, t);
+            lastMsgB.set(other, {
+              text: m.text || m.message || "",
+              timestamp: t,
+            });
+          }
         });
         emit();
       },
@@ -366,6 +421,22 @@ export default function MessagesPage() {
         .slice()
         .sort((a, b) => (userMap[a]?.displayName || a).localeCompare(userMap[b]?.displayName || b)),
     [finalConversations, userMap]
+  );
+
+  /* ---------- archived conversations list ---------- */
+  const archivedConversations = useMemo(() => {
+    return conversationUserIds.filter((uid) => {
+      const archivedAt = archivedAtMap[uid] ?? 0;
+      return archivedAt > 0;
+    });
+  }, [conversationUserIds, archivedAtMap]);
+
+  const sortedArchivedConversations = useMemo(
+    () =>
+      archivedConversations
+        .slice()
+        .sort((a, b) => (userMap[a]?.displayName || a).localeCompare(userMap[b]?.displayName || b)),
+    [archivedConversations, userMap]
   );
 
   /* ---------- open chat (live subscription, index-free) ---------- */
@@ -777,6 +848,17 @@ export default function MessagesPage() {
     }
   };
 
+  /* ---------- unarchive conversation ---------- */
+  const unarchiveConversation = async (uid) => {
+    if (!currentUid || !uid) return;
+    try {
+      await deleteDoc(doc(database, "users", currentUid, "archivedConversations", uid));
+    } catch (e) {
+      console.error("Failed to unarchive conversation:", e);
+      alert("Failed to unarchive conversation. Please try again.");
+    }
+  };
+
   /* ---------- derived profile for header ---------- */
   const selectedProfile = useMemo(() => {
     if (!selectedChat) return null;
@@ -999,42 +1081,138 @@ export default function MessagesPage() {
             
             <div className="relative z-10 flex flex-col min-h-0 flex-1">
               <div className="flex-shrink-0 mb-3 md:mb-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
-                  <h3 className="text-base sm:text-lg font-semibold text-slate-900">Conversations</h3>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
+                    <h3 className="text-base sm:text-lg font-semibold text-slate-900">
+                      {showArchived ? "Archived" : "Conversations"}
+                    </h3>
+                  </div>
+                  {archivedConversations.length > 0 && (
+                    <button
+                      onClick={() => setShowArchived(!showArchived)}
+                      className="text-xs sm:text-sm text-blue-600 hover:text-blue-700 font-medium px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors"
+                    >
+                      {showArchived ? "Show Active" : `Archived (${archivedConversations.length})`}
+                    </button>
+                  )}
                 </div>
-                <p className="text-xs sm:text-sm text-slate-600">View all your conversations.</p>
+                <p className="text-xs sm:text-sm text-slate-600">
+                  {showArchived ? "View your archived conversations." : "View all your conversations."}
+                </p>
               </div>
 
               <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent min-h-0">
-                {sortedConversations.length === 0 ? (
-                  <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
-                ) : (
-                  <div className="space-y-2 overflow-x-hidden">
-                    {sortedConversations.map((uid) => {
-                      const data = userMap[uid] || { displayName: uid, photoURL: null };
-                      const active = selectedChat === uid;
-                      return (
-                        <div key={uid} className="overflow-hidden -mx-1 px-1">
-                          <button
-                            onClick={() => setSelectedChat(uid)}
-                            className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
+                {showArchived ? (
+                  sortedArchivedConversations.length === 0 ? (
+                    <div className="text-center py-6">
+                      <div className="text-xs sm:text-sm text-slate-600 mb-3">No archived conversations</div>
+                      <button
+                        onClick={() => setShowArchived(false)}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors shadow-md"
+                      >
+                        View All Messages
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 overflow-x-hidden">
+                      <button
+                        onClick={() => setShowArchived(false)}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md mb-2"
+                      >
+                        <ArrowLeft size={16} />
+                        View All Messages
+                      </button>
+                      {sortedArchivedConversations.map((uid) => {
+                        const data = userMap[uid] || { displayName: uid, photoURL: null };
+                        const active = selectedChat === uid;
+                        return (
+                          <div key={uid} className="overflow-hidden -mx-1 px-1">
+                            <div className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 ${
                               active 
                                 ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
-                                : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
-                            }`}
-                            title={data.displayName}
-                          >
-                            <Avatar url={data.photoURL} name={data.displayName} size={36} />
-                            <div className="text-left min-w-0 flex-1 overflow-hidden">
-                              <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
-                              <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                : "bg-white/60 border-2 border-white/60 backdrop-blur-sm shadow-md"
+                            }`}>
+                              <button
+                                onClick={() => setSelectedChat(uid)}
+                                className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0"
+                                title={data.displayName}
+                              >
+                                <Avatar url={data.photoURL} name={data.displayName} size={36} />
+                                <div className="text-left min-w-0 flex-1 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className={`text-base sm:text-lg font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                    {lastMessages[uid] && (
+                                      <span className={`text-sm whitespace-nowrap shrink-0 ${active ? "text-blue-100" : "text-slate-500"}`}>
+                                        {formatTime12(lastMessages[uid].timestamp)}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {lastMessages[uid] ? (
+                                    <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>
+                                      {lastMessages[uid].text || "No message"}
+                                    </p>
+                                  ) : (
+                                    <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                  )}
+                                </div>
+                              </button>
+                              <button
+                                onClick={() => unarchiveConversation(uid)}
+                                className="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
+                                title="Unarchive"
+                              >
+                                <Archive className={`w-4 h-4 ${active ? "text-white" : "text-slate-600"}`} />
+                              </button>
                             </div>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  sortedConversations.length === 0 ? (
+                    <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
+                  ) : (
+                    <div className="space-y-2 overflow-x-hidden">
+                      {sortedConversations.map((uid) => {
+                        const data = userMap[uid] || { displayName: uid, photoURL: null };
+                        const active = selectedChat === uid;
+                        return (
+                          <div key={uid} className="overflow-hidden -mx-1 px-1">
+                            <button
+                              onClick={() => setSelectedChat(uid)}
+                              className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
+                                active 
+                                  ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
+                                  : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
+                              }`}
+                              title={data.displayName}
+                            >
+                              <Avatar url={data.photoURL} name={data.displayName} size={36} />
+                              <div className="text-left min-w-0 flex-1 overflow-hidden">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className={`text-base sm:text-lg font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                  {lastMessages[uid] && (
+                                    <span className={`text-sm whitespace-nowrap shrink-0 ${active ? "text-blue-100" : "text-slate-500"}`}>
+                                      {formatTime12(lastMessages[uid].timestamp)}
+                                    </span>
+                                  )}
+                                </div>
+                                {lastMessages[uid] ? (
+                                  <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>
+                                    {lastMessages[uid].text || "No message"}
+                                  </p>
+                                ) : (
+                                  <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                )}
+                              </div>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
                 )}
               </div>
             </div>
@@ -1210,6 +1388,17 @@ export default function MessagesPage() {
               right: `${menuPosition.right}px`,
             }}
           >
+            <button
+              onClick={() => {
+                setMenuOpen(false);
+                archiveConversation();
+              }}
+              disabled={archiving}
+              className="w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left text-sm sm:text-base text-slate-700 active:bg-slate-50/80 md:hover:bg-slate-50/80 transition-colors duration-200 touch-manipulation disabled:opacity-50"
+            >
+              <Archive className="w-3.5 h-3.5 sm:w-4 sm:h-4" size={14} />
+              <span className="font-medium">{archiving ? "Archiving..." : "Archive conversation"}</span>
+            </button>
             <button
               onClick={() => {
                 setMenuOpen(false);

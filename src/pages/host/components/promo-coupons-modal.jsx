@@ -286,12 +286,13 @@ export default function PromoCouponsModal({ open, onClose }) {
   const user = auth.currentUser;
   const ownerUid = user?.uid || null;
 
-  const [activeTab, setActiveTab] = useState("coupons"); // 'coupons' | 'promos'
+  const [activeTab, setActiveTab] = useState("coupons"); // 'coupons' | 'promos' | 'rewards'
   const [loading, setLoading] = useState(true);
 
   const [listings, setListings] = useState([]);
   const [promos, setPromos] = useState([]);
   const [coupons, setCoupons] = useState([]);
+  const [rewards, setRewards] = useState([]);
 
   // Create/Edit states
   const initialCoupon = {
@@ -324,9 +325,22 @@ export default function PromoCouponsModal({ open, onClose }) {
 
   const [couponForm, setCouponForm] = useState(initialCoupon);
   const [promoForm, setPromoForm] = useState(initialPromo);
+  
+  const initialReward = {
+    id: null,
+    name: "",
+    description: "",
+    pointsCost: "",
+    discountType: "percentage", // 'percentage' | 'fixed'
+    discountValue: "",
+    active: true,
+    expiresInDays: "",
+  };
+  const [rewardForm, setRewardForm] = useState(initialReward);
 
   const [saving, setSaving] = useState(false);
   const [savingPromo, setSavingPromo] = useState(false);
+  const [savingReward, setSavingReward] = useState(false);
 
   // Deletion state
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -356,6 +370,10 @@ export default function PromoCouponsModal({ open, onClose }) {
 
         setPromos(await loadOwnerScoped("promos"));
         setCoupons(await loadOwnerScoped("coupons"));
+        
+        // Load rewards (host-scoped)
+        const rewardsList = await loadOwnerScoped("rewards");
+        setRewards(rewardsList);
       } catch (e) {
         console.error(e);
       } finally {
@@ -647,6 +665,110 @@ export default function PromoCouponsModal({ open, onClose }) {
     }
   };
 
+  /* ------------------------ Reward CRUD ------------------------ */
+  const validateReward = (f) => {
+    const errs = {};
+    if (!f.name.trim()) errs.name = "Reward name is required.";
+    if (!f.pointsCost || Number(f.pointsCost) <= 0) errs.pointsCost = "Points cost must be greater than 0.";
+    if (!f.discountValue || Number(f.discountValue) <= 0) errs.discountValue = "Discount value is required.";
+    if (f.discountType === "percentage") {
+      const v = Number(f.discountValue);
+      if (v <= 0 || v > 100) errs.discountValue = "Percentage must be between 1 and 100.";
+    }
+    return errs;
+  };
+
+  const loadRewardForEdit = (r) => {
+    setRewardForm({
+      id: r.id,
+      name: r.name || "",
+      description: r.description || "",
+      pointsCost: String(r.pointsCost ?? ""),
+      discountType: r.discountType || "percentage",
+      discountValue: String(r.discountValue ?? ""),
+      active: r.active !== false,
+      expiresInDays: r.expiresInDays ? String(r.expiresInDays) : "",
+    });
+    setActiveTab("rewards");
+  };
+
+  const resetRewardForm = () => setRewardForm(initialReward);
+  const [rewardErrors, setRewardErrors] = useState({});
+
+  const saveReward = async () => {
+    if (!ownerUid) {
+      alert("You're signed out. Please sign in and try again.");
+      return;
+    }
+    const errs = validateReward(rewardForm);
+    if (Object.keys(errs).length) {
+      setRewardErrors(errs);
+      return;
+    }
+    setRewardErrors({});
+    setSavingReward(true);
+    try {
+      const payload = {
+        uid: ownerUid,
+        ownerUid: ownerUid,
+        name: rewardForm.name.trim(),
+        description: rewardForm.description.trim(),
+        pointsCost: Number(rewardForm.pointsCost),
+        discountType: rewardForm.discountType,
+        discountValue: Number(rewardForm.discountValue),
+        active: rewardForm.active,
+        expiresInDays: rewardForm.expiresInDays ? Number(rewardForm.expiresInDays) : null,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (!rewardForm.id) {
+        await addDoc(collection(database, "rewards"), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(doc(database, "rewards", rewardForm.id), payload);
+      }
+
+      // Reload rewards
+      const mineByUid = await getDocs(query(collection(database, "rewards"), where("uid", "==", ownerUid)));
+      const mineByOwnerUid = await getDocs(
+        query(collection(database, "rewards"), where("ownerUid", "==", ownerUid))
+      );
+      const merged = new Map();
+      mineByUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+      mineByOwnerUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+      setRewards(Array.from(merged.values()));
+      resetRewardForm();
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save reward.");
+    } finally {
+      setSavingReward(false);
+    }
+  };
+
+  const toggleRewardStatus = async (r) => {
+    try {
+      const next = !r.active;
+      await updateDoc(doc(database, "rewards", r.id), {
+        uid: ownerUid,
+        ownerUid: ownerUid,
+        active: next,
+        updatedAt: serverTimestamp(),
+      });
+      setRewards((prev) => prev.map((x) => (x.id === r.id ? { ...x, active: next } : x)));
+    } catch (e) {
+      console.error(e);
+      alert("Failed to update status.");
+    }
+  };
+
+  const requestDeleteReward = (id, name) => {
+    setPendingDelete({ type: "reward", id, label: name || "reward" });
+    setConfirmOpen(true);
+  };
+
   /* ------------------------ Delete (with legacy repair) ------------------------ */
   const safeDelete = async (coll, id) => {
     const ref = doc(database, coll, id);
@@ -700,6 +822,16 @@ export default function PromoCouponsModal({ open, onClose }) {
         mineByUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
         mineByOwnerUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
         setPromos(Array.from(merged.values()));
+      } else if (pendingDelete.type === "reward") {
+        await safeDelete("rewards", pendingDelete.id);
+        const mineByUid = await getDocs(query(collection(database, "rewards"), where("uid", "==", ownerUid)));
+        const mineByOwnerUid = await getDocs(
+          query(collection(database, "rewards"), where("ownerUid", "==", ownerUid))
+        );
+        const merged = new Map();
+        mineByUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+        mineByOwnerUid.docs.forEach((d) => merged.set(d.id, { id: d.id, ...d.data() }));
+        setRewards(Array.from(merged.values()));
       }
     } catch (e) {
       console.error(e);
@@ -726,6 +858,14 @@ export default function PromoCouponsModal({ open, onClose }) {
     return promos.filter((p) => p.status === statusFilter);
   }, [promos, statusFilter]);
 
+  const visibleRewards = useMemo(() => {
+    if (statusFilter === "all") return rewards;
+    // For rewards, filter by active status
+    if (statusFilter === "active") return rewards.filter((r) => r.active === true);
+    if (statusFilter === "paused") return rewards.filter((r) => r.active === false);
+    return rewards;
+  }, [rewards, statusFilter]);
+
   if (!open) return null;
 
   return createPortal(
@@ -733,14 +873,14 @@ export default function PromoCouponsModal({ open, onClose }) {
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
       {/* Modal */}
-      <div className="relative z-[111] mx-auto my-6 w-[min(1100px,calc(100vw-20px))] rounded-3xl border border-white/70 bg-gradient-to-br from-blue-50 via-white to-indigo-50 shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_40px_80px_rgba(30,58,138,0.12)]">
+      <div className="relative z-[111] mx-auto my-6 w-[min(1100px,calc(100vw-20px))] max-h-[calc(100vh-48px)] flex flex-col rounded-3xl border border-white/70 bg-gradient-to-br from-blue-50 via-white to-indigo-50 shadow-[0_12px_30px_rgba(30,58,138,0.12),_0_40px_80px_rgba(30,58,138,0.12)]">
         {/* Header */}
-        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-white/60 bg-white/85 px-4 sm:px-6 py-3 backdrop-blur">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 rounded-t-3xl border-b border-white/60 bg-white/85 px-4 sm:px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-2">
             <span className="grid place-items-center w-9 h-9 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-700 ring-4 ring-white/60 shadow">
               <Gift className="w-4.5 h-4.5" />
             </span>
-            <h2 className="text-lg sm:text-xl font-semibold text-slate-900">Promos & Coupons</h2>
+            <h2 className="text-lg sm:text-xl font-semibold text-slate-900">Promos, Coupons, & Rewards</h2>
           </div>
           <button
             onClick={onClose}
@@ -752,7 +892,7 @@ export default function PromoCouponsModal({ open, onClose }) {
         </div>
 
         {/* Body */}
-        <div className="max-h-[78vh] overflow-y-auto p-4 sm:p-6 md:p-8">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8">
           {/* Tabs + filter */}
           <div className="flex flex-wrap items-center gap-3 justify-between">
             <div className="flex items-center gap-2">
@@ -777,6 +917,17 @@ export default function PromoCouponsModal({ open, onClose }) {
               >
                 <Percent className="w-4 h-4" />
                 Promos
+              </button>
+              <button
+                onClick={() => setActiveTab("rewards")}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold transition ${
+                  activeTab === "rewards"
+                    ? "bg-blue-600 text-white shadow-md shadow-blue-500/30"
+                    : "bg-white text-slate-800 border border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                <Gift className="w-4 h-4" />
+                Rewards
               </button>
             </div>
 
@@ -1292,6 +1443,219 @@ export default function PromoCouponsModal({ open, onClose }) {
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                               {deletingId === p.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!loading && activeTab === "rewards" && (
+            <div className="mt-6 grid lg:grid-cols-2 gap-6">
+              {/* Left: composer */}
+              <div className="rounded-3xl border border-slate-200 bg-white/90 backdrop-blur p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                    <Gift className="w-4 h-4" />
+                    {rewardForm.id ? "Edit Reward" : "Create Reward"}
+                  </h3>
+                  {rewardForm.id ? <Badge tone="amber">Editing</Badge> : <Badge tone="blue">New</Badge>}
+                </div>
+
+                <div className="mt-4 grid gap-4">
+                  <Field label="Reward Name" error={rewardErrors.name}>
+                    <input
+                      type="text"
+                      placeholder="e.g., 10% Off Booking"
+                      value={rewardForm.name}
+                      onChange={(e) => setRewardForm((p) => ({ ...p, name: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-4 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    />
+                  </Field>
+
+                  <Field label="Description">
+                    <textarea
+                      rows={3}
+                      placeholder="Optional description"
+                      value={rewardForm.description}
+                      onChange={(e) => setRewardForm((p) => ({ ...p, description: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-4 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    />
+                  </Field>
+
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <Field label="Points Cost" error={rewardErrors.pointsCost}>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="100"
+                        value={rewardForm.pointsCost}
+                        onChange={(e) => setRewardForm((p) => ({ ...p, pointsCost: e.target.value }))}
+                        className="w-full rounded-2xl border border-slate-300 bg-white/90 px-4 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                      />
+                    </Field>
+                    <Field label="Discount Type">
+                      <select
+                        value={rewardForm.discountType}
+                        onChange={(e) => setRewardForm((p) => ({ ...p, discountType: e.target.value }))}
+                        className="w-full rounded-2xl border border-slate-300 bg-white/90 px-3 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                      >
+                        <option value="percentage">Percentage (%)</option>
+                        <option value="fixed">Fixed (₱)</option>
+                      </select>
+                    </Field>
+                  </div>
+
+                  <Field label="Discount Value" error={rewardErrors.discountValue}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder={rewardForm.discountType === "percentage" ? "10" : "500"}
+                      value={rewardForm.discountValue}
+                      onChange={(e) => setRewardForm((p) => ({ ...p, discountValue: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-4 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    />
+                  </Field>
+
+                  <Field label="Expires In (Days)">
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="Leave blank for no expiration"
+                      value={rewardForm.expiresInDays}
+                      onChange={(e) => setRewardForm((p) => ({ ...p, expiresInDays: e.target.value }))}
+                      className="w-full rounded-2xl border border-slate-300 bg-white/90 px-4 py-2.5 text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400/40 focus:border-blue-500"
+                    />
+                  </Field>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id="rewardActive"
+                      checked={rewardForm.active}
+                      onChange={(e) => setRewardForm((p) => ({ ...p, active: e.target.checked }))}
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <label htmlFor="rewardActive" className="text-sm font-medium text-slate-700">
+                      Active (visible to guests)
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={saveReward}
+                      disabled={savingReward}
+                      className={`inline-flex items-center gap-2 rounded-full px-6 py-2.5 text-sm font-semibold text-white shadow disabled:opacity-50 ${
+                        rewardForm.id
+                          ? "bg-emerald-600 hover:bg-emerald-700"
+                          : "bg-blue-600 hover:bg-blue-700"
+                      }`}
+                    >
+                      <Plus className="w-4 h-4" />
+                      {savingReward ? "Saving…" : rewardForm.id ? "Save Changes" : "Create Reward"}
+                    </button>
+                    {rewardForm.id ? (
+                      <button
+                        onClick={resetRewardForm}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                      >
+                        Cancel Edit
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: list */}
+              <div className="rounded-3xl border border-slate-200 bg-white/90 backdrop-blur p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-semibold text-slate-900">Your Rewards</h3>
+                  <Badge tone="slate">{visibleRewards.length} total</Badge>
+                </div>
+
+                {visibleRewards.length === 0 ? (
+                  <p className="mt-4 text-sm text-slate-600">No rewards found.</p>
+                ) : (
+                  <ul className="mt-4 grid gap-3">
+                    {visibleRewards.map((r) => (
+                      <li
+                        key={r.id}
+                        className={`rounded-2xl border-2 p-4 shadow-sm flex flex-col gap-3 ${
+                          r.active
+                            ? "border-emerald-200 bg-emerald-50"
+                            : "border-slate-200 bg-slate-50 opacity-75"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold tracking-wide text-slate-900">{r.name}</span>
+                              <Badge tone={r.active ? "green" : "slate"}>
+                                {r.active ? (
+                                  <>
+                                    <CheckCircle2 className="w-3.5 h-3.5" /> Active
+                                  </>
+                                ) : (
+                                  "Inactive"
+                                )}
+                              </Badge>
+                            </div>
+                            {r.description && (
+                              <p className="text-sm text-slate-600 mt-0.5">{r.description}</p>
+                            )}
+                            <div className="flex items-center gap-2 flex-wrap mt-1">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-semibold">
+                                {r.pointsCost} pts
+                              </span>
+                              {r.discountType === "percentage" ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold">
+                                  <Percent size={10} />
+                                  {r.discountValue}% OFF
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-xs font-semibold">
+                                  <Tag size={10} />
+                                  ₱{Number(r.discountValue || 0).toLocaleString()} OFF
+                                </span>
+                              )}
+                              {r.expiresInDays && (
+                                <span className="text-xs text-slate-500">
+                                  Expires in {r.expiresInDays} days
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => toggleRewardStatus(r)}
+                              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                            >
+                              {r.active ? "Deactivate" : "Activate"}
+                            </button>
+                            <button
+                              onClick={() => loadRewardForEdit(r)}
+                              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => {
+                                setPendingDelete({ type: "reward", id: r.id, label: r.name || "reward" });
+                                setConfirmOpen(true);
+                              }}
+                              disabled={deletingId === r.id}
+                              className="inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              {deletingId === r.id ? "Deleting…" : "Delete"}
                             </button>
                           </div>
                         </div>

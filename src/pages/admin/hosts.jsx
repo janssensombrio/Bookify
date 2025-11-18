@@ -38,6 +38,7 @@ export default function AdminHostsPage() {
   const [verifiedFilter, setVerifiedFilter] = useState("all"); // all, verified, unverified
   const [activeFilter, setActiveFilter] = useState("all"); // all, active, inactive
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
+  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
 
 
   // Service Fees & Policies state
@@ -194,6 +195,46 @@ export default function AdminHostsPage() {
     }
   };
 
+  // Helper function to get date range based on time filter
+  const getTimeFilterRange = (filter) => {
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    switch (filter) {
+      case "today":
+        return { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
+      case "week": {
+        const dayOfWeek = now.getDay();
+        const startOfWeek = new Date(today);
+        startOfWeek.setDate(today.getDate() - dayOfWeek);
+        return { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
+      }
+      case "month": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        return { start: startOfMonth, end: endOfMonth };
+      }
+      case "year": {
+        const startOfYear = new Date(now.getFullYear(), 0, 1);
+        const endOfYear = new Date(now.getFullYear() + 1, 0, 1);
+        return { start: startOfYear, end: endOfYear };
+      }
+      default:
+        return null; // "all" - no date filtering
+    }
+  };
+
+  // Get time filter label for display
+  const getTimeFilterLabel = (filter) => {
+    switch (filter) {
+      case "today": return "Today";
+      case "week": return "This Week";
+      case "month": return "This Month";
+      case "year": return "This Year";
+      default: return "All Time";
+    }
+  };
+
   const filteredHosts = useMemo(() => {
     let filtered = hosts;
     
@@ -209,9 +250,21 @@ export default function AdminHostsPage() {
       });
     }
     
-    // Date range filter
-    if (!isDateInRange(null, dateRange)) {
-      filtered = filtered.filter((h) => isDateInRange(h.createdAt, dateRange));
+    // time filter (takes precedence over dateRange if set)
+    if (timeFilter !== "all") {
+      const timeRange = getTimeFilterRange(timeFilter);
+      if (timeRange) {
+        filtered = filtered.filter((h) => {
+          const createdAt = h.createdAt?.toDate ? h.createdAt.toDate() : (h.createdAt instanceof Date ? h.createdAt : new Date(h.createdAt));
+          if (!createdAt) return false;
+          return createdAt >= timeRange.start && createdAt < timeRange.end;
+        });
+      }
+    } else {
+      // date range filter (only if timeFilter is "all")
+      if (!isDateInRange(null, dateRange)) {
+        filtered = filtered.filter((h) => isDateInRange(h.createdAt, dateRange));
+      }
     }
     
     // Verified filter
@@ -250,13 +303,13 @@ export default function AdminHostsPage() {
     });
     
     return filtered;
-  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir, dateRange]);
+  }, [hosts, searchTerm, verifiedFilter, activeFilter, sortKey, sortDir, dateRange, timeFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredHosts.length / pageSize));
   useEffect(() => {
     if (page > totalPages) setPage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchTerm, pageSize, filteredHosts.length, verifiedFilter, activeFilter]);
+  }, [searchTerm, pageSize, filteredHosts.length, verifiedFilter, activeFilter, timeFilter]);
 
   const pagedHosts = filteredHosts.slice((page - 1) * pageSize, page * pageSize);
   
@@ -298,7 +351,8 @@ export default function AdminHostsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `hosts_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      a.download = `hosts_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -323,6 +377,7 @@ export default function AdminHostsPage() {
     };
 
     const nowStr = new Date().toLocaleString();
+    const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
     const html = [];
     html.push(`<!doctype html>
@@ -377,6 +432,7 @@ export default function AdminHostsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Rows: ${rows.length.toLocaleString()}
     </div>
   </div>
@@ -445,7 +501,8 @@ export default function AdminHostsPage() {
   const exportPDF = () => {
     try {
       const htmlContent = generatePDFHTML();
-      const filename = `hosts_export_${new Date().toISOString().slice(0, 10)}.pdf`;
+      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
+      const filename = `hosts_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
       setPdfPreview({ open: true, htmlContent, filename });
     } catch (e) {
       console.error("Failed to generate PDF preview", e);
@@ -467,6 +524,7 @@ export default function AdminHostsPage() {
       };
 
       const nowStr = new Date().toLocaleString();
+      const timeFilterLabel = getTimeFilterLabel(timeFilter);
 
       const html = `<!doctype html>
 <html>
@@ -501,6 +559,7 @@ export default function AdminHostsPage() {
     </div>
     <div class="meta">
       Generated: ${escapeHtml(nowStr)}<br/>
+      Period: ${escapeHtml(timeFilterLabel)}<br/>
       Total: ${rows.length.toLocaleString()} hosts
     </div>
   </div>
@@ -810,7 +869,7 @@ export default function AdminHostsPage() {
                   <input
                     type="search"
                     placeholder="Search hosts by name, email or ID…"
-                    className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 py-3 text-base focus:outline-none focus:ring-2 focus:ring-blue-400"
                     value={searchTerm}
                     onChange={(e) => {
                       setSearchTerm(e.target.value);
@@ -829,6 +888,21 @@ export default function AdminHostsPage() {
                       placeholder="Select date range"
                     />
                   </div>
+                  <TailwindDropdown
+                    value={timeFilter}
+                    onChange={(e) => {
+                      setTimeFilter(e.target.value);
+                      setPage(1);
+                    }}
+                    options={[
+                      { value: "all", label: "All Time" },
+                      { value: "today", label: "Today" },
+                      { value: "week", label: "This Week" },
+                      { value: "month", label: "This Month" },
+                      { value: "year", label: "This Year" },
+                    ]}
+                    className="sm:min-w-[140px]"
+                  />
                   <TailwindDropdown
                     value={verifiedFilter}
                     onChange={(e) => {
@@ -878,7 +952,7 @@ export default function AdminHostsPage() {
                   <button
                     title="Toggle sort direction"
                     onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                    className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm sm:text-base shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-400 font-medium"
                   >
                     <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
                       <path d="M6 4a1 1 0 0 1 1 1v8.586l1.293-1.293a1 1 0 1 1 1.414 1.414l-3 3a1 1 0 0 1-1.414 0l-3-3A1 1 0 0 1 3.707 12.293L5 13.586V5a1 1 0 0 1 1-1Zm8 12a1 1 0 0 1-1-1V6.414l-1.293 1.293A1 1 0 0 1 10.293 6.293l3-3a1 1 0 0 1 1.414 0l3 3A1 1 0 0 1 16.293 7.707L15 6.414V15a1 1 0 0 1-1 1Z" />
@@ -888,18 +962,18 @@ export default function AdminHostsPage() {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                  <span className="text-xs sm:text-sm text-slate-500 whitespace-nowrap">
-                    Total: <span className="font-semibold text-slate-700">{filteredHosts.length}</span>
+                  <span className="text-sm sm:text-base text-slate-600 whitespace-nowrap">
+                    Total: <span className="font-bold text-slate-700">{filteredHosts.length}</span>
                   </span>
                   <button
                     onClick={exportCSV}
-                    className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-indigo-500 whitespace-nowrap flex-shrink-0"
+                    className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-indigo-500 whitespace-nowrap flex-shrink-0"
                   >
                     <Download size={14} className="sm:w-4 sm:h-4 flex-shrink-0" /> <span className="hidden xs:inline">Export CSV</span><span className="xs:hidden">CSV</span>
                   </button>
                   <button
                     onClick={exportPDF}
-                    className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-slate-900 text-white text-xs sm:text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-slate-700 whitespace-nowrap flex-shrink-0"
+                    className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm sm:text-base font-semibold shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-slate-700 whitespace-nowrap flex-shrink-0"
                   >
                     <svg viewBox="0 0 20 20" className="h-3 w-3 sm:h-4 sm:w-4 flex-shrink-0" fill="currentColor">
                       <path d="M5 2a2 2 0 0 0-2 2v12l5-3 5 3 5-3V4a2 2 0 0 0-2-2H5Z" />
@@ -909,7 +983,7 @@ export default function AdminHostsPage() {
                   <button
                     title="Print"
                     onClick={printTable}
-                    className="inline-flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs sm:text-sm font-medium shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-emerald-500 whitespace-nowrap flex-shrink-0"
+                    className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus:ring-2 focus:ring-emerald-500 whitespace-nowrap flex-shrink-0"
                   >
                     <Printer size={14} className="sm:w-4 sm:h-4 flex-shrink-0" />
                     <span className="hidden xs:inline">Print</span>
@@ -945,15 +1019,15 @@ export default function AdminHostsPage() {
               <div className="p-10 text-center text-slate-500">No hosts found.</div>
             ) : (
               <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none sm:-mx-3 sm:mx-0 px-3 sm:px-0" style={{ WebkitOverflowScrolling: 'touch' }}>
-                <table className="w-full text-sm">
+                <table className="w-full text-base">
                   <thead className="bg-slate-50/60 sticky top-0 z-10">
-                    <tr className="text-left text-slate-600 border-b">
-                      <th className="py-3 pl-4 sm:pl-6 pr-4 font-medium">Host</th>
-                      <th className="py-3 pr-4 font-medium">Email</th>
-                      <th className="py-3 pr-4 font-medium">Verified</th>
-                      <th className="py-3 pr-4 font-medium">Active</th>
-                      <th className="py-3 pr-4 font-medium">Joined</th>
-                      <th className="py-3 pr-4 sm:pr-6 font-medium text-right">Actions</th>
+                    <tr className="text-left text-slate-700 border-b-2 border-slate-300">
+                      <th className="py-4 pl-4 sm:pl-6 pr-4 font-bold text-sm sm:text-base">Host</th>
+                      <th className="py-4 pr-4 font-bold text-sm sm:text-base">Email</th>
+                      <th className="py-4 pr-4 font-bold text-sm sm:text-base">Verified</th>
+                      <th className="py-4 pr-4 font-bold text-sm sm:text-base">Active</th>
+                      <th className="py-4 pr-4 font-bold text-sm sm:text-base">Joined</th>
+                      <th className="py-4 pr-4 sm:pr-6 font-bold text-sm sm:text-base text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -968,7 +1042,7 @@ export default function AdminHostsPage() {
                           setShowHostModal(true);
                         }}
                       >
-                        <td className="py-3 pl-4 sm:pl-6 pr-4">
+                        <td className="py-4 pl-4 sm:pl-6 pr-4">
                           <div className="flex items-center gap-3">
                             <div className="w-9 h-9 rounded-lg overflow-hidden bg-slate-100 shrink-0">
                               {h.photoURL ? (
@@ -983,36 +1057,36 @@ export default function AdminHostsPage() {
                               )}
                   </div>
                             <div className="min-w-0">
-                              <div className="font-medium text-slate-900 truncate">{h.name}</div>
-                              <div className="text-[11px] text-slate-500 font-mono">
+                              <div className="font-semibold text-slate-900 truncate text-sm sm:text-base">{h.name}</div>
+                              <div className="text-xs text-slate-500 font-mono">
                                 {h.id.slice(0, 8)}…
                 </div>
               </div>
             </div>
                         </td>
-                        <td className="py-3 pr-4">
-                          <span className="truncate block max-w-[220px]">{h.email}</span>
+                        <td className="py-4 pr-4">
+                          <span className="truncate block max-w-[220px] text-sm sm:text-base text-slate-700">{h.email}</span>
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-4 pr-4">
                           {h.isVerified ? (
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs sm:text-sm bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium"
                               title="Verified host"
                             >
-                              <CheckCircle2 size={12} /> Verified
+                              <CheckCircle2 size={14} /> Verified
                             </span>
                           ) : (
                             <span
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] bg-slate-100 text-slate-700 border border-slate-200"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs sm:text-sm bg-slate-100 text-slate-700 border border-slate-200 font-medium"
                               title="Not verified"
                             >
-                              <XCircle size={12} /> No
+                              <XCircle size={14} /> No
                             </span>
                           )}
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-4 pr-4">
                           <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border ${
+                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs sm:text-sm border font-medium ${
                               h.active
                                 ? "bg-green-50 text-emerald-700 border-emerald-200"
                                 : "bg-red-50 text-red-700 border-red-200"
@@ -1021,11 +1095,11 @@ export default function AdminHostsPage() {
                             {h.active ? "Active" : "Inactive"}
                           </span>
                         </td>
-                        <td className="py-3 pr-4 text-xs">{formatDate(h.createdAt)}</td>
-                        <td className="py-3 pr-4 sm:pr-6 text-right">
+                        <td className="py-4 pr-4 text-sm sm:text-base text-slate-600">{formatDate(h.createdAt)}</td>
+                        <td className="py-4 pr-4 sm:pr-6 text-right">
                           <div className="inline-flex gap-2">
                             <button
-                              className="px-3 py-1.5 rounded-full text-xs border border-slate-200 bg-white hover:bg-slate-50"
+                              className="px-3 py-1.5 rounded-full text-sm border border-slate-200 bg-white hover:bg-slate-50 font-medium"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedHostId(h.id);
@@ -1047,9 +1121,9 @@ export default function AdminHostsPage() {
           {/* Pagination */}
           {filteredHosts.length > 0 && (
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 pt-1">
-              <div className="text-xs sm:text-sm text-slate-600">
+              <div className="text-sm sm:text-base text-slate-600">
                 Showing{" "}
-                <span className="font-medium text-slate-800">
+                <span className="font-semibold text-slate-800">
                   {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, filteredHosts.length)}
                 </span>{" "}
                 of <span className="font-medium text-slate-800">{filteredHosts.length}</span>

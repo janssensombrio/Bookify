@@ -268,11 +268,11 @@ function Listings(props) {
             <button
               type="button"
               onClick={() => setPromoOpen(true)}
-              className="inline-flex items-center gap-2 h-10 px-4 rounded-2xl border border-white/60 bg-white/80 backdrop-blur-sm text-blue-700 hover:bg-white/90 shadow-md"
-              title="Create or manage promo codes and coupons"
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all duration-200"
+              title="Create or manage promo codes, coupons, and rewards"
             >
-              <BadgePercent size={18} />
-              Promo &amp; Coupons
+              <BadgePercent size={16} />
+              Promos, Coupons, &amp; Rewards
             </button>
 
             {/* Unified status dropdown */}
