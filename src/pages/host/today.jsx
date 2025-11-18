@@ -284,18 +284,27 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
     to_name: String(user?.displayName || (user?.email || "").split("@")[0] || "Guest"),
     to_email: String(user?.email || ""),
     listing_title: String(listing?.title || "Untitled"),
-    listing_category: category,
-    listing_address: String(listing?.location || "—"),
+    listing_category: String(category || "Homes"),
+    listing_address: String(listing?.location || "Not specified"),
     payment_status: String(paymentStatus).charAt(0).toUpperCase() + String(paymentStatus).slice(1),
     currency_symbol: String(currencySymbol || "₱"),
-    total_price: Number(totalAmount || 0).toFixed(2),
-    brand_site_url: String(typeof window !== "undefined" ? window.location.origin : ""),
-    // Date fields - template will show appropriate ones
-    check_in_date: String(checkInDate || ""),
-    check_out_date: String(checkOutDate || ""),
-    schedule_date: String(scheduleDate || ""),
-    schedule_time: String(scheduleTime || ""),
+    total_price: String(Number(totalAmount || 0).toFixed(2)),
+    brand_site_url: String(typeof window !== "undefined" ? window.location.origin : "https://bookify.com"),
   };
+
+  // Only include date fields if they have values (EmailJS doesn't handle empty strings well)
+  if (checkInDate) {
+    params.check_in_date = String(checkInDate);
+  }
+  if (checkOutDate) {
+    params.check_out_date = String(checkOutDate);
+  }
+  if (scheduleDate) {
+    params.schedule_date = String(scheduleDate);
+    if (scheduleTime) {
+      params.schedule_time = String(scheduleTime);
+    }
+  }
 
   // Log for debugging
   console.log("[EmailJS] Attempting to send confirmation email:", { 
