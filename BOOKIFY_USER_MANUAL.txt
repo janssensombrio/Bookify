@@ -1,0 +1,1078 @@
+================================================================================
+                    BOOKIFY - COMPREHENSIVE USER MANUAL
+================================================================================
+
+Version: 1.0
+Last Updated: 2024
+
+================================================================================
+                            TABLE OF CONTENTS
+================================================================================
+
+1. INTRODUCTION
+   1.1 What is Bookify?
+   1.2 System Overview
+   1.3 User Roles
+
+2. GETTING STARTED
+   2.1 Creating an Account
+   2.2 Logging In
+   2.3 Email Verification
+   2.4 First-Time Setup
+
+3. GUEST FEATURES
+   3.1 Dashboard
+   3.2 Exploring Listings
+   3.3 Making Bookings
+   3.4 Managing Bookings
+   3.5 Favorites
+   3.6 Profile Management
+   3.7 Wallet & Payments
+   3.8 Points & Rewards
+   3.9 Messaging
+
+4. HOST FEATURES
+   4.1 Host Setup
+   4.2 Listing Management
+   4.3 Booking Management
+   4.4 Calendar View
+   4.5 Messaging
+   4.6 Wallet & Earnings
+   4.7 Host Profile
+
+5. ADMIN FEATURES
+   5.1 Admin Dashboard
+   5.2 User Management
+   5.3 Listing Management
+   5.4 Booking Management
+   5.5 E-Wallet Management
+   5.6 Rewards Management
+   5.7 Reports & Exports
+
+6. COMMON TASKS & WORKFLOWS
+   6.1 Booking a Listing
+   6.2 Cancelling a Booking
+   6.3 Processing Refunds
+   6.4 Managing Availability
+   6.5 Applying Discounts
+
+7. TROUBLESHOOTING
+   7.1 Common Issues
+   7.2 Getting Help
+
+================================================================================
+1. INTRODUCTION
+================================================================================
+
+1.1 WHAT IS BOOKIFY?
+-------------------
+Bookify is a comprehensive online marketplace platform that connects guests 
+with hosts offering accommodations (Homes), experiences, and services. The 
+platform facilitates bookings, payments, communication, and management of 
+all aspects of the rental and service booking process.
+
+1.2 SYSTEM OVERVIEW
+------------------
+Bookify is a web-based application that supports three main user types:
+- Guests: Users who browse and book listings
+- Hosts: Users who create and manage listings
+- Admins: System administrators who oversee the platform
+
+The system includes features for:
+- Listing creation and management
+- Booking and reservation management
+- Payment processing (PayPal and wallet system)
+- Real-time messaging
+- Calendar and availability management
+- Points and rewards system
+- Wallet and transaction management
+- Review and rating system
+
+1.3 USER ROLES
+-------------
+GUEST ROLE:
+- Browse and search listings
+- Make bookings
+- Manage bookings and cancellations
+- Communicate with hosts
+- Manage wallet and payments
+- Earn and redeem points
+- Save favorites
+- View and update profile
+
+HOST ROLE:
+- Create and manage listings (Homes, Experiences, Services)
+- Manage bookings and reservations
+- Set availability and pricing
+- Process refunds and cancellations
+- Communicate with guests
+- View earnings and wallet
+- Manage calendar
+- Update host profile
+
+ADMIN ROLE:
+- View system-wide statistics
+- Manage users (guests and hosts)
+- Manage all listings
+- View and manage all bookings
+- Monitor transactions and wallet
+- Manage rewards system
+- Generate reports
+- Export data (CSV, PDF, Print)
+
+================================================================================
+2. GETTING STARTED
+================================================================================
+
+2.1 CREATING AN ACCOUNT
+-----------------------
+To create a new Bookify account:
+
+1. Navigate to the Bookify homepage
+2. Click on "Sign Up" or "Create Account"
+3. Fill in the registration form:
+   - First Name
+   - Last Name
+   - Email Address
+   - Password (must meet security requirements)
+   - Confirm Password
+4. Read and accept the Terms of Service and Privacy Policy
+5. Click "Sign Up"
+
+ALTERNATIVE: Sign up with Google
+- Click "Continue with Google"
+- Select your Google account
+- Grant necessary permissions
+
+NOTE: New users receive 150 bonus points upon successful registration!
+
+2.2 LOGGING IN
+-------------
+To log in to your account:
+
+1. Navigate to the Bookify homepage
+2. Enter your email address
+3. Enter your password
+4. Click "Log In"
+
+ALTERNATIVE: Log in with Google
+- Click "Continue with Google"
+- Select your Google account
+
+FORGOT PASSWORD:
+- Click "Forgot Password?" link
+- Enter your email address
+- Check your email for password reset instructions
+
+2.3 EMAIL VERIFICATION
+----------------------
+After creating an account:
+
+1. Check your email inbox for a verification email from Bookify
+2. Click the verification link in the email
+3. You will be redirected to the verification page
+4. Once verified, you can access all features
+
+NOTE: Some features may be limited until email verification is complete.
+
+2.4 FIRST-TIME SETUP
+--------------------
+GUESTS:
+- Complete email verification
+- Set up your profile (optional but recommended)
+- Add payment method to wallet (optional)
+- Start exploring listings!
+
+HOSTS:
+- Complete email verification
+- Navigate to Host Setup
+- Complete the host registration process:
+  a. Host Setup (Basic Information)
+  b. Host Setup 2 (Experiences - if applicable)
+  c. Host Setup 3 (Services - if applicable)
+- Create your first listing
+- Set availability and pricing
+
+================================================================================
+3. GUEST FEATURES
+================================================================================
+
+3.1 DASHBOARD
+------------
+The guest dashboard provides an overview of:
+- Recent bookings
+- Upcoming trips
+- Recommended listings
+- Quick access to main features
+
+ACCESS: Click "Dashboard" in the navigation menu
+
+3.2 EXPLORING LISTINGS
+---------------------
+BROWSE LISTINGS:
+1. Click "Explore" in the navigation menu
+2. Browse available listings (Homes, Experiences, Services)
+3. Use filters to narrow your search:
+   - Category (Homes, Experiences, Services)
+   - Location
+   - Price range
+   - Dates
+   - Number of guests/participants
+   - Amenities
+4. Click on a listing card to view details
+
+VIEWING LISTING DETAILS:
+- Photos: Click to view full-screen, use arrow keys to navigate
+- Description and amenities
+- Host information
+- Reviews and ratings
+- Pricing and availability calendar
+- Booking form
+
+SEARCH FUNCTIONALITY:
+- Use the search bar to find listings by:
+  - Location
+  - Listing name
+  - Keywords
+
+3.3 MAKING BOOKINGS
+------------------
+BOOKING A HOME:
+1. Navigate to a home listing
+2. Select check-in and check-out dates using the calendar
+3. Select number of guests
+4. Review pricing breakdown:
+   - Nightly rate
+   - Number of nights
+   - Cleaning fee (if applicable)
+   - Service fee
+   - Discounts (if applicable)
+   - Total amount
+5. Apply promo codes or rewards (optional)
+6. Click "Reserve" or "Book Now"
+7. Review booking details
+8. Select payment method:
+   - PayPal
+   - Wallet balance
+9. Complete payment
+10. Receive booking confirmation
+
+BOOKING AN EXPERIENCE:
+1. Navigate to an experience listing
+2. Select a date and time from available schedules
+3. Select number of participants
+4. Review pricing breakdown
+5. Apply promo codes or rewards (optional)
+6. Click "Book Now"
+7. Complete payment
+8. Receive booking confirmation
+
+BOOKING A SERVICE:
+1. Navigate to a service listing
+2. Select a date and time from available schedules
+3. Review pricing
+4. Apply promo codes or rewards (optional)
+5. Click "Book Now"
+6. Complete payment
+7. Receive booking confirmation
+
+DISCOUNTS AND PROMOTIONS:
+- Automatic promos: Applied automatically if eligible
+- Coupon codes: Enter code in the booking form
+- Rewards: Select from available rewards in your account
+- Multiple discounts can stack (promo + coupon + reward)
+
+3.4 MANAGING BOOKINGS
+--------------------
+VIEW YOUR BOOKINGS:
+1. Click "Bookings" in the navigation menu
+2. View all your bookings organized by:
+   - Upcoming
+   - Past
+   - Cancelled
+
+BOOKING DETAILS:
+Each booking shows:
+- Listing information
+- Dates and duration
+- Number of guests/participants
+- Total amount paid
+- Booking status
+- Host contact information
+- Booking ID
+
+CANCELLING A BOOKING:
+1. Go to "Bookings"
+2. Find the booking you want to cancel
+3. Click "Cancel Booking"
+4. Review cancellation policy
+5. Confirm cancellation
+6. If eligible, refund will be processed automatically
+
+3.5 FAVORITES
+------------
+SAVING FAVORITES:
+1. While viewing a listing, click the heart icon
+2. The listing is saved to your favorites
+
+VIEWING FAVORITES:
+1. Click "Favorites" in the navigation menu
+2. Browse all your saved listings
+3. Click on any listing to view details or book
+
+REMOVING FAVORITES:
+1. Go to "Favorites"
+2. Click the heart icon on the listing you want to remove
+3. The listing is removed from favorites
+
+3.6 PROFILE MANAGEMENT
+----------------------
+ACCESSING YOUR PROFILE:
+1. Click on your profile icon or "Profile" in the navigation menu
+
+PROFILE INFORMATION:
+- Personal details (name, email)
+- Profile photo
+- Wishlist preferences
+- Recent bookings
+- Account settings
+
+EDITING PROFILE:
+1. Go to "Profile"
+2. Click "Edit Profile"
+3. Update information:
+   - Name
+   - Profile photo
+   - Preferences
+4. Save changes
+
+WISHLIST PREFERENCES:
+- Set preferences for:
+  - Homes (amenities, location, price range)
+  - Experiences (type, duration, price range)
+  - Services (type, availability, price range)
+- These preferences help personalize your experience
+
+3.7 WALLET & PAYMENTS
+--------------------
+ACCESSING YOUR WALLET:
+1. Click "Wallet" in the navigation menu
+
+WALLET FEATURES:
+- View current balance
+- Transaction history
+- Add funds
+- Withdraw funds
+- Transfer to other users
+
+ADDING FUNDS:
+1. Go to "Wallet"
+2. Click "Add Funds" or "Top Up"
+3. Enter amount
+4. Choose payment method:
+   - PayPal (recommended)
+   - Other methods (if available)
+5. Complete payment
+6. Funds are added instantly
+
+WITHDRAWING FUNDS:
+1. Go to "Wallet"
+2. Click "Withdraw"
+3. Enter amount (must be less than or equal to balance)
+4. Enter withdrawal details
+5. Confirm withdrawal
+6. Funds are processed within business days
+
+TRANSACTION HISTORY:
+- View all wallet transactions
+- Filter by:
+  - Date range
+  - Transaction type
+  - Status
+- Export transaction history (CSV, PDF)
+
+PAYMENT METHODS:
+- PayPal: Link your PayPal account for quick payments
+- Wallet: Use your Bookify wallet balance
+- Credit/Debit cards: Processed through PayPal
+
+3.8 POINTS & REWARDS
+--------------------
+ACCESSING POINTS:
+1. Click "Points" in the navigation menu
+
+EARNING POINTS:
+- Sign up bonus: 150 points
+- Booking completions
+- Reviews and ratings
+- Referrals
+- Special promotions
+
+VIEWING POINTS:
+- Current points balance
+- Points history
+- Available rewards
+- Redemption options
+
+REDEEMING REWARDS:
+1. Go to "Points"
+2. Browse available rewards
+3. Select a reward
+4. Confirm redemption
+5. Use reward code during booking
+
+3.9 MESSAGING
+------------
+ACCESSING MESSAGES:
+1. Click "Messages" in the navigation menu
+
+MESSAGING FEATURES:
+- View all conversations
+- Send and receive messages
+- Archive conversations
+- View archived messages
+- Search messages
+
+STARTING A CONVERSATION:
+1. Go to a listing
+2. Click "Message Host"
+3. Type your message
+4. Send
+
+REPLYING TO MESSAGES:
+1. Go to "Messages"
+2. Click on a conversation
+3. Type your reply
+4. Send
+
+ARCHIVING CONVERSATIONS:
+1. Go to "Messages"
+2. Open a conversation
+3. Click settings (three dots)
+4. Select "Archive conversation"
+
+VIEWING ARCHIVED MESSAGES:
+1. Go to "Messages"
+2. Click "Show Archived" toggle
+3. View archived conversations
+4. Click "Unarchive" to restore
+
+================================================================================
+4. HOST FEATURES
+================================================================================
+
+4.1 HOST SETUP
+--------------
+BECOMING A HOST:
+1. Log in to your account
+2. Navigate to Host Setup
+3. Complete the setup process:
+
+STEP 1 - BASIC INFORMATION:
+- Personal information
+- Contact details
+- Business information (if applicable)
+- Verification documents
+
+STEP 2 - EXPERIENCES (Optional):
+- Experience types you offer
+- Experience details
+- Pricing structure
+
+STEP 3 - SERVICES (Optional):
+- Service types you offer
+- Service details
+- Pricing structure
+
+COMPLETING SETUP:
+- Fill in all required fields
+- Upload necessary documents
+- Review and submit
+- Wait for admin approval (if required)
+
+4.2 LISTING MANAGEMENT
+---------------------
+ACCESSING LISTINGS:
+1. Go to Host Page
+2. Click "Listings" tab
+
+CREATING A NEW LISTING:
+1. Click "Create New Listing"
+2. Select listing type:
+   - Home
+   - Experience
+   - Service
+3. Fill in listing details:
+
+FOR HOMES:
+- Title and description
+- Property type (Apartment, House, etc.)
+- Listing type (Entire place, Private room, Shared room)
+- Location (address, city, country)
+- Photos (upload multiple)
+- Amenities
+- House rules
+- Pricing:
+  - Base price per night
+  - Cleaning fee (optional)
+  - Discounts (percentage or fixed)
+- Availability calendar
+- Guest capacity
+- Check-in/check-out times
+
+FOR EXPERIENCES:
+- Title and description
+- Experience type
+- Location
+- Photos
+- Duration
+- Maximum participants
+- Pricing per participant
+- Schedules (dates and times)
+- What's included
+- Requirements
+
+FOR SERVICES:
+- Title and description
+- Service type
+- Location (if applicable)
+- Photos
+- Duration
+- Pricing
+- Schedules
+- Service details
+- Requirements
+
+EDITING LISTINGS:
+1. Go to "Listings"
+2. Find the listing you want to edit
+3. Click "Edit"
+4. Make changes
+5. Save
+
+DELETING LISTINGS:
+1. Go to "Listings"
+2. Find the listing you want to delete
+3. Click "Delete"
+4. Confirm deletion
+
+LISTING STATUS:
+- Published: Visible to guests
+- Draft: Not visible, saved for later
+- Archived: Hidden from search
+
+4.3 BOOKING MANAGEMENT
+----------------------
+ACCESSING BOOKINGS:
+1. Go to Host Page
+2. Click "Bookings" or "Today" tab
+
+VIEWING BOOKINGS:
+- Today's bookings
+- Upcoming bookings
+- Past bookings
+- Cancelled bookings
+
+BOOKING DETAILS:
+Each booking shows:
+- Guest information
+- Listing details
+- Dates and duration
+- Number of guests/participants
+- Total amount
+- Booking status
+- Payment status
+
+MANAGING BOOKING STATUS:
+- Confirm: Accept a pending booking
+- Cancel: Cancel a booking
+- Process refund: Issue refunds for cancellations
+
+VIEWING GUEST PROFILE:
+1. Click on a booking
+2. Click "View Guest Profile"
+3. See guest preferences and wishlist
+4. View booking history with this guest
+
+PROCESSING REFUNDS:
+1. Go to booking details
+2. Click "Process Refund"
+3. Enter refund percentage (0-100%)
+4. Review refund amount
+5. Confirm refund
+6. Refund is processed to guest's wallet
+7. Email confirmation sent
+
+4.4 CALENDAR VIEW
+----------------
+ACCESSING CALENDAR:
+1. Go to Host Page
+2. Click "Calendar" tab
+
+CALENDAR FEATURES:
+- Monthly view of all bookings
+- Color-coded by listing
+- Filter by listing
+- View booking details
+- See availability
+
+MANAGING AVAILABILITY:
+1. Go to Calendar
+2. Select dates
+3. Mark as available or unavailable
+4. Set special pricing for dates
+5. Block dates for maintenance
+
+4.5 MESSAGING
+------------
+ACCESSING MESSAGES:
+1. Go to Host Page
+2. Click "Messages" tab
+
+MESSAGING FEATURES:
+- View all guest conversations
+- Send and receive messages
+- Quick replies
+- View guest booking context
+
+4.6 WALLET & EARNINGS
+---------------------
+ACCESSING WALLET:
+1. Go to Host Page
+2. Click "Wallet" tab
+
+WALLET FEATURES:
+- View earnings balance
+- Transaction history
+- Payout history
+- Add funds (top up)
+- Withdraw earnings
+
+EARNINGS:
+- Earnings from bookings are automatically added to wallet
+- Service fees are deducted
+- View detailed earnings breakdown
+
+WITHDRAWING EARNINGS:
+1. Go to "Wallet"
+2. Click "Withdraw"
+3. Enter amount
+4. Enter withdrawal details
+5. Confirm withdrawal
+
+TOP UP WALLET:
+1. Go to "Wallet"
+2. Click "Top Up"
+3. Enter amount
+4. Pay via PayPal
+5. Funds added instantly
+
+4.7 HOST PROFILE
+----------------
+ACCESSING PROFILE:
+1. Go to Host Page
+2. Click "Profile" tab
+
+PROFILE INFORMATION:
+- Host information
+- Verification status
+- Listings count
+- Total bookings
+- Ratings and reviews
+- Earnings summary
+
+EDITING PROFILE:
+1. Go to "Profile"
+2. Click "Edit"
+3. Update information
+4. Save changes
+
+================================================================================
+5. ADMIN FEATURES
+================================================================================
+
+5.1 ADMIN DASHBOARD
+-------------------
+ACCESSING DASHBOARD:
+1. Log in as admin
+2. Navigate to Admin Dashboard
+
+DASHBOARD OVERVIEW:
+- System statistics:
+  - Total users (guests and hosts)
+  - Total listings
+  - Total bookings
+  - Total revenue
+- Recent bookings table
+- Recent hosts table
+- Top rated listings
+- Listings needing attention
+
+FILTERS:
+- Last 30 days
+- This Month
+- Year to Date
+- All Time
+
+EXPORTS:
+- Export data as CSV
+- Print reports
+
+5.2 USER MANAGEMENT
+-------------------
+MANAGING HOSTS:
+1. Go to "Hosts" in admin sidebar
+2. View all hosts
+3. Filter by:
+   - Verification status
+   - Active/Inactive
+   - Date range
+   - Search term
+4. View host details
+5. Verify/unverify hosts
+6. Activate/deactivate hosts
+7. Export host data (CSV, PDF, Print)
+
+MANAGING GUESTS:
+1. Go to "Guests" in admin sidebar
+2. View all guests
+3. Filter by:
+   - Verification status
+   - Date range
+   - Search term
+4. View guest details
+5. Verify/unverify guests
+6. Export guest data (CSV, PDF, Print)
+
+5.3 LISTING MANAGEMENT
+-----------------------
+VIEWING LISTINGS:
+1. Go to "Listings" in admin sidebar
+2. View all listings
+3. Filter by:
+   - Category (Homes, Experiences, Services)
+   - Status (Published, Draft, Archived)
+   - Host
+   - Search term
+4. Sort by various criteria
+
+LISTING ACTIONS:
+- View listing details
+- Edit listings
+- Delete listings
+- Change status
+- View host information
+
+EXPORTS:
+- Export listings as CSV
+- Generate PDF reports
+- Print listings
+
+5.4 BOOKING MANAGEMENT
+----------------------
+VIEWING BOOKINGS:
+1. Go to "Bookings" in admin sidebar
+2. View all bookings
+3. Filter by:
+   - Status (Confirmed, Pending, Cancelled)
+   - Category
+   - Date range
+   - Search term
+4. Sort by various criteria
+
+BOOKING DETAILS:
+- Guest information
+- Host information
+- Listing details
+- Dates and duration
+- Payment information
+- Booking status
+
+STATISTICS:
+- Total bookings
+- Total revenue
+- Confirmed bookings
+- Pending bookings
+- Cancelled bookings
+- Total guests
+
+EXPORTS:
+- Export bookings as CSV
+- Generate PDF reports
+- Print bookings
+
+5.5 E-WALLET MANAGEMENT
+-----------------------
+ACCESSING E-WALLET:
+1. Go to "E-Wallet" in admin sidebar
+
+WALLET OVERVIEW:
+- Admin wallet balance
+- Total transactions
+- Transaction history
+
+TRANSACTION HISTORY:
+- View all transactions
+- Filter by:
+   - Payment method
+   - Category/Type
+   - User type (Guest/Host)
+   - Date range
+   - Search term
+- Transaction details:
+   - Date and time
+   - Type
+   - Method
+   - Amount
+   - Balance after
+   - Status
+   - Details
+
+EXPORTS:
+- Export transactions as CSV
+- Generate PDF reports
+- Print transactions
+
+5.6 REWARDS MANAGEMENT
+----------------------
+ACCESSING REWARDS:
+1. Go to "Rewards" in admin sidebar
+
+REWARDS FEATURES:
+- View all rewards
+- Create new rewards
+- Edit rewards
+- Activate/deactivate rewards
+- Set reward criteria
+- Manage reward redemption
+
+5.7 REPORTS & EXPORTS
+---------------------
+AVAILABLE EXPORTS:
+- CSV: Comma-separated values for spreadsheet applications
+- PDF: Formatted reports with styling
+- Print: Browser print functionality
+
+EXPORT OPTIONS:
+- Filter data before exporting
+- Select date ranges
+- Choose specific fields
+- Preview before download
+
+================================================================================
+6. COMMON TASKS & WORKFLOWS
+================================================================================
+
+6.1 BOOKING A LISTING
+---------------------
+COMPLETE WORKFLOW:
+1. Guest browses listings
+2. Guest finds desired listing
+3. Guest selects dates/times
+4. Guest reviews pricing
+5. Guest applies discounts (optional)
+6. Guest clicks "Book Now"
+7. Guest selects payment method
+8. Guest completes payment
+9. Booking confirmation sent
+10. Host receives booking notification
+11. Host confirms booking
+12. Guest receives confirmation
+13. Both parties can message each other
+
+6.2 CANCELLING A BOOKING
+------------------------
+GUEST CANCELLATION:
+1. Guest goes to "Bookings"
+2. Guest finds booking to cancel
+3. Guest clicks "Cancel Booking"
+4. System checks cancellation policy
+5. If eligible, refund is calculated
+6. Guest confirms cancellation
+7. Refund processed to guest wallet
+8. Host notified
+9. Booking status updated
+
+HOST CANCELLATION:
+1. Host goes to "Bookings"
+2. Host finds booking to cancel
+3. Host clicks "Cancel Booking"
+4. Host confirms cancellation
+5. Full refund processed to guest
+6. Guest notified
+7. Booking status updated
+
+6.3 PROCESSING REFUNDS
+----------------------
+HOST REFUND PROCESS:
+1. Host goes to booking details
+2. Host clicks "Process Refund"
+3. Host enters refund percentage (0-100%)
+4. System calculates refund amount
+5. Host reviews refund details
+6. Host confirms refund
+7. System checks host wallet balance
+8. If sufficient, refund deducted from host wallet
+9. Refund added to guest wallet
+10. Email confirmation sent
+11. Transaction recorded
+
+6.4 MANAGING AVAILABILITY
+--------------------------
+SETTING AVAILABILITY:
+1. Host goes to Calendar
+2. Host selects dates
+3. Host marks as available/unavailable
+4. Host sets pricing for specific dates
+5. Host blocks dates for maintenance
+6. Changes saved automatically
+
+UPDATING LISTING AVAILABILITY:
+1. Host goes to Listings
+2. Host edits listing
+3. Host updates availability calendar
+4. Host saves changes
+
+6.5 APPLYING DISCOUNTS
+---------------------
+LISTING DISCOUNTS:
+1. Host edits listing
+2. Host sets discount:
+   - Percentage discount
+   - Fixed amount discount
+3. Host sets discount conditions
+4. Host saves listing
+5. Discount automatically applied to bookings
+
+PROMO CODES:
+1. Admin creates promo code
+2. Promo code activated
+3. Guest enters code during booking
+4. System validates code
+5. Discount applied if valid
+
+REWARDS:
+1. Guest earns points
+2. Guest redeems reward
+3. Guest selects reward during booking
+4. Discount applied automatically
+
+================================================================================
+7. TROUBLESHOOTING
+================================================================================
+
+7.1 COMMON ISSUES
+-----------------
+LOGIN PROBLEMS:
+- Issue: Cannot log in
+- Solution: 
+  * Check email and password
+  * Use "Forgot Password" to reset
+  * Clear browser cache
+  * Try different browser
+
+PAYMENT ISSUES:
+- Issue: Payment not processing
+- Solution:
+  * Check payment method
+  * Verify sufficient funds
+  * Check internet connection
+  * Try different payment method
+  * Contact support
+
+BOOKING ISSUES:
+- Issue: Cannot complete booking
+- Solution:
+  * Check dates are available
+  * Verify guest count
+  * Check payment method
+  * Clear browser cache
+  * Try again
+
+MESSAGING ISSUES:
+- Issue: Messages not sending
+- Solution:
+  * Check internet connection
+  * Refresh page
+  * Clear browser cache
+  * Try again
+
+WALLET ISSUES:
+- Issue: Funds not appearing
+- Solution:
+  * Check transaction history
+  * Verify payment completed
+  * Wait a few minutes
+  * Contact support
+
+LISTING ISSUES:
+- Issue: Listing not appearing
+- Solution:
+  * Check listing status (Published)
+  * Verify all required fields filled
+  * Check filters
+  * Contact support
+
+7.2 GETTING HELP
+----------------
+SUPPORT OPTIONS:
+1. Check this manual
+2. Review FAQ section (if available)
+3. Contact support via messaging
+4. Email support team
+5. Check system notifications
+
+CONTACT INFORMATION:
+- Support Email: [Contact email from system]
+- In-app messaging: Use messaging feature
+- Help Center: [If available]
+
+================================================================================
+                            APPENDIX
+================================================================================
+
+A. KEYBOARD SHORTCUTS
+---------------------
+- Escape: Close modals
+- Arrow Left/Right: Navigate photos
+- Enter: Submit forms
+- Tab: Navigate form fields
+
+B. SYSTEM REQUIREMENTS
+---------------------
+- Modern web browser (Chrome, Firefox, Safari, Edge)
+- JavaScript enabled
+- Internet connection
+- Screen resolution: 1024x768 or higher
+
+C. TERMINOLOGY
+-------------
+- Listing: A property, experience, or service available for booking
+- Booking: A reservation made by a guest
+- Host: User who creates and manages listings
+- Guest: User who books listings
+- Wallet: Digital wallet for payments and earnings
+- Points: Reward points earned through activities
+- Promo: Automatic promotional discount
+- Coupon: Discount code entered manually
+- Reward: Discount redeemed using points
+
+D. PRIVACY & SECURITY
+---------------------
+- All personal information is encrypted
+- Payment information is secure
+- Never share your password
+- Log out when using shared devices
+- Report suspicious activity immediately
+
+================================================================================
+                            END OF MANUAL
+================================================================================
+
+For the most up-to-date information, please refer to the in-app help 
+sections or contact support.
+
+Bookify - Your trusted booking platform
+================================================================================
+
+

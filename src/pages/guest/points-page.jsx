@@ -1,5 +1,6 @@
 // src/pages/guest/points-page.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
   Sparkles,
@@ -68,8 +69,8 @@ const peso = (v) => {
   return n.toLocaleString(undefined, { style: "currency", currency: "PHP", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-// 20 pts = 10 pesos -> 1 pt = ₱0.5
-const ptsToPHP = (pts) => Number((Number(pts || 0) * 0.5).toFixed(2));
+// 50 pts = 1 peso -> 1 pt = ₱0.02
+const ptsToPHP = (pts) => Number((Number(pts || 0) * 0.02).toFixed(2));
 
 const Badge = ({ children, kind = "muted" }) => {
   const styles =
@@ -119,6 +120,9 @@ export default function PointsPage() {
 
   // Redeemed rewards modal state
   const [showRedeemedModal, setShowRedeemedModal] = useState(false);
+  
+  // Success modal state
+  const [successModal, setSuccessModal] = useState({ open: false, message: "" });
 
   const PAGE_SIZE = 20;
 
@@ -393,7 +397,10 @@ export default function PointsPage() {
         tx.set(redeemedRef, redeemedRewardData);
       });
 
-      alert(`Successfully redeemed "${reward.name}"! You can use it during booking.`);
+      setSuccessModal({
+        open: true,
+        message: `Successfully redeemed "${reward.name}"! You can use it during booking.`
+      });
     } catch (err) {
       console.error("Failed to redeem reward:", err);
       alert(err.message || "Failed to redeem reward. Please try again.");
@@ -435,7 +442,10 @@ export default function PointsPage() {
     // Dispatch custom event to notify other pages (like listing page) that reward was selected
     window.dispatchEvent(new CustomEvent("rewardSelected", { detail: rewardData }));
     
-    alert(`"${redeemedReward.rewardName}" is now selected for your next booking! The discount will be applied automatically at checkout.`);
+    setSuccessModal({
+      open: true,
+      message: `"${redeemedReward.rewardName}" is now selected for your next booking! The discount will be applied automatically at checkout.`
+    });
   };
 
   // Withdraw points to E-Wallet
@@ -709,7 +719,7 @@ export default function PointsPage() {
           </div>
 
           {/* Points Balance Card */}
-          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-6 mb-6">
+          <div className="rounded-3xl border border-white/40 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 backdrop-blur-sm shadow-lg p-6 mb-6">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4 flex-1">
                 <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-400 to-amber-500 shadow-lg">
@@ -1127,6 +1137,13 @@ export default function PointsPage() {
         redeemedRewards={redeemedRewards}
         onUseReward={handleUseReward}
       />
+
+      {/* Success Modal */}
+      <SuccessModal
+        open={successModal.open}
+        message={successModal.message}
+        onClose={() => setSuccessModal({ open: false, message: "" })}
+      />
     </div>
   );
 }
@@ -1309,7 +1326,7 @@ function PointsWithdrawModal({ open, onClose, points = 0, onWithdraw, busy }) {
               {maxPts.toLocaleString()} pts{" "}
               <span className="text-base font-medium text-slate-500">({peso(ptsToPHP(maxPts))})</span>
             </div>
-            <div className="mt-1 text-xs text-slate-500">Rate: 20 pts = ₱10.00</div>
+            <div className="mt-1 text-xs text-slate-500">Rate: 50 pts = ₱1.00</div>
           </div>
 
           <label className="block">
@@ -1364,6 +1381,39 @@ function PointsWithdrawModal({ open, onClose, points = 0, onWithdraw, busy }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* ======================= Success Modal ======================= */
+function SuccessModal({ open, message, onClose }) {
+  if (!open) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-md rounded-2xl bg-white border border-slate-200 shadow-xl p-5">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 text-emerald-600">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-lg font-semibold text-slate-900">Success!</h3>
+            {message && (
+              <p className="mt-1 text-sm text-slate-700 whitespace-pre-line">{message}</p>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            onClick={onClose}
+            className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-5 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 transition"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 

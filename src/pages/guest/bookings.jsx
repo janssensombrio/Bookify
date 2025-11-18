@@ -1223,11 +1223,20 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
     ? `${fmtDateStr(booking.schedule.date)}${booking?.schedule?.time ? " • " + fmtTimeStr(booking.schedule.time) : ""}`
     : "—";
 
+  // Payment breakdown fields
+  const basePrice = numberOr(booking.basePrice, NaN);
+  const priceBeforeDiscount = numberOr(booking.priceBeforeDiscount || booking.rawSubtotal, NaN);
   const subtotal = numberOr(booking.subtotal, NaN);
   const serviceFee = numberOr(booking.serviceFee, NaN);
   const cleaningFee = numberOr(booking.cleaningFee, NaN);
   const discountType = booking.discountType || "none";
   const discountValue = numberOr(booking.discountValue, 0);
+  const discountAmount = numberOr(booking.discountAmount, 0);
+  const promoDiscountAmount = numberOr(booking.promoDiscountAmount, 0);
+  const couponDiscountAmount = numberOr(booking.couponDiscountAmount, 0);
+  const rewardDiscountAmount = numberOr(booking.rewardDiscountAmount, 0);
+  const promoTitle = booking.promoTitle || null;
+  const couponCode = booking.couponCode || null;
   const totalPrice = numberOr(booking.totalPrice, NaN);
 
   const policyText = listing?.cancellationPolicy || "";
@@ -1371,41 +1380,101 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, myReview
       <div className="pt-2 border-t border-white/60">
         <h4 className="text-xs font-semibold text-gray-700 mb-2">Payment Breakdown</h4>
         <div className="space-y-1.5 text-[13.5px]">
-        {!Number.isNaN(subtotal) && (
-          <div className="flex items-center justify-between">
-              <span className="text-slate-600">Subtotal</span>
-              <span className="font-medium text-slate-900">₱{subtotal.toLocaleString()}</span>
-          </div>
-        )}
-        {!Number.isNaN(cleaningFee) && cleaningFee > 0 && (
-          <div className="flex items-center justify-between">
+          {/* Base Price / Price Before Discount */}
+          {!Number.isNaN(priceBeforeDiscount) && priceBeforeDiscount > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-slate-600">
+                {cat.startsWith("home") 
+                  ? `₱${!Number.isNaN(basePrice) ? basePrice.toLocaleString() : "—"} × ${nights || 0} night${(nights || 0) === 1 ? "" : "s"}`
+                  : `Base price${typeof booking.quantity === "number" ? ` × ${booking.quantity}` : ""}`
+                }
+              </span>
+              <span className="font-medium text-slate-900">₱{priceBeforeDiscount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Listing Discount */}
+          {discountAmount > 0 && (
+            <div className="flex items-center justify-between text-emerald-700">
+              <span>
+                Listing discount{discountType !== "none" ? ` (${discountType})` : ""}
+                {discountValue > 0 && discountType === "percentage" ? ` ${discountValue}%` : ""}
+              </span>
+              <span className="font-medium">− ₱{discountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Promo Discount */}
+          {promoDiscountAmount > 0 && (
+            <div className="flex items-center justify-between text-emerald-700">
+              <span>
+                Promo discount{promoTitle ? `: ${promoTitle}` : ""}
+              </span>
+              <span className="font-medium">− ₱{promoDiscountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Coupon Discount */}
+          {couponDiscountAmount > 0 && (
+            <div className="flex items-center justify-between text-emerald-700">
+              <span>
+                Coupon discount{couponCode ? `: ${couponCode}` : ""}
+              </span>
+              <span className="font-medium">− ₱{couponDiscountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Reward Discount */}
+          {rewardDiscountAmount > 0 && (
+            <div className="flex items-center justify-between text-emerald-700">
+              <span>Reward discount</span>
+              <span className="font-medium">− ₱{rewardDiscountAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Legacy discount field (if other discounts not available) */}
+          {discountType !== "none" && discountValue > 0 && discountAmount === 0 && promoDiscountAmount === 0 && couponDiscountAmount === 0 && rewardDiscountAmount === 0 && (
+            <div className="flex items-center justify-between text-emerald-700">
+              <span>Discount ({discountType})</span>
+              <span className="font-medium">− ₱{discountValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+
+          {/* Subtotal (after discounts) */}
+          {!Number.isNaN(subtotal) && (
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-slate-700 font-medium">Subtotal</span>
+              <span className="font-medium text-slate-900">₱{subtotal.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Cleaning Fee */}
+          {!Number.isNaN(cleaningFee) && cleaningFee > 0 && (
+            <div className="flex items-center justify-between">
               <span className="text-slate-600">Cleaning fee</span>
-              <span className="text-slate-900">₱{cleaningFee.toLocaleString()}</span>
-          </div>
-        )}
-        {!Number.isNaN(serviceFee) && (
-          <div className="flex items-center justify-between">
+              <span className="text-slate-900">₱{cleaningFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          )}
+          
+          {/* Service Fee */}
+          {!Number.isNaN(serviceFee) && serviceFee > 0 && (
+            <div className="flex items-center justify-between">
               <span className="text-slate-600">Service fee</span>
               <span className="text-slate-900">₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-          </div>
-        )}
-        {discountType !== "none" && discountValue > 0 && (
-          <div className="flex items-center justify-between text-emerald-700">
-            <span>Discount ({discountType})</span>
-              <span className="font-medium">− ₱{discountValue.toLocaleString()}</span>
-          </div>
-        )}
+            </div>
+          )}
 
           <div className="my-2 h-px bg-slate-200" />
 
-        {!Number.isNaN(totalPrice) ? (
+          {/* Total */}
+          {!Number.isNaN(totalPrice) ? (
             <div className="flex items-center justify-between pt-1">
-            <span className="text-base font-bold text-slate-900">Total</span>
-            <span className="text-base font-bold text-blue-700">₱{totalPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
-          </div>
-        ) : (
-          <div className="text-sm text-slate-500">Total unavailable.</div>
-        )}
+              <span className="text-base font-bold text-slate-900">Total</span>
+              <span className="text-base font-bold text-blue-700">₱{totalPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500">Total unavailable.</div>
+          )}
         </div>
       </div>
     </section>

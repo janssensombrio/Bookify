@@ -646,6 +646,23 @@ export default function AdminWalletPage() {
     }
 
     html.push(`</tbody>
+    <tfoot>
+      <tr style="background: var(--thead); font-weight: 600;">
+        <td colspan="3" style="text-align: right; padding: 12px;">Total:</td>
+        <td class="num" style="padding: 12px; color: var(--ink);">${formatPesoSafe(totalCredits - totalDebits)}</td>
+        <td colspan="3"></td>
+      </tr>
+      <tr style="background: var(--subtle);">
+        <td colspan="3" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Credits:</td>
+        <td class="num credit" style="padding: 8px 12px; font-size: 11px;">${formatPesoSafe(totalCredits)}</td>
+        <td colspan="3"></td>
+      </tr>
+      <tr style="background: var(--subtle);">
+        <td colspan="3" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Debits:</td>
+        <td class="num debit" style="padding: 8px 12px; font-size: 11px;">${formatPesoSafe(totalDebits)}</td>
+        <td colspan="3"></td>
+      </tr>
+    </tfoot>
   </table>
 
   <div class="footer">
@@ -777,7 +794,7 @@ export default function AdminWalletPage() {
 
   /* ======================= Render ======================= */
   const balanceCard = (
-    <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-5">
+    <div className="rounded-3xl border border-white/40 bg-gradient-to-br from-indigo-50 via-blue-50 to-purple-50 backdrop-blur-sm shadow-lg p-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">

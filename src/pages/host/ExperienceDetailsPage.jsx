@@ -592,9 +592,23 @@ function normalizeCodeDoc(d, source = "coupon") {
   };
 }
 
-function ruleEligibleForExperience(rule, listing) {
+function ruleEligibleForExperience(rule, listing, scheduleDate = null) {
   if (!rule || !rule.active) return false;
-  if (!inRange(rule.startAtMs, rule.endAtMs)) return false;
+  
+  // Date validation - check if schedule date is within rule date range
+  if (scheduleDate && (rule.startAtMs || rule.endAtMs)) {
+    const scheduleMs = typeof scheduleDate === "string" 
+      ? ymdToMs(scheduleDate) 
+      : (scheduleDate?.toDate ? scheduleDate.toDate().getTime() : new Date(scheduleDate).getTime());
+    // inRange function signature: inRange(startMs, endMs, probe = nowMs())
+    if (!inRange(rule.startAtMs, rule.endAtMs, scheduleMs)) {
+      return false;
+    }
+  } else if (!inRange(rule.startAtMs, rule.endAtMs)) {
+    // If no schedule date provided, check if current date is in range
+    return false;
+  }
+  
   if (rule.appliesToListingIds?.length) {
     const id = listing?.id || listing?.listingId || "";
     if (!id || !rule.appliesToListingIds.includes(id)) return false;
@@ -1507,10 +1521,11 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       const raw = { id: qs.docs[0].id, ...qs.docs[0].data() };
       const found = normalizeCouponFromModal(raw);
 
-      // eligibility vs this listing
-      if (!ruleEligibleForExperience(found, { ...experience, id: listingId })) {
+      // eligibility vs this listing and schedule date
+      const scheduleDate = selectedSchedule?.date || null;
+      if (!ruleEligibleForExperience(found, { ...experience, id: listingId }, scheduleDate)) {
         setAppliedCode(null);
-        setCodeStatus({ checking: false, error: "This code is not eligible for this experience." });
+        setCodeStatus({ checking: false, error: "This code is not eligible for this experience or date." });
         return;
       }
 
@@ -2169,12 +2184,12 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
           {auth.currentUser && (
-            <button
-              onClick={onClose}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
-            >
-              <ChevronLeft className="w-4 h-4" /> Back
-            </button>
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+          >
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
           )}
 
           <h1 className="text.base sm:text-lg font-semibold text-slate-900 truncate">
@@ -2725,13 +2740,14 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
                           className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500/50"
                           placeholder="Enter code"
                           value={codeInput}
-                          onChange={(e) => setCodeInput(e.target.value)}
+                          onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                          style={{ textTransform: 'uppercase' }}
                         />
                         <button
                           type="button"
                           disabled={!codeInput.trim() || codeStatus.checking}
                           onClick={tryApplyPromoOrCoupon}
-                          className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 px-4 py-2 text-sm font-semibold text-white shadow hover:from-blue-600 hover:to-blue-700 disabled:opacity-50"
+                          className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700 disabled:opacity-50"
                         >
                           {codeStatus.checking ? "Checking…" : "Apply"}
                         </button>

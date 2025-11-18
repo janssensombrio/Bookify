@@ -133,39 +133,101 @@ function computePayment({ price, quantity, discountType, discountValue, serviceF
 }
 
 /* ================= Coupons (normalize / check / apply) ================= */
+// Helper to convert YMD string to milliseconds
+const ymdToMs = (ymd) => {
+  if (!ymd) return 0;
+  const d = new Date(`${ymd}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? 0 : d.getTime();
+};
+
+// Helper to check if timestamp is in range
+function inRange(ts, minMs, maxMs) {
+  if (!ts) return true;
+  const t = typeof ts === "number" ? ts : (ts?.toDate ? ts.toDate().getTime() : new Date(ts).getTime());
+  if (!Number.isFinite(t)) return false;
+  return (!minMs || t >= minMs) && (!maxMs || t <= maxMs);
+}
+
 function normalizeCoupon(d = {}, id = null) {
+  // Support both old and new coupon structures
   const type = String(d.type || d.discountType || "").toLowerCase();
+  const appliesTo = (d?.appliesTo || "").toString().toLowerCase() === "selected" ? "selected" : "all";
+  
+  // Get date fields (support both old and new formats)
+  const startsAt = d.startsAt || d.startDate || d.validFrom || null;
+  const endsAt = d.endsAt || d.endDate || d.validTo || null;
+  
+  // Get status/active field (support both old and new formats)
+  const status = d.status || (d.active ? "active" : "paused");
+  const active = (status || "active").toString().toLowerCase() === "active";
+  
+  // Get listing scope (support both old and new formats)
+  const scopeListingId = d.scopeListingId || d.listingId || null;
+  const listingIds = Array.isArray(d.listingIds) ? d.listingIds : (scopeListingId ? [scopeListingId] : []);
+  
   return {
     id: id || d.id || null,
     code: String(d.code || d.offerCode || "").trim(),
     type: type === "percentage" ? "percentage" : type === "fixed" ? "fixed" : "",
     value: Number(d.value ?? d.discountValue ?? 0),
-    active: !!(d.active ?? d.isActive ?? true),
-    startDate: d.startDate || d.validFrom || null, // "YYYY-MM-DD"
-    endDate: d.endDate || d.validTo || null, // "YYYY-MM-DD"
+    active: active,
+    status: status,
+    startDate: startsAt, // Keep for backward compatibility
+    endDate: endsAt, // Keep for backward compatibility
+    startsAt: startsAt, // New format
+    endsAt: endsAt, // New format
+    startAtMs: ymdToMs(startsAt), // For date range checking
+    endAtMs: ymdToMs(endsAt), // For date range checking
     minQuantity: Number(d.minQuantity || 0),
     minSubtotal: Number(d.minSubtotal || 0),
-    scopeListingId: d.listingId || d.scopeListingId || null,
+    scopeListingId: scopeListingId, // Old format
+    listingIds: listingIds, // New format
+    appliesTo: appliesTo, // New format
     appliesPerUnit: !!d.appliesPerUnit,
     maxDiscount: Number(d.maxDiscount || 0) || null,
     label: d.label || d.name || null,
   };
 }
+
 function dateInRange(ymd, startYmd, endYmd) {
   if (!ymd) return true;
   if (startYmd && ymd < startYmd) return false;
   if (endYmd && ymd > endYmd) return false;
   return true;
 }
+
 function isCouponEligible(c, { listingId, scheduleDate, quantity, subtotalAfterListing }) {
   if (!c?.active) return { ok: false, reason: "Coupon is not active." };
   if (!c.type || !(c.value > 0)) return { ok: false, reason: "Invalid coupon." };
-  if (!dateInRange(scheduleDate || null, c.startDate || null, c.endDate || null)) {
-    return { ok: false, reason: "Coupon not valid for selected date." };
+  
+  // Date validation - check if schedule date is within coupon date range
+  if (c.startAtMs || c.endAtMs) {
+    // Use new format (milliseconds)
+    const scheduleMs = scheduleDate ? (typeof scheduleDate === "string" ? ymdToMs(scheduleDate) : (scheduleDate?.toDate ? scheduleDate.toDate().getTime() : new Date(scheduleDate).getTime())) : 0;
+    if (!inRange(scheduleMs, c.startAtMs, c.endAtMs)) {
+      return { ok: false, reason: "Coupon not valid for selected date." };
+    }
+  } else if (c.startDate || c.endDate) {
+    // Fallback to old format (YYYY-MM-DD strings)
+    const scheduleYmd = scheduleDate ? (typeof scheduleDate === "string" ? scheduleDate : scheduleDate.toDate ? scheduleDate.toDate().toISOString().split('T')[0] : new Date(scheduleDate).toISOString().split('T')[0]) : null;
+    if (!dateInRange(scheduleYmd, c.startDate, c.endDate)) {
+      return { ok: false, reason: "Coupon not valid for selected date." };
+    }
   }
-  if (c.scopeListingId && c.scopeListingId !== String(listingId || "")) {
-    return { ok: false, reason: "Coupon not valid for this service." };
+  
+  // Listing scope validation - support both old and new formats
+  if (c.appliesTo === "selected" && c.listingIds?.length) {
+    // New format: check if listingId is in listingIds array
+    if (!listingId || !c.listingIds.includes(String(listingId))) {
+      return { ok: false, reason: "Coupon not valid for this service." };
+    }
+  } else if (c.scopeListingId) {
+    // Old format: check single scopeListingId
+    if (c.scopeListingId !== String(listingId || "")) {
+      return { ok: false, reason: "Coupon not valid for this service." };
+    }
   }
+  
   if (c.minQuantity > 0 && Number(quantity || 0) < c.minQuantity) {
     return { ok: false, reason: `Minimum of ${c.minQuantity} participant(s) required.` };
   }
@@ -2081,11 +2143,16 @@ A confirmation email will follow shortly.`
       const cdoc = snap.docs[0];
       const coupon = normalizeCoupon({ id: cdoc.id, ...cdoc.data() }, cdoc.id);
 
+      // Calculate afterPromo for minSubtotal validation
+      // payment.subtotal is after all discounts, so add back couponDiscount if it exists
+      const currentCouponDiscount = Number(payment?.couponDiscount || 0);
+      const afterPromo = Number(payment?.subtotal || 0) + currentCouponDiscount;
+
       const elig = isCouponEligible(coupon, {
         listingId,
         scheduleDate: selectedSchedule?.date || null,
         quantity: Number(payment?.quantity || 1),
-        subtotalAfterListing: Number(payment?.subtotal || 0),
+        subtotalAfterListing: afterPromo, // Use afterPromo for minSubtotal validation
       });
 
       if (!elig.ok) {
@@ -2135,12 +2202,12 @@ A confirmation email will follow shortly.`
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
           {auth.currentUser && (
-            <button
-              onClick={onClose}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
-            >
-              <ChevronLeft className="w-4 h-4" /> Back
-            </button>
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+          >
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
           )}
 
           <h1 className="text-base sm:text-lg font-semibold text-slate-900 truncate">
@@ -2788,14 +2855,15 @@ A confirmation email will follow shortly.`
                     <input
                       type="text"
                       value={couponInput}
-                      onChange={(e) => setCouponInput(e.target.value)}
+                      onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
                       placeholder="Enter coupon code"
                       className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      style={{ textTransform: 'uppercase' }}
                     />
                     <button
                       type="button"
                       onClick={handleApplyCoupon}
-                      className="shrink-0 inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-black"
+                      className="shrink-0 inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-700"
                     >
                       Apply
                     </button>

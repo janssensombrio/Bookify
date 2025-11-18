@@ -1,9 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Calendar, X } from "lucide-react";
+import { DateRangePicker } from "react-date-range";
+import "react-date-range/dist/styles.css"; // main style file
+import "react-date-range/dist/theme/default.css"; // theme css file
 
 /**
- * DateRangeFilter - A simple date range picker for admin filters
+ * DateRangeFilter - A date range picker using react-date-range
  * @param {Object} props
  * @param {Object} props.value - { start: "YYYY-MM-DD" | "", end: "YYYY-MM-DD" | "" }
  * @param {Function} props.onChange - (value: { start: string, end: string }) => void
@@ -15,6 +18,28 @@ export default function DateRangeFilter({ value = { start: "", end: "" }, onChan
   const dropdownRef = useRef(null);
   const [position, setPosition] = useState({ top: 0, left: 0, width: 0 });
 
+  // Convert string dates to Date objects for react-date-range
+  const startDate = value.start ? new Date(value.start) : new Date();
+  const endDate = value.end ? new Date(value.end) : new Date();
+
+  // DateRange state for react-date-range
+  const [dateRange, setDateRange] = useState({
+    startDate: startDate,
+    endDate: endDate,
+    key: "selection",
+  });
+
+  // Update dateRange when value prop changes
+  useEffect(() => {
+    if (value.start && value.end) {
+      setDateRange({
+        startDate: new Date(value.start),
+        endDate: new Date(value.end),
+        key: "selection",
+      });
+    }
+  }, [value.start, value.end]);
+
   // Calculate position when opening and on scroll/resize
   useEffect(() => {
     if (isOpen && containerRef.current) {
@@ -24,7 +49,7 @@ export default function DateRangeFilter({ value = { start: "", end: "" }, onChan
           setPosition({
             top: rect.bottom + window.scrollY + 4,
             left: rect.left + window.scrollX,
-            width: rect.width,
+            width: Math.max(rect.width, 600),
           });
         }
       };
@@ -56,25 +81,46 @@ export default function DateRangeFilter({ value = { start: "", end: "" }, onChan
     }
   }, [isOpen]);
 
-  const handleStartChange = (e) => {
-    const start = e.target.value;
-    onChange?.({ start, end: value.end });
-  };
+  const handleSelect = (ranges) => {
+    const selection = ranges.selection;
+    setDateRange(selection);
+    
+    // Convert Date objects to YYYY-MM-DD format
+    const formatDate = (date) => {
+      if (!date) return "";
+      const d = new Date(date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
 
-  const handleEndChange = (e) => {
-    const end = e.target.value;
-    onChange?.({ start: value.start, end });
+    onChange?.({
+      start: formatDate(selection.startDate),
+      end: formatDate(selection.endDate),
+    });
   };
 
   const clearRange = (e) => {
     e.stopPropagation();
+    setDateRange({
+      startDate: new Date(),
+      endDate: new Date(),
+      key: "selection",
+    });
     onChange?.({ start: "", end: "" });
   };
 
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+
   const displayText = value.start && value.end
-    ? `${value.start} to ${value.end}`
+    ? `${formatDisplayDate(value.start)} - ${formatDisplayDate(value.end)}`
     : value.start
-    ? `${value.start} to ...`
+    ? `${formatDisplayDate(value.start)} - ...`
     : placeholder;
 
   return (
@@ -96,7 +142,7 @@ export default function DateRangeFilter({ value = { start: "", end: "" }, onChan
           <X
             size={14}
             onClick={clearRange}
-            className="shrink-0 hover:text-red-600 transition"
+            className="shrink-0 hover:text-red-600 transition cursor-pointer"
           />
         ) : null}
       </button>
@@ -105,42 +151,26 @@ export default function DateRangeFilter({ value = { start: "", end: "" }, onChan
         createPortal(
           <div
             ref={dropdownRef}
-            className="fixed z-[99999] bg-white border border-slate-200 rounded-lg shadow-lg p-4 min-w-[320px]"
+            className="fixed z-[99999] bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
             style={{
               top: `${position.top}px`,
               left: `${position.left}px`,
             }}
           >
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  Start Date
-                </label>
-                <input
-                  type="date"
-                  value={value.start}
-                  onChange={handleStartChange}
-                  max={value.end || undefined}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1.5">
-                  End Date
-                </label>
-                <input
-                  type="date"
-                  value={value.end}
-                  onChange={handleEndChange}
-                  min={value.start || undefined}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
+            <div className="p-4">
+              <DateRangePicker
+                ranges={[dateRange]}
+                onChange={handleSelect}
+                months={1}
+                direction="horizontal"
+                showDateDisplay={false}
+                rangeColors={["#3b82f6"]}
+              />
+              <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-200 mt-4">
                 <button
                   type="button"
                   onClick={() => setIsOpen(false)}
-                  className="px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50 rounded-lg transition"
+                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition"
                 >
                   Done
                 </button>

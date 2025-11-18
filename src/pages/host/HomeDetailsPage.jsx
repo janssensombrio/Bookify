@@ -144,14 +144,17 @@ const eachNight = (start, end) => {
 const clampPercent = (v) => Math.max(0, Math.min(100, Number(v) || 0));
 const money = (n) => Math.max(0, Number(n) || 0);
 
-// offer applies if CHECK-IN date is inside [startsAt, endsAt] (inclusive)
+// offer applies if the entire booking date range (check-in to check-out) is within [startsAt, endsAt] (inclusive)
 function withinOfferWindow(offer, start, end) { 
   if (!start || !end) return false; 
-  const s = startOfDay(start); 
+  const checkIn = startOfDay(start);
+  const checkOut = startOfDay(end);
   const oS = toJSDate(offer?.startsAt); 
   const oE = toJSDate(offer?.endsAt); 
-  const afterStart = oS ? sameOrAfter(s, oS) : true; 
-  const beforeEnd  = oE ? sameOrBefore(s, oE) : true; 
+  // Check-in must be >= coupon start date (or no start date restriction)
+  const afterStart = oS ? sameOrAfter(checkIn, oS) : true; 
+  // Check-out must be <= coupon end date (or no end date restriction)
+  const beforeEnd  = oE ? sameOrBefore(checkOut, oE) : true; 
   return afterStart && beforeEnd; 
 }
 
@@ -1445,13 +1448,32 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
 
       const { start, end } = selectedDates || {};
       const baseSubtotal = Number(payment?.subtotalBase || 0); // set below in payment effect
+      
+      // Calculate promo discount to get afterPromo (since coupon applies to afterPromo)
+      const promos = promosCacheRef.current || [];
+      const eligiblePromos = promos.filter(
+        (p) =>
+          (p.status || "active") === "active" &&
+          appliesToListing(p, listingId) &&
+          withinOfferWindow(p, start, end) &&
+          (p.minSubtotal == null || Number(p.minSubtotal) <= baseSubtotal)
+      );
+      const bestPromo = eligiblePromos.length
+        ? eligiblePromos.reduce((a, b) => {
+            const da = offerDiscountAmount(a, baseSubtotal);
+            const db = offerDiscountAmount(b, baseSubtotal);
+            return db > da ? b : a;
+          })
+        : null;
+      const promoDiscount = bestPromo ? offerDiscountAmount(bestPromo, baseSubtotal) : 0;
+      const afterPromo = Math.max(0, baseSubtotal - promoDiscount);
 
       const valid = [];
       for (const c of candidates) {
         const statusOk = (c.status || "active") === "active";
         const listingOk = appliesToListing(c, listingId);
         const windowOk = withinOfferWindow(c, start, end);
-        const minOk = c.minSubtotal == null || Number(c.minSubtotal) <= baseSubtotal;
+        const minOk = c.minSubtotal == null || Number(c.minSubtotal) <= afterPromo;
 
         if (!(statusOk && listingOk && windowOk && minOk)) continue;
 
@@ -1464,16 +1486,17 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
           } catch {}
         }
 
-        // perUserLimit
+        // perUserLimit (0 or null/undefined means unlimited)
         let perUserOk = true;
-        if (Number.isFinite(Number(c.perUserLimit))) {
+        const perUserLimitNum = Number(c.perUserLimit);
+        if (Number.isFinite(perUserLimitNum) && perUserLimitNum > 0) {
           try {
             const rMe = await getDocs(query(
               collection(database, "couponRedemptions"),
               where("couponId", "==", c.id),
               where("uid", "==", user.uid)
             ));
-            perUserOk = rMe.size < Number(c.perUserLimit);
+            perUserOk = rMe.size < perUserLimitNum;
           } catch {}
         }
 
@@ -1486,10 +1509,10 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         return;
       }
 
-      // keep the most generous for the current base subtotal
+      // keep the most generous for the afterPromo amount (since coupon applies to afterPromo)
       const best = valid.reduce((a, b) => {
-        const da = offerDiscountAmount(a, baseSubtotal);
-        const db = offerDiscountAmount(b, baseSubtotal);
+        const da = offerDiscountAmount(a, afterPromo);
+        const db = offerDiscountAmount(b, afterPromo);
         return db > da ? b : a;
       });
 
@@ -1609,16 +1632,16 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
         })
       : null;
 
-    // Valid COUPON (against baseSubtotal policy; change to afterPromo if desired)
+    const promoDiscount = bestPromo ? offerDiscountAmount(bestPromo, baseSubtotal) : 0;
+    const afterPromo = Math.max(0, baseSubtotal - promoDiscount);
+
+    // Valid COUPON (check against afterPromo since that's what the discount is calculated on)
     const couponOk =
       appliedCoupon &&
       (appliedCoupon.status || "active") === "active" &&
       appliesToListing(appliedCoupon, listingId) &&
       withinOfferWindow(appliedCoupon, start, end) &&
-      (appliedCoupon.minSubtotal == null || Number(appliedCoupon.minSubtotal) <= baseSubtotal);
-
-    const promoDiscount = bestPromo ? offerDiscountAmount(bestPromo, baseSubtotal) : 0;
-    const afterPromo = Math.max(0, baseSubtotal - promoDiscount);
+      (appliedCoupon.minSubtotal == null || Number(appliedCoupon.minSubtotal) <= afterPromo);
 
     // coupon applies to AFTER-PROMO amount
     const couponDiscount = couponOk ? offerDiscountAmount(appliedCoupon, afterPromo) : 0;
@@ -2169,12 +2192,12 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
       <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70">
         <div className="max-w-[1200px] mx-auto px-4 py-3 flex items-center gap-3">
           {auth.currentUser && (
-            <button
-              onClick={onClose}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
-            >
-              <ChevronLeft className="w-4 h-4" /> Back
-            </button>
+          <button
+            onClick={onClose}
+            className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition"
+          >
+            <ChevronLeft className="w-4 h-4" /> Back
+          </button>
           )}
 
           <h1 className="text-base sm:text-lg font-semibold text-slate-900 truncate">
@@ -3027,7 +3050,7 @@ function BookingSidebar(props) {
                 <button
                   type="button"
                   onClick={applyCouponCode}
-                  className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+                  className="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
                 >
                   Apply
                 </button>

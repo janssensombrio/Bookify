@@ -105,10 +105,10 @@ function Modal({ open, title, icon: Icon, children, onClose }) {
       <div className="relative w-full max-w-md rounded-2xl bg-white shadow-xl border border-slate-200 p-5">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
-              {Icon ? <Icon size={18} /> : <Shield size={18} />}
-            </div>
-            <h3 className="text-lg font-semibold">{title}</h3>
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 grid place-items-center text-white shadow">
+            {Icon ? <Icon size={18} /> : <Shield size={18} />}
+          </div>
+          <h3 className="text-lg font-semibold">{title}</h3>
           </div>
           <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-lg transition">
             <X size={20} className="text-slate-400" />
@@ -644,7 +644,7 @@ export default function WalletPage() {
 
   /* ======================= Render ======================= */
   const balanceCard = (
-    <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-6 mb-6">
+    <div className="rounded-3xl border border-white/40 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 backdrop-blur-sm shadow-lg p-6 mb-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4 flex-1">
           <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg">

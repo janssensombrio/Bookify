@@ -84,8 +84,8 @@ const peso = (v) => {
   const n = Number(v || 0);
   return Number.isFinite(n) ? `₱${n.toLocaleString("en-PH", { maximumFractionDigits: 2 })}` : "—";
 };
-// 20 pts = 10 pesos -> 1 pt = ₱0.5
-const ptsToPHP = (pts) => Number((Number(pts || 0) * 0.5).toFixed(2));
+// 50 pts = 1 peso -> 1 pt = ₱0.02
+const ptsToPHP = (pts) => Number((Number(pts || 0) * 0.02).toFixed(2));
 
 const createdAtText = (u) =>
   u?.metadata?.creationTime ? new Date(u.metadata.creationTime).toLocaleDateString() : "—";
@@ -1037,7 +1037,7 @@ function PointsModal({ open, onClose, points = 0, onWithdraw, busy }) {
               {maxPts.toLocaleString()} pts{" "}
               <span className="text-base font-medium text-slate-500">({peso(ptsToPHP(maxPts))})</span>
             </div>
-            <div className="mt-1 text-xs text-slate-500">Rate: 20 pts = ₱10.00</div>
+            <div className="mt-1 text-xs text-slate-500">Rate: 50 pts = ₱1.00</div>
           </div>
 
           <label className="block">
@@ -1435,6 +1435,15 @@ export default function ProfilePage() {
               toMs(b.booking.scheduledAt) ||
               toMs(b.booking.createdAt);
             return B - A;
+          })
+          // Remove duplicates: keep only the most recent booking for each listing
+          .filter((item, index, self) => {
+            const listingId = item.listing?.id;
+            if (!listingId) return true;
+            // Find the first occurrence of this listing ID
+            const firstIndex = self.findIndex((i) => i.listing?.id === listingId);
+            // Keep only the first occurrence (most recent due to sorting)
+            return index === firstIndex;
           });
 
         if (alive) setBookings(result);
@@ -1732,7 +1741,7 @@ export default function ProfilePage() {
                   </button>
                     {/* Points Button with enhanced styling */}
                   <button
-                    onClick={() => setShowPoints(true)}
+                    onClick={() => navigate("/points")}
                       className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-amber-700 bg-gradient-to-br from-amber-50 to-amber-100/80 border-2 border-amber-200/60 hover:from-amber-100 hover:to-amber-200 hover:border-amber-300 transition-all duration-200 font-medium shadow-sm hover:shadow-md"
                   >
                       <Coins size={18} className="shrink-0" />

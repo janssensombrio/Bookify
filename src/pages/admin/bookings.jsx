@@ -5,17 +5,42 @@ import AdminSidebar from "./components/AdminSidebar.jsx";
 import TailwindDropdown from "./components/TailwindDropdown.jsx";
 import { database } from "../../config/firebase";
 import BookifyLogo from "../../components/bookify-logo.jsx";
-import { collection, getDocs, query, where, documentId } from "firebase/firestore";
+import { collection, getDocs, query, where, documentId, orderBy, limit, startAfter } from "firebase/firestore";
 import BookifyIcon from "../../media/favorite.png";
 import { useSidebar } from "../../context/SidebarContext";
 import DateRangeFilter from "./components/DateRangeFilter.jsx";
 import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
+import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
+
+// Admin wallet ID constant
+const ADMIN_WALLET_ID = "admin";
 
 // small helpers
 const chunk = (arr, size = 10) => {
   const out = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
+};
+
+const peso = (v) => {
+  const n = Number(v ?? 0);
+  return `₱${n.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const Badge = ({ children, kind = "muted" }) => {
+  const styles =
+    kind === "success"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : kind === "warning"
+      ? "bg-amber-50 text-amber-800 border-amber-200"
+      : kind === "danger"
+      ? "bg-rose-50 text-rose-700 border-rose-200"
+      : "bg-slate-50 text-slate-700 border-slate-200";
+  return (
+    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border ${styles}`}>
+      {children}
+    </span>
+  );
 };
 
 function formatPeso(v) {
@@ -60,9 +85,10 @@ export default function AdminBookingsPage() {
   const { sidebarOpen, setSidebarOpen } = useSidebar() || {};
   const sideOffset = sidebarOpen === false ? "md:ml-20" : "md:ml-72";
   const [bookings, setBookings] = useState([]);
+  const [walletTransactions, setWalletTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState("createdAt");
+  const [sortKey, setSortKey] = useState("timestamp");
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, confirmed, cancelled
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -71,10 +97,19 @@ export default function AdminBookingsPage() {
   const [pageSize, setPageSize] = useState(25);
   const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
+  // Load admin wallet transactions
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
+        // Load admin wallet transactions (service fees)
+        const tRef = collection(database, "wallets", ADMIN_WALLET_ID, "transactions");
+        const tQuery = query(tRef, orderBy("timestamp", "desc"));
+        const tSnap = await getDocs(tQuery);
+        const transactions = tSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setWalletTransactions(transactions);
+        
+        // Also load bookings for metrics
         const bookingsRef = collection(database, "bookings");
         const docs = await getDocs(bookingsRef);
         let rows = docs.docs.map((d) => {
@@ -154,7 +189,7 @@ export default function AdminBookingsPage() {
     })();
   }, []);
 
-  // Get unique categories
+  // Get unique categories from bookings (for filter)
   const categories = useMemo(() => {
     const cats = new Set();
     bookings.forEach((b) => {
@@ -189,24 +224,30 @@ export default function AdminBookingsPage() {
     }
   };
 
-  // SORTED & FILTERED
+  // SORTED & FILTERED - using wallet transactions
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
-    const filtered = bookings.filter((b) => {
+    const filtered = walletTransactions.filter((t) => {
+      // Only show positive transactions (service fees/revenue)
+      if (t.delta <= 0) return false;
+      
       // date range filter
-      if (!isDateInRange(b.createdAt, dateRange)) return false;
+      if (!isDateInRange(t.timestamp, dateRange)) return false;
+      
       // status filter
-      if (statusFilter !== "all" && b.status !== statusFilter) return false;
-      // category filter
-      if (categoryFilter !== "all" && b.category !== categoryFilter) return false;
+      if (statusFilter !== "all") {
+        if (statusFilter === "confirmed" && t.status !== "completed") return false;
+        if (statusFilter === "pending" && t.status !== "pending") return false;
+        if (statusFilter === "cancelled" && t.status !== "cancelled" && t.status !== "refunded") return false;
+      }
+      
       // search filter
       if (s) {
         const hay = [
-          b.guestName,
-          b.guestEmail,
-          b.listingTitle,
-          b.category,
-          b.id,
+          t.type,
+          t.note,
+          t.metadata?.bookingId,
+          t.id,
         ]
           .filter(Boolean)
           .join(" ")
@@ -222,8 +263,13 @@ export default function AdminBookingsPage() {
       if (va == null && vb == null) return 0;
       if (va == null) return -1;
       if (vb == null) return 1;
-      if (key === "guestName" || key === "listingTitle" || typeof va === "string")
+      if (key === "type" || key === "note" || typeof va === "string")
         return String(va).localeCompare(String(vb));
+      if (key === "timestamp") {
+        const ta = va?.toDate ? va.toDate().getTime() : (va instanceof Date ? va.getTime() : new Date(va).getTime());
+        const tb = vb?.toDate ? vb.toDate().getTime() : (vb instanceof Date ? vb.getTime() : new Date(vb).getTime());
+        return ta - tb;
+      }
       return Number(va) - Number(vb);
     };
 
@@ -234,11 +280,11 @@ export default function AdminBookingsPage() {
     }
 
     return base.slice().sort((a, b) => {
-      const ta = a.createdAt instanceof Date ? a.createdAt.getTime() : a.createdAt?.toDate?.()?.getTime?.() || 0;
-      const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
+      const ta = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime());
+      const tb = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime());
       return tb - ta;
     });
-  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange]);
+  }, [walletTransactions, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -247,7 +293,7 @@ export default function AdminBookingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, statusFilter, categoryFilter, pageSize, sorted.length]);
 
-  const pagedBookings = sorted.slice((page - 1) * pageSize, page * pageSize);
+  const pagedTransactions = sorted.slice((page - 1) * pageSize, page * pageSize);
 
   // METRICS
   const metrics = useMemo(() => {
@@ -297,29 +343,24 @@ export default function AdminBookingsPage() {
       totalNights,
       topListing,
     };
-  }, [bookings]);
+  }, [bookings, walletTransactions]);
 
   // export CSV
   const exportCSV = () => {
     try {
       const rows = sorted || [];
-      const headers = ["ID", "Guest", "Email", "Listing", "Category", "Check-out", "Guests", "Nights", "Total", "Status", "Payment", "Created"];
+      const headers = ["Type", "Date", "Amount", "Status", "Details"];
       const lines = [headers.join(",")];
-      for (const r of rows) {
-        const category = r.category || "—";
+      for (const t of rows) {
+        const sign = t.delta >= 0 ? "+" : "–";
+        const absAmount = Math.abs(t.delta || 0);
+        const details = t.note || (t.metadata?.bookingId ? `Booking: ${t.metadata.bookingId.slice(0, 8)}…` : "");
         const cols = [
-          r.id,
-          (r.guestName || "").replace(/"/g, '""'),
-          r.guestEmail || "",
-          (r.listingTitle || "").replace(/"/g, '""'),
-          category.replace(/"/g, '""'),
-          formatDate(r.checkOut),
-          r.guests || 1,
-          r.nights || 0,
-          r.totalPrice != null ? Number(r.totalPrice) : "",
-          r.status || "",
-          r.paymentStatus || "",
-          r.createdAt ? new Date(r.createdAt?.toDate?.() || r.createdAt).toISOString() : "",
+          (t.type || "Transaction").replace(/_/g, " "),
+          t.timestamp ? formatDateTimeShort(t.timestamp) : "",
+          `${sign}${absAmount}`,
+          t.status || "completed",
+          details,
         ].map((c) => {
           if (c == null) return "";
           const s = String(c);
@@ -439,37 +480,39 @@ export default function AdminBookingsPage() {
   <table>
     <thead>
       <tr>
-        <th style="width:12%;">ID</th>
-        <th style="width:15%;">Guest</th>
-        <th style="width:18%;">Listing</th>
-        <th style="width:12%;">Category</th>
-        <th class="num" style="width:10%;">Guests</th>
-        <th class="num" style="width:10%;">Total</th>
-        <th style="width:11%;">Status</th>
-        <th style="width:12%;">Payment</th>
+        <th style="width:20%;">Type</th>
+        <th style="width:18%;">Date</th>
+        <th class="num" style="width:15%;">Amount</th>
+        <th style="width:12%;">Status</th>
+        <th style="width:35%;">Details</th>
       </tr>
     </thead>
     <tbody>`);
 
-    for (const b of rows) {
-      const category = b.category || "—";
-      const statusClass = b.status === "confirmed" ? "confirmed" : b.status === "pending" ? "pending" : "cancelled";
-      const paymentClass = b.paymentStatus === "paid" ? "confirmed" : b.paymentStatus === "cancelled" ? "cancelled" : "pending";
+    for (const t of rows) {
+      const sign = t.delta >= 0 ? "+" : "–";
+      const absAmount = Math.abs(t.delta || 0);
+      const statusClass = t.status === "completed" ? "confirmed" : t.status === "pending" ? "pending" : "cancelled";
+      const statusText = t.status || "completed";
+      const typeText = (t.type || "Transaction").replace(/_/g, " ");
+      const details = t.note || (t.metadata?.bookingId ? `Booking: ${t.metadata.bookingId.slice(0, 8)}…` : "—");
 
       html.push(`<tr>
-        <td class="mono">${escapeHtml(String(b.id).slice(0, 8))}…</td>
-        <td>${escapeHtml(b.guestName)}</td>
-        <td>${escapeHtml(b.listingTitle)}</td>
-        <td>${escapeHtml(category)}</td>
-        <td class="num">${b.guests || 1}</td>
-        <td class="num">${b.totalPrice != null ? escapeHtml(formatPesoSafe(b.totalPrice)) : "—"}</td>
-        <td><span class="status"><span class="dot ${statusClass}"></span>${escapeHtml(b.status)}</span></td>
-        <td><span class="status"><span class="dot ${paymentClass}"></span>${escapeHtml(b.paymentStatus)}</span></td>
+        <td>${escapeHtml(typeText)}</td>
+        <td>${escapeHtml(formatDateTimeShort(t.timestamp))}</td>
+        <td class="num">${sign}${escapeHtml(formatPesoSafe(absAmount))}</td>
+        <td><span class="status"><span class="dot ${statusClass}"></span>${escapeHtml(statusText)}</span></td>
+        <td>${escapeHtml(details)}</td>
       </tr>`);
     }
 
     html.push(`</tbody>
   </table>
+
+  <div style="margin-top: 24px; padding: 16px; background: var(--subtle); border: 1px solid var(--line); border-radius: 12px; display: flex; justify-content: space-between; align-items: center;">
+    <div style="font-size: 14px; font-weight: 600; color: var(--ink);">Grand Total Revenue:</div>
+    <div style="font-size: 18px; font-weight: 700; color: var(--brand);">${formatPesoSafe(safeMetrics.totalRevenue)}</div>
+  </div>
 
   <div class="footer">
     <div>Bookify • Bookings export</div>
@@ -821,10 +864,9 @@ export default function AdminBookingsPage() {
                 value={sortKey}
                 onChange={(e) => setSortKey(e.target.value)}
               options={[
-                { value: "createdAt", label: "Newest" },
-                { value: "totalPrice", label: "Price" },
-                { value: "guestName", label: "Guest" },
-                { value: "listingTitle", label: "Listing" },
+                { value: "timestamp", label: "Newest" },
+                { value: "delta", label: "Amount" },
+                { value: "type", label: "Type" },
               ]}
               className="min-w-[110px]"
             />
@@ -895,68 +937,63 @@ export default function AdminBookingsPage() {
         ) : (
           <div className="relative rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
             <div className="overflow-x-auto overflow-y-auto max-h-[60vh] sm:max-h-none rounded-2xl sm:-mx-3 sm:mx-0" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur dark:bg-slate-900/80">
-                  <tr className="text-left text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-3 pl-4 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm">ID</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm">Guest</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden sm:table-cell">Listing</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden md:table-cell">Category</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm text-right hidden lg:table-cell">Guests</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm text-right">Total</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm">Status</th>
-                    <th className="py-3 pr-2 sm:pr-4 font-semibold text-xs sm:text-sm hidden md:table-cell">Payment</th>
-                    <th className="py-3 pr-4 font-semibold text-xs sm:text-sm hidden lg:table-cell">Created</th>
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-200">
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Type</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Date</th>
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Amount</th>
+                    <th className="text-center py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Status</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-slate-700 uppercase tracking-wider">Details</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {pagedBookings.map((b, idx) => (
-                    <tr
-                      key={b.id}
-                      className={`border-b border-slate-100 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 ${
-                        idx % 2 === 0 ? "bg-white/70 dark:bg-slate-900/40" : "bg-white/40 dark:bg-slate-900/30"
-                      }`}
-                    >
-                      <td className="py-3 pl-4 pr-2 sm:pr-4 font-mono text-xs text-slate-500">{String(b.id).slice(0, 8)}…</td>
-                      <td className="py-3 pr-2 sm:pr-4 font-medium text-slate-900 dark:text-slate-100 text-xs sm:text-sm">{b.guestName}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-xs sm:text-sm hidden sm:table-cell">{b.listingTitle}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-slate-700 dark:text-slate-200 text-xs sm:text-sm hidden md:table-cell">{b.category || "—"}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-xs sm:text-sm hidden lg:table-cell">{b.guests || 1}</td>
-                      <td className="py-3 pr-2 sm:pr-4 text-right text-slate-900 dark:text-slate-100 text-xs sm:text-sm">
-                        {b.totalPrice != null ? formatPeso(b.totalPrice) : "—"}
-                      </td>
-                      <td className="py-3 pr-2 sm:pr-4 text-xs">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${statusBadgeClass(b.status)}`}>
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              b.status?.toLowerCase() === "confirmed"
-                                ? "bg-emerald-500"
-                                : b.status?.toLowerCase() === "cancelled"
-                                ? "bg-red-500"
-                                : "bg-amber-500"
-                            }`}
-                          ></span>
-                          {b.status || "—"}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-2 sm:pr-4 text-xs hidden md:table-cell">
-                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${paymentBadgeClass(b.paymentStatus)}`}>
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              b.paymentStatus?.toLowerCase() === "paid"
-                                ? "bg-emerald-500"
-                                : b.paymentStatus?.toLowerCase() === "cancelled" ||
-                                  b.paymentStatus?.toLowerCase() === "refunded"
-                                ? "bg-red-500"
-                                : "bg-amber-500"
-                            }`}
-                          ></span>
-                          {b.paymentStatus || "—"}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-xs text-slate-500 hidden lg:table-cell">{formatDateTimeShort(b.createdAt)}</td>
-                    </tr>
-                  ))}
+                <tbody className="divide-y divide-slate-100">
+                  {pagedTransactions.map((t, idx) => {
+                    const sign = t.delta >= 0 ? "+" : "–";
+                    const absAmount = Math.abs(t.delta || 0);
+                    const isCredit = t.delta >= 0;
+                    const iconBg = isCredit ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700";
+                    const Icon = isCredit ? ArrowDownLeft : ArrowUpRight;
+                    const statusKind =
+                      t.status === "completed" ? "success" : t.status === "pending" ? "warning" : "danger";
+                    
+                    return (
+                      <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <div className={`h-8 w-8 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
+                              <Icon size={16} />
+                            </div>
+                            <span className="font-medium text-slate-900 text-sm">
+                              {t.type?.replace(/_/g, " ") || "Transaction"}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-slate-600 whitespace-nowrap">
+                          {formatDateTimeShort(t.timestamp)}
+                        </td>
+                        <td className={`py-3 px-4 text-right text-sm font-semibold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
+                          {sign}{peso(absAmount)}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          <Badge kind={statusKind}>{t.status || "completed"}</Badge>
+                        </td>
+                        <td className="py-3 px-4 text-sm text-slate-600">
+                          <div className="space-y-0.5">
+                            {t?.note && (
+                              <div className="text-xs">"{t.note}"</div>
+                            )}
+                            {t?.metadata?.bookingId && (
+                              <div className="text-xs">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
+                            )}
+                            {!t?.note && !t?.metadata?.bookingId && (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

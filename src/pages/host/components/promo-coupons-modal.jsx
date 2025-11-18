@@ -1,5 +1,5 @@
 // src/pages/host/components/promo-coupons-modal.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   collection,
@@ -28,6 +28,9 @@ import {
   Calendar,
   Clock,
 } from "lucide-react";
+import { DateRangePicker } from "react-date-range";
+import "react-date-range/dist/styles.css";
+import "react-date-range/dist/theme/default.css";
 
 /* =========================================================
    Small UI helpers
@@ -60,6 +63,177 @@ function Badge({ tone = "blue", children }) {
     <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${tones[tone]}`}>
       {children}
     </span>
+  );
+}
+
+/* =========================================================
+   Date Range Field Component
+========================================================= */
+function CouponDateRangeField({ label, value = { start: "", end: "" }, onChange, error }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 0 });
+
+  // Convert string dates to Date objects for react-date-range
+  const startDate = value.start ? new Date(value.start) : new Date();
+  const endDate = value.end ? new Date(value.end) : new Date();
+
+  // DateRange state for react-date-range
+  const [dateRange, setDateRange] = useState({
+    startDate: startDate,
+    endDate: endDate,
+    key: "selection",
+  });
+
+  // Update dateRange when value prop changes
+  useEffect(() => {
+    if (value.start && value.end) {
+      setDateRange({
+        startDate: new Date(value.start),
+        endDate: new Date(value.end),
+        key: "selection",
+      });
+    }
+  }, [value.start, value.end]);
+
+  // Calculate position when opening (above the button)
+  useEffect(() => {
+    if (isOpen && containerRef.current) {
+      const updatePosition = () => {
+        if (containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          // Estimate calendar height (approximately 350px for single month)
+          const calendarHeight = 350;
+          setPosition({
+            top: rect.top + window.scrollY - calendarHeight - 8, // Position above with 8px gap
+            left: rect.left + window.scrollX,
+            width: Math.max(rect.width, 600),
+          });
+        }
+      };
+      
+      updatePosition();
+      window.addEventListener("scroll", updatePosition, true);
+      window.addEventListener("resize", updatePosition);
+      
+      return () => {
+        window.removeEventListener("scroll", updatePosition, true);
+        window.removeEventListener("resize", updatePosition);
+      };
+    }
+  }, [isOpen]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      const isClickInsideContainer = containerRef.current?.contains(event.target);
+      const isClickInsideDropdown = dropdownRef.current?.contains(event.target);
+      if (!isClickInsideContainer && !isClickInsideDropdown) {
+        setIsOpen(false);
+      }
+    };
+    if (isOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [isOpen]);
+
+  const handleSelect = (ranges) => {
+    const selection = ranges.selection;
+    setDateRange(selection);
+    
+    // Convert Date objects to YYYY-MM-DD format
+    const formatDate = (date) => {
+      if (!date) return "";
+      const d = new Date(date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    };
+
+    onChange?.({
+      start: formatDate(selection.startDate),
+      end: formatDate(selection.endDate),
+    });
+  };
+
+  const formatDisplayDate = (dateStr) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+
+  const displayText = value.start && value.end
+    ? `${formatDisplayDate(value.start)} - ${formatDisplayDate(value.end)}`
+    : value.start
+    ? `${formatDisplayDate(value.start)} - ...`
+    : "Select date range";
+
+  return (
+    <Field label={label} error={error}>
+      <div className="relative" ref={containerRef}>
+        <button
+          type="button"
+          onClick={() => setIsOpen(!isOpen)}
+          className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-2xl border text-sm transition ${
+            value.start || value.end
+              ? "border-blue-300 bg-blue-50 text-blue-700"
+              : "border-slate-300 bg-white/90 text-slate-700 hover:bg-slate-50"
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Calendar size={16} className="shrink-0" />
+            <span className="truncate">{displayText}</span>
+          </div>
+          {value.start || value.end ? (
+            <X
+              size={14}
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange?.({ start: "", end: "" });
+              }}
+              className="shrink-0 hover:text-red-600 transition cursor-pointer"
+            />
+          ) : null}
+        </button>
+
+        {isOpen &&
+          createPortal(
+            <div
+              ref={dropdownRef}
+              className="fixed z-[99999] bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden"
+              style={{
+                top: `${position.top}px`,
+                left: `${position.left}px`,
+              }}
+            >
+              <div className="p-4">
+                <DateRangePicker
+                  ranges={[dateRange]}
+                  onChange={handleSelect}
+                  months={1}
+                  direction="horizontal"
+                  showDateDisplay={false}
+                  rangeColors={["#3b82f6"]}
+                  minDate={new Date()}
+                />
+                <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-200 mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setIsOpen(false)}
+                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+      </div>
+    </Field>
   );
 }
 
@@ -777,30 +951,18 @@ export default function PromoCouponsModal({ open, onClose }) {
                     </Field>
                   )}
 
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <Field label="Start Date">
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={couponForm.startsAt}
-                          onChange={(e) => setCouponForm((p) => ({ ...p, startsAt: e.target.value }))}
-                          className="w-full rounded-2xl border border-slate-300 bg-white/90 px-10 py-2.5"
-                        />
-                        <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                      </div>
-                    </Field>
-                    <Field label="End Date" error={couponErrors.endsAt}>
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={couponForm.endsAt}
-                          onChange={(e) => setCouponForm((p) => ({ ...p, endsAt: e.target.value }))}
-                          className="w-full rounded-2xl border border-slate-300 bg-white/90 px-10 py-2.5"
-                        />
-                        <Clock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                      </div>
-                    </Field>
-                  </div>
+                  <CouponDateRangeField
+                    label="Date Range"
+                    value={{ start: couponForm.startsAt, end: couponForm.endsAt }}
+                    onChange={(range) => {
+                      setCouponForm((p) => ({
+                        ...p,
+                        startsAt: range.start,
+                        endsAt: range.end,
+                      }));
+                    }}
+                    error={couponErrors.endsAt}
+                  />
 
                   <Field label="Status">
                     <select
@@ -1021,30 +1183,18 @@ export default function PromoCouponsModal({ open, onClose }) {
                     </Field>
                   )}
 
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <Field label="Start Date">
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={promoForm.startsAt}
-                          onChange={(e) => setPromoForm((p) => ({ ...p, startsAt: e.target.value }))}
-                          className="w-full rounded-2xl border border-slate-300 bg-white/90 px-10 py-2.5"
-                        />
-                        <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                      </div>
-                    </Field>
-                    <Field label="End Date" error={promoErrors.endsAt}>
-                      <div className="relative">
-                        <input
-                          type="date"
-                          value={promoForm.endsAt}
-                          onChange={(e) => setPromoForm((p) => ({ ...p, endsAt: e.target.value }))}
-                          className="w-full rounded-2xl border border-slate-300 bg-white/90 px-10 py-2.5"
-                        />
-                        <Clock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-                      </div>
-                    </Field>
-                  </div>
+                  <CouponDateRangeField
+                    label="Date Range"
+                    value={{ start: promoForm.startsAt, end: promoForm.endsAt }}
+                    onChange={(range) => {
+                      setPromoForm((p) => ({
+                        ...p,
+                        startsAt: range.start,
+                        endsAt: range.end,
+                      }));
+                    }}
+                    error={promoErrors.endsAt}
+                  />
 
                   <Field label="Status">
                     <select

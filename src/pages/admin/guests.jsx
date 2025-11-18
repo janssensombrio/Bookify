@@ -304,7 +304,19 @@ export default function AdminGuestsPage() {
         </tr>`;
       }).join("")}
     </tbody>
+    <tfoot>
+      <tr style="background: #f8fafc; font-weight: 600;">
+        <td colspan="3" style="text-align: right; padding: 12px;">Total:</td>
+        <td style="padding: 12px; text-align: center;">${rows.reduce((sum, g) => sum + (g.bookingCount || 0), 0).toLocaleString()}</td>
+        <td style="padding: 12px;">₱${rows.reduce((sum, g) => sum + (g.totalSpent || 0), 0).toLocaleString()}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tfoot>
   </table>
+  <div style="margin-top: 16px; padding: 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
+    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">Total Guests:</div>
+    <div style="font-size: 16px; font-weight: 700; color: #2563eb;">${rows.length.toLocaleString()}</div>
+  </div>
 </body>
 </html>`;
   };

@@ -254,6 +254,7 @@ const GuestMessagesPage = () => {
   const [hiddenAtMap, setHiddenAtMap] = useState({}); // { [otherUid]: ms }
   const [archivedAtMap, setArchivedAtMap] = useState({}); // { [otherUid]: ms }
   const [lastActivityMs, setLastActivityMs] = useState({}); // { [otherUid]: ms }
+  const [lastMessages, setLastMessages] = useState({}); // { [otherUid]: { text: string, timestamp: ms } }
 
   // UI states
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -361,18 +362,33 @@ const GuestMessagesPage = () => {
     let othersB = new Set();
     let lastA = new Map(); // otherUid -> ms
     let lastB = new Map();
+    let lastMsgA = new Map(); // otherUid -> { text, timestamp }
+    let lastMsgB = new Map();
 
     const emit = () => {
       const ids = Array.from(new Set([...othersA, ...othersB]));
       setConversationUserIds(ids);
       // merge last activity
       const merged = {};
+      const mergedMsgs = {};
       ids.forEach((id) => {
         const a = lastA.get(id) ?? 0;
         const b = lastB.get(id) ?? 0;
         merged[id] = Math.max(a, b);
+        
+        // Get the most recent message
+        const msgA = lastMsgA.get(id);
+        const msgB = lastMsgB.get(id);
+        if (msgA && msgB) {
+          mergedMsgs[id] = msgA.timestamp > msgB.timestamp ? msgA : msgB;
+        } else if (msgA) {
+          mergedMsgs[id] = msgA;
+        } else if (msgB) {
+          mergedMsgs[id] = msgB;
+        }
       });
       setLastActivityMs(merged);
+      setLastMessages(mergedMsgs);
     };
 
     const unsub1 = onSnapshot(
@@ -380,13 +396,21 @@ const GuestMessagesPage = () => {
       (snap) => {
         othersA = new Set();
         lastA = new Map();
+        lastMsgA = new Map();
         snap.forEach((d) => {
           const m = d.data();
           const other = m?.receiverId;
           if (!other || other === currentUid) return;
           othersA.add(other);
           const t = tsToMs(m.timestamp);
-          lastA.set(other, Math.max(lastA.get(other) ?? 0, t));
+          const currentLast = lastA.get(other) ?? 0;
+          if (t >= currentLast) {
+            lastA.set(other, t);
+            lastMsgA.set(other, {
+              text: m.text || m.message || "",
+              timestamp: t,
+            });
+          }
         });
         emit();
       },
@@ -398,13 +422,21 @@ const GuestMessagesPage = () => {
       (snap) => {
         othersB = new Set();
         lastB = new Map();
+        lastMsgB = new Map();
         snap.forEach((d) => {
           const m = d.data();
           const other = m?.senderId;
           if (!other || other === currentUid) return;
           othersB.add(other);
           const t = tsToMs(m.timestamp);
-          lastB.set(other, Math.max(lastB.get(other) ?? 0, t));
+          const currentLast = lastB.get(other) ?? 0;
+          if (t >= currentLast) {
+            lastB.set(other, t);
+            lastMsgB.set(other, {
+              text: m.text || m.message || "",
+              timestamp: t,
+            });
+          }
         });
         emit();
       },
@@ -1229,11 +1261,11 @@ const GuestMessagesPage = () => {
                   <div className="flex-shrink-0 mb-3 md:mb-4">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
-                        <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
+                      <MessageSquare className="text-blue-600 w-[18px] h-[18px] sm:w-5 sm:h-5" size={18} />
                         <h3 className="text-base sm:text-lg font-semibold text-slate-900">
                           {showArchived ? "Archived" : "Conversations"}
                         </h3>
-                      </div>
+                    </div>
                       {archivedConversations.length > 0 && (
                         <button
                           onClick={() => setShowArchived(!showArchived)}
@@ -1271,8 +1303,21 @@ const GuestMessagesPage = () => {
                                   >
                                     <Avatar url={data.photoURL} name={data.displayName} size={36} />
                                     <div className="text-left min-w-0 flex-1 overflow-hidden">
-                                      <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
-                                      <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <p className={`text-base sm:text-lg font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                        {lastMessages[uid] && (
+                                          <span className={`text-sm whitespace-nowrap shrink-0 ${active ? "text-blue-100" : "text-slate-500"}`}>
+                                            {formatTime12(lastMessages[uid].timestamp)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {lastMessages[uid] ? (
+                                        <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>
+                                          {lastMessages[uid].text || "No message"}
+                                        </p>
+                                      ) : (
+                                        <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                      )}
                                     </div>
                                   </button>
                                   <button
@@ -1290,33 +1335,46 @@ const GuestMessagesPage = () => {
                       )
                     ) : (
                       sortedConversations.length === 0 ? (
-                        <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
-                      ) : (
-                        <div className="space-y-2 overflow-x-hidden">
-                          {sortedConversations.map((uid) => {
-                            const data = userMap[uid] || { displayName: uid, photoURL: null };
-                            const active = selectedChatUid === uid;
-                            return (
-                              <div key={uid} className="overflow-hidden -mx-1 px-1">
-                                <button
-                                  onClick={() => setSelectedChatUid(uid)}
-                                  className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
-                                    active 
-                                      ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
-                                      : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
-                                  }`}
-                                  title={data.displayName}
-                                >
-                                  <Avatar url={data.photoURL} name={data.displayName} size={36} />
-                                  <div className="text-left min-w-0 flex-1 overflow-hidden">
-                                    <p className={`text-sm sm:text-base font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
-                                    <p className={`text-xs truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                      <div className="text-xs sm:text-sm text-slate-600 text-center py-6">No conversations yet</div>
+                    ) : (
+                      <div className="space-y-2 overflow-x-hidden">
+                        {sortedConversations.map((uid) => {
+                          const data = userMap[uid] || { displayName: uid, photoURL: null };
+                          const active = selectedChatUid === uid;
+                          return (
+                            <div key={uid} className="overflow-hidden -mx-1 px-1">
+                              <button
+                                onClick={() => setSelectedChatUid(uid)}
+                                className={`w-full flex items-center gap-2 sm:gap-3 rounded-xl md:rounded-2xl px-3 sm:px-4 py-2.5 sm:py-3 transition-all duration-300 active:scale-[0.98] md:hover:scale-[1.02] ${
+                                  active 
+                                    ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg shadow-blue-500/30 border-2 border-white/60" 
+                                    : "bg-white/60 border-2 border-white/60 backdrop-blur-sm active:bg-white/80 md:hover:bg-white/80 shadow-md md:hover:shadow-lg"
+                                }`}
+                                title={data.displayName}
+                              >
+                                <Avatar url={data.photoURL} name={data.displayName} size={36} />
+                                <div className="text-left min-w-0 flex-1 overflow-hidden">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <p className={`text-base sm:text-lg font-medium truncate ${active ? "text-white" : "text-slate-900"}`}>{data.displayName}</p>
+                                    {lastMessages[uid] && (
+                                      <span className={`text-sm whitespace-nowrap shrink-0 ${active ? "text-blue-100" : "text-slate-500"}`}>
+                                        {formatTime12(lastMessages[uid].timestamp)}
+                                      </span>
+                                    )}
                                   </div>
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
+                                  {lastMessages[uid] ? (
+                                    <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>
+                                      {lastMessages[uid].text || "No message"}
+                                    </p>
+                                  ) : (
+                                    <p className={`text-sm truncate ${active ? "text-blue-100" : "text-slate-600"}`}>Tap to open chat</p>
+                                  )}
+                                </div>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                       )
                     )}
                   </div>

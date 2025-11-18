@@ -492,7 +492,7 @@ export default function HostWalletPage() {
       </div>
 
       {/* Balance Card */}
-      <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-6 sm:p-8">
+      <div className="rounded-3xl border border-white/40 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 backdrop-blur-sm shadow-lg p-6 sm:p-8">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-slate-600 font-medium">Host Wallet Balance</p>

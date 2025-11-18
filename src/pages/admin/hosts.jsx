@@ -422,6 +422,12 @@ export default function AdminHostsPage() {
     }
 
     html.push(`</tbody>
+    <tfoot>
+      <tr style="background: var(--thead); font-weight: 600;">
+        <td colspan="6" style="text-align: right; padding: 12px;">Total Hosts:</td>
+        <td style="padding: 12px; color: var(--ink);">${rows.length.toLocaleString()}</td>
+      </tr>
+    </tfoot>
   </table>
 
   <div class="footer">

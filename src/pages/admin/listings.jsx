@@ -549,6 +549,16 @@ export default function AdminListingsPage() {
     }
 
     html.push(`</tbody>
+    <tfoot>
+      <tr style="background: var(--thead); font-weight: 600;">
+        <td colspan="5" style="text-align: right; padding: 12px;">Total Listings:</td>
+        <td colspan="4" style="padding: 12px; color: var(--ink);">${totalListings.toLocaleString()}</td>
+      </tr>
+      <tr style="background: var(--subtle);">
+        <td colspan="5" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Bookings:</td>
+        <td colspan="4" style="padding: 8px 12px; font-size: 11px; text-align: right;">${totalBookings.toLocaleString()}</td>
+      </tr>
+    </tfoot>
   </table>
 
   <div class="footer">
