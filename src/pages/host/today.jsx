@@ -282,16 +282,14 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
 
   // Format date info string - for homes show check-in/check-out, for others show schedule
   let dateInfo = "";
-  let dateLabel = "Date";
   
   if (isHome && checkInDate && checkOutDate) {
-    dateLabel = "Check-in / Check-out";
-    dateInfo = `${checkInDate} - ${checkOutDate}`;
+    dateInfo = `Check-in: ${checkInDate} | Check-out: ${checkOutDate}`;
   } else if (scheduleDate) {
-    dateLabel = "Schedule";
-    dateInfo = scheduleTime ? `${scheduleDate} at ${scheduleTime}` : scheduleDate;
+    dateInfo = scheduleTime ? `Schedule: ${scheduleDate} at ${scheduleTime}` : `Schedule: ${scheduleDate}`;
   }
 
+  // Always include all variables with safe defaults (EmailJS doesn't like missing variables)
   const params = {
     to_name: String(user?.displayName || (user?.email || "").split("@")[0] || "Guest"),
     to_email: String(user?.email || ""),
@@ -302,21 +300,13 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
     currency_symbol: String(currencySymbol || "₱"),
     total_price: String(Number(totalAmount || 0).toFixed(2)),
     brand_site_url: String(typeof window !== "undefined" ? window.location.origin : "https://bookify.com"),
-    // Date fields - only include if they have values to avoid "corrupted variables" error
-    check_in_date: checkInDate ? String(checkInDate) : undefined,
-    check_out_date: checkOutDate ? String(checkOutDate) : undefined,
-    schedule_date: scheduleDate ? String(scheduleDate) : undefined,
-    schedule_time: scheduleTime ? String(scheduleTime) : undefined,
-    date_info: dateInfo ? String(dateInfo) : undefined,
-    date_label: dateInfo ? String(dateLabel) : undefined,
+    // Date fields - always include with empty string if not applicable
+    check_in_date: String(checkInDate || ""),
+    check_out_date: String(checkOutDate || ""),
+    schedule_date: String(scheduleDate || ""),
+    schedule_time: String(scheduleTime || ""),
+    date_info: String(dateInfo || ""),
   };
-
-  // Remove undefined values (EmailJS doesn't like them)
-  Object.keys(params).forEach(key => {
-    if (params[key] === undefined) {
-      delete params[key];
-    }
-  });
 
   // Log for debugging
   console.log("[EmailJS] Attempting to send confirmation email:", { 
