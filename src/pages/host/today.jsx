@@ -232,7 +232,7 @@ async function sendCancellationEmail({ booking, reasonText, refundAmount, guestE
   }
 }
 
-async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymentStatus = "paid" }) {
+async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymentStatus = "paid", booking }) {
   if (!isEmailJsConfigured) {
     console.warn("[EmailJS] Skipped sending email — missing EmailJS env vars.");
     return;
@@ -241,22 +241,68 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
     listing?.currencySymbol ||
     (listing?.currency === "USD" ? "$" : listing?.currency === "EUR" ? "€" : "₱");
 
+  const category = String(listing?.category || "Homes");
+  const isHome = category.toLowerCase().startsWith("home");
+
+  // Format dates based on category
+  let checkInDate = "";
+  let checkOutDate = "";
+  let scheduleDate = "";
+  let scheduleTime = "";
+
+  if (isHome && booking) {
+    // For homes, format check-in and check-out dates
+    if (booking.checkIn) {
+      const checkIn = booking.checkIn?.toDate ? booking.checkIn.toDate() : new Date(booking.checkIn);
+      checkInDate = checkIn.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+    if (booking.checkOut) {
+      const checkOut = booking.checkOut?.toDate ? booking.checkOut.toDate() : new Date(booking.checkOut);
+      checkOutDate = checkOut.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    }
+  } else if (booking?.schedule) {
+    // For experiences/services, format schedule date and time
+    if (booking.schedule.date) {
+      scheduleDate = fmtDateStr(booking.schedule.date);
+    }
+    if (booking.schedule.time) {
+      scheduleTime = fmtTimeStr(booking.schedule.time);
+    }
+  }
+
   const params = {
     to_name: String(user?.displayName || (user?.email || "").split("@")[0] || "Guest"),
     to_email: String(user?.email || ""),
     listing_title: String(listing?.title || "Untitled"),
-    listing_category: String(listing?.category || "Homes"),
+    listing_category: category,
     listing_address: String(listing?.location || "—"),
     payment_status: String(paymentStatus).charAt(0).toUpperCase() + String(paymentStatus).slice(1),
     currency_symbol: String(currencySymbol || "₱"),
     total_price: Number(totalAmount || 0).toFixed(2),
     brand_site_url: String(typeof window !== "undefined" ? window.location.origin : ""),
+    // Date fields - template will show appropriate ones
+    check_in_date: String(checkInDate || ""),
+    check_out_date: String(checkOutDate || ""),
+    schedule_date: String(scheduleDate || ""),
+    schedule_time: String(scheduleTime || ""),
   };
 
   // Log for debugging
   console.log("[EmailJS] Attempting to send confirmation email:", { 
     to: user?.email, 
     listing: listing?.title,
+    category,
+    isHome,
     hostname: typeof window !== "undefined" ? window.location.hostname : "unknown",
     params
   });
@@ -2636,6 +2682,7 @@ export default function TodayTab() {
             listing,
             totalAmount: numberOr(booking?.totalPrice, 0),
             paymentStatus: "paid",
+            booking: booking, // Pass booking for dates
           });
           emailSent = true;
         }
