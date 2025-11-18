@@ -280,6 +280,18 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
     }
   }
 
+  // Format date info string - for homes show check-in/check-out, for others show schedule
+  let dateInfo = "";
+  let dateLabel = "Date";
+  
+  if (isHome && checkInDate && checkOutDate) {
+    dateLabel = "Check-in / Check-out";
+    dateInfo = `${checkInDate} - ${checkOutDate}`;
+  } else if (scheduleDate) {
+    dateLabel = "Schedule";
+    dateInfo = scheduleTime ? `${scheduleDate} at ${scheduleTime}` : scheduleDate;
+  }
+
   const params = {
     to_name: String(user?.displayName || (user?.email || "").split("@")[0] || "Guest"),
     to_email: String(user?.email || ""),
@@ -290,21 +302,21 @@ async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymen
     currency_symbol: String(currencySymbol || "₱"),
     total_price: String(Number(totalAmount || 0).toFixed(2)),
     brand_site_url: String(typeof window !== "undefined" ? window.location.origin : "https://bookify.com"),
+    // Date fields - only include if they have values to avoid "corrupted variables" error
+    check_in_date: checkInDate ? String(checkInDate) : undefined,
+    check_out_date: checkOutDate ? String(checkOutDate) : undefined,
+    schedule_date: scheduleDate ? String(scheduleDate) : undefined,
+    schedule_time: scheduleTime ? String(scheduleTime) : undefined,
+    date_info: dateInfo ? String(dateInfo) : undefined,
+    date_label: dateInfo ? String(dateLabel) : undefined,
   };
 
-  // Only include date fields if they have values (EmailJS doesn't handle empty strings well)
-  if (checkInDate) {
-    params.check_in_date = String(checkInDate);
-  }
-  if (checkOutDate) {
-    params.check_out_date = String(checkOutDate);
-  }
-  if (scheduleDate) {
-    params.schedule_date = String(scheduleDate);
-    if (scheduleTime) {
-      params.schedule_time = String(scheduleTime);
+  // Remove undefined values (EmailJS doesn't like them)
+  Object.keys(params).forEach(key => {
+    if (params[key] === undefined) {
+      delete params[key];
     }
-  }
+  });
 
   // Log for debugging
   console.log("[EmailJS] Attempting to send confirmation email:", { 
