@@ -828,7 +828,8 @@ function ServiceCheckout({
               }
 
               const completed = details?.status === "COMPLETED";
-              const bookingStatus = completed ? "confirmed" : "pending";
+              // When payment is completed, booking status should be "pending" until host confirms
+              const bookingStatus = completed ? "pending" : "pending";
               const storedPaymentStatus = completed ? "paid" : "pending";
               const emailPaymentStatus = completed ? "Paid" : "Pending";
 
@@ -1914,7 +1915,7 @@ export default function ServiceDetailsPage({ listingId: propListingId }) {
                 }
               : null,
 
-          status: "confirmed",
+          status: "pending", // Booking is pending until host confirms
           paymentStatus: "paid",
           paymentMethod: "wallet",
 

@@ -216,7 +216,7 @@ export default function PointsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid]);
 
-  // Load available rewards
+  // Load available guest rewards
   useEffect(() => {
     const loadRewards = async () => {
       try {
@@ -225,7 +225,12 @@ export default function PointsPage() {
         
         // Try query with orderBy first (requires composite index)
         try {
-          const q = query(rewardsRef, where("active", "==", true), orderBy("pointsCost", "asc"));
+          const q = query(
+            rewardsRef, 
+            where("active", "==", true),
+            where("userType", "==", "guest"),
+            orderBy("pointsCost", "asc")
+          );
           const snap = await getDocs(q);
           const rewards = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
           setAvailableRewards(rewards);
@@ -233,7 +238,11 @@ export default function PointsPage() {
           // If composite index error, try without orderBy
           if (indexError?.code === "failed-precondition" || indexError?.message?.includes("index")) {
             console.warn("Composite index not found, loading rewards without sorting:", indexError);
-            const q = query(rewardsRef, where("active", "==", true));
+            const q = query(
+              rewardsRef, 
+              where("active", "==", true),
+              where("userType", "==", "guest")
+            );
             const snap = await getDocs(q);
             const rewards = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
             // Sort manually
@@ -245,7 +254,7 @@ export default function PointsPage() {
             const snap = await getDocs(rewardsRef);
             const rewards = snap.docs
               .map((d) => ({ id: d.id, ...d.data() }))
-              .filter((r) => r.active === true)
+              .filter((r) => r.active === true && (r.userType === "guest" || !r.userType)) // Include rewards without userType (legacy) or explicitly guest
               .sort((a, b) => (a.pointsCost || 0) - (b.pointsCost || 0));
             setAvailableRewards(rewards);
           }
@@ -275,7 +284,10 @@ export default function PointsPage() {
         unsub = onSnapshot(
           q,
           (snap) => {
-            const redeemed = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+            const redeemed = snap.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              // Filter out host rewards (should only be in hosts/{uid}/redeemedRewards)
+              .filter((r) => !r.userType || r.userType === "guest");
             setRedeemedRewards(redeemed);
           },
           (err) => {

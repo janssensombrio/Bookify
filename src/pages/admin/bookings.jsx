@@ -88,7 +88,7 @@ export default function AdminBookingsPage() {
   const [walletTransactions, setWalletTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState("timestamp");
+  const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
   const [statusFilter, setStatusFilter] = useState("all"); // all, pending, confirmed, cancelled
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -265,39 +265,43 @@ export default function AdminBookingsPage() {
     }
   };
 
-  // SORTED & FILTERED - using wallet transactions
+  // SORTED & FILTERED - using bookings
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
-    const filtered = walletTransactions.filter((t) => {
-      // Only show positive transactions (service fees/revenue)
-      if (t.delta <= 0) return false;
+    const filtered = bookings.filter((b) => {
+      // category filter
+      if (categoryFilter !== "all" && b.category !== categoryFilter) return false;
       
       // time filter (takes precedence over dateRange if set)
       if (timeFilter !== "all") {
         const timeRange = getTimeFilterRange(timeFilter);
         if (timeRange) {
-          const timestamp = t.timestamp?.toDate ? t.timestamp.toDate() : (t.timestamp instanceof Date ? t.timestamp : new Date(t.timestamp));
+          const timestamp = b.createdAt?.toDate ? b.createdAt.toDate() : (b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt));
           if (!timestamp || timestamp < timeRange.start || timestamp >= timeRange.end) return false;
         }
       } else {
         // date range filter (only if timeFilter is "all")
-        if (!isDateInRange(t.timestamp, dateRange)) return false;
+        if (!isDateInRange(b.createdAt, dateRange)) return false;
       }
       
-      // status filter
+      // status filter - filter by booking status (not payment status)
       if (statusFilter !== "all") {
-        if (statusFilter === "confirmed" && t.status !== "completed") return false;
-        if (statusFilter === "pending" && t.status !== "pending") return false;
-        if (statusFilter === "cancelled" && t.status !== "cancelled" && t.status !== "refunded") return false;
+        const bookingStatus = (b.status || "pending").toLowerCase();
+        if (statusFilter === "confirmed" && bookingStatus !== "confirmed") return false;
+        if (statusFilter === "pending" && bookingStatus !== "pending") return false;
+        if (statusFilter === "cancelled" && bookingStatus !== "cancelled") return false;
       }
       
       // search filter
       if (s) {
         const hay = [
-          t.type,
-          t.note,
-          t.metadata?.bookingId,
-          t.id,
+          b.id,
+          b.guestName,
+          b.guestEmail,
+          b.listingTitle,
+          b.category,
+          b.status,
+          b.paymentStatus,
         ]
           .filter(Boolean)
           .join(" ")
@@ -313,9 +317,9 @@ export default function AdminBookingsPage() {
       if (va == null && vb == null) return 0;
       if (va == null) return -1;
       if (vb == null) return 1;
-      if (key === "type" || key === "note" || typeof va === "string")
+      if (key === "guestName" || key === "listingTitle" || key === "category" || key === "status" || key === "paymentStatus" || typeof va === "string")
         return String(va).localeCompare(String(vb));
-      if (key === "timestamp") {
+      if (key === "createdAt" || key === "timestamp") {
         const ta = va?.toDate ? va.toDate().getTime() : (va instanceof Date ? va.getTime() : new Date(va).getTime());
         const tb = vb?.toDate ? vb.toDate().getTime() : (vb instanceof Date ? vb.getTime() : new Date(vb).getTime());
         return ta - tb;
@@ -330,11 +334,11 @@ export default function AdminBookingsPage() {
     }
 
     return base.slice().sort((a, b) => {
-      const ta = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : (a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime());
-      const tb = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : (b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime());
+      const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : (a.createdAt instanceof Date ? a.createdAt.getTime() : new Date(a.createdAt).getTime());
+      const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : (b.createdAt instanceof Date ? b.createdAt.getTime() : new Date(b.createdAt).getTime());
       return tb - ta;
     });
-  }, [walletTransactions, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange, timeFilter]);
+  }, [bookings, search, sortKey, sortDir, statusFilter, categoryFilter, dateRange, timeFilter]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
@@ -399,18 +403,20 @@ export default function AdminBookingsPage() {
   const exportCSV = () => {
     try {
       const rows = sorted || [];
-      const headers = ["Type", "Date", "Amount", "Status", "Details"];
+      const headers = ["ID", "Guest", "Listing", "Category", "Date", "Amount", "Status", "Payment Status"];
       const lines = [headers.join(",")];
-      for (const t of rows) {
-        const sign = t.delta >= 0 ? "+" : "–";
-        const absAmount = Math.abs(t.delta || 0);
-        const details = t.note || (t.metadata?.bookingId ? `Booking: ${t.metadata.bookingId.slice(0, 8)}…` : "");
+      for (const b of rows) {
+        const bookingStatus = (b.status || "pending").toLowerCase();
+        const paymentStatus = (b.paymentStatus || "pending").toLowerCase();
         const cols = [
-          (t.type || "Transaction").replace(/_/g, " "),
-          t.timestamp ? formatDateTimeShort(t.timestamp) : "",
-          `${sign}${absAmount}`,
-          t.status || "completed",
-          details,
+          b.id || "",
+          b.guestName || "",
+          b.listingTitle || "",
+          b.category || "",
+          b.createdAt ? formatDateTimeShort(b.createdAt) : "",
+          String(b.totalPrice || 0),
+          bookingStatus,
+          paymentStatus,
         ].map((c) => {
           if (c == null) return "";
           const s = String(c);
@@ -443,11 +449,11 @@ export default function AdminBookingsPage() {
     // Calculate metrics from filtered transactions
     const filteredMetrics = {
       total: rows.length,
-      totalRevenue: rows.reduce((sum, t) => sum + Math.abs(t.delta || 0), 0),
-      confirmed: rows.filter((t) => t.status === "completed").length,
-      pending: rows.filter((t) => t.status === "pending").length,
-      cancelled: rows.filter((t) => t.status === "cancelled" || t.status === "refunded").length,
-      totalGuests: 0, // Not available in transactions
+      totalRevenue: rows.reduce((sum, b) => sum + (b.totalPrice || 0), 0),
+      confirmed: rows.filter((b) => (b.status || "pending").toLowerCase() === "confirmed").length,
+      pending: rows.filter((b) => (b.status || "pending").toLowerCase() === "pending").length,
+      cancelled: rows.filter((b) => (b.status || "pending").toLowerCase() === "cancelled").length,
+      totalGuests: rows.reduce((sum, b) => sum + (b.guests || 1), 0),
     };
 
     const escapeHtml = (str) => {
@@ -527,38 +533,42 @@ export default function AdminBookingsPage() {
   </div>
 
   <div class="chips">
-    <span class="chip"><span class="dot"></span><b>Total Transactions:</b> ${filteredMetrics.total.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Total Bookings:</b> ${filteredMetrics.total.toLocaleString()}</span>
     <span class="chip"><span class="dot"></span><b>Revenue:</b> ${formatPesoSafe(filteredMetrics.totalRevenue)}</span>
-    <span class="chip"><span class="dot"></span><b>Completed:</b> ${filteredMetrics.confirmed.toLocaleString()}</span>
+    <span class="chip"><span class="dot"></span><b>Confirmed:</b> ${filteredMetrics.confirmed.toLocaleString()}</span>
     <span class="chip"><span class="dot"></span><b>Pending:</b> ${filteredMetrics.pending.toLocaleString()}</span>
   </div>
 
   <table>
     <thead>
       <tr>
-        <th style="width:20%;">Type</th>
-        <th style="width:18%;">Date</th>
-        <th class="num" style="width:15%;">Amount</th>
-        <th style="width:12%;">Status</th>
-        <th style="width:35%;">Details</th>
+        <th style="width:10%;">ID</th>
+        <th style="width:15%;">Guest</th>
+        <th style="width:18%;">Listing</th>
+        <th style="width:12%;">Category</th>
+        <th style="width:12%;">Date</th>
+        <th class="num" style="width:10%;">Amount</th>
+        <th style="width:10%;">Status</th>
+        <th style="width:13%;">Payment Status</th>
       </tr>
     </thead>
     <tbody>`);
 
-    for (const t of rows) {
-      const sign = t.delta >= 0 ? "+" : "–";
-      const absAmount = Math.abs(t.delta || 0);
-      const statusClass = t.status === "completed" ? "confirmed" : t.status === "pending" ? "pending" : "cancelled";
-      const statusText = t.status || "completed";
-      const typeText = (t.type || "Transaction").replace(/_/g, " ");
-      const details = t.note || (t.metadata?.bookingId ? `Booking: ${t.metadata.bookingId.slice(0, 8)}…` : "—");
+    for (const b of rows) {
+      const bookingStatus = (b.status || "pending").toLowerCase();
+      const paymentStatus = (b.paymentStatus || "pending").toLowerCase();
+      const statusClass = bookingStatus === "confirmed" ? "confirmed" : bookingStatus === "pending" ? "pending" : "cancelled";
+      const category = b.category || "—";
 
       html.push(`<tr>
-        <td>${escapeHtml(typeText)}</td>
-        <td>${escapeHtml(formatDateTimeShort(t.timestamp))}</td>
-        <td class="num">${sign}${escapeHtml(formatPesoSafe(absAmount))}</td>
-        <td><span class="status"><span class="dot ${statusClass}"></span>${escapeHtml(statusText)}</span></td>
-        <td>${escapeHtml(details)}</td>
+        <td class="mono">${escapeHtml(String(b.id).slice(0, 8))}…</td>
+        <td>${escapeHtml(b.guestName || "—")}</td>
+        <td>${escapeHtml(b.listingTitle || "—")}</td>
+        <td>${escapeHtml(category)}</td>
+        <td>${escapeHtml(b.createdAt ? formatDateTimeShort(b.createdAt) : "—")}</td>
+        <td class="num">${escapeHtml(formatPesoSafe(b.totalPrice || 0))}</td>
+        <td><span class="status"><span class="dot ${statusClass}"></span>${escapeHtml(bookingStatus)}</span></td>
+        <td><span class="status"><span class="dot ${paymentStatus === "paid" ? "confirmed" : paymentStatus === "pending" ? "pending" : "cancelled"}"></span>${escapeHtml(paymentStatus)}</span></td>
       </tr>`);
     }
 
@@ -598,12 +608,12 @@ export default function AdminBookingsPage() {
   const printTable = () => {
     try {
       const rows = sorted || [];
-      // Calculate metrics from filtered transactions
+      // Calculate metrics from filtered bookings
       const filteredMetrics = {
         total: rows.length,
-        totalRevenue: rows.reduce((sum, t) => sum + Math.abs(t.delta || 0), 0),
-        confirmed: rows.filter((t) => t.status === "completed").length,
-        pending: rows.filter((t) => t.status === "pending").length,
+        totalRevenue: rows.reduce((sum, b) => sum + (b.totalPrice || 0), 0),
+        confirmed: rows.filter((b) => (b.status || "pending").toLowerCase() === "confirmed").length,
+        pending: rows.filter((b) => (b.status || "pending").toLowerCase() === "pending").length,
       };
       
       const escapeHtml = (str) => {
@@ -664,7 +674,7 @@ export default function AdminBookingsPage() {
   </div>
   
   <div class="summary">
-    <strong>Summary:</strong> ${filteredMetrics.total.toLocaleString()} total transactions, ${formatPeso(filteredMetrics.totalRevenue)} revenue, ${filteredMetrics.confirmed.toLocaleString()} completed
+    <strong>Summary:</strong> ${filteredMetrics.total.toLocaleString()} total bookings, ${formatPeso(filteredMetrics.totalRevenue)} revenue, ${filteredMetrics.confirmed.toLocaleString()} confirmed
   </div>
 
   <table>
@@ -677,7 +687,7 @@ export default function AdminBookingsPage() {
         <th class="num">Guests</th>
         <th class="num">Total</th>
         <th>Status</th>
-        <th>Payment</th>
+        <th>Payment Status</th>
       </tr>
     </thead>
     <tbody>
@@ -1025,56 +1035,52 @@ export default function AdminBookingsPage() {
               <table className="w-full text-base">
                 <thead>
                   <tr className="border-b-2 border-slate-300">
-                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Type</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">ID</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Guest</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Listing</th>
+                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Category</th>
                     <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Date</th>
                     <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Amount</th>
                     <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Status</th>
-                    <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Details</th>
+                    <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Payment Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {pagedTransactions.map((t, idx) => {
-                    const sign = t.delta >= 0 ? "+" : "–";
-                    const absAmount = Math.abs(t.delta || 0);
-                    const isCredit = t.delta >= 0;
-                    const iconBg = isCredit ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700";
-                    const Icon = isCredit ? ArrowDownLeft : ArrowUpRight;
+                  {pagedTransactions.map((b, idx) => {
+                    const bookingStatus = (b.status || "pending").toLowerCase();
+                    const paymentStatus = (b.paymentStatus || "pending").toLowerCase();
                     const statusKind =
-                      t.status === "completed" ? "success" : t.status === "pending" ? "warning" : "danger";
+                      bookingStatus === "confirmed" ? "success" : bookingStatus === "pending" ? "warning" : "danger";
+                    const paymentKind =
+                      paymentStatus === "paid" ? "success" : paymentStatus === "pending" ? "warning" : "danger";
                     
                     return (
-                      <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                      <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-4 px-4">
-                          <div className="flex items-center gap-3">
-                            <div className={`h-10 w-10 rounded-lg grid place-items-center ${iconBg} shrink-0`}>
-                              <Icon size={18} />
-                            </div>
-                            <span className="font-semibold text-slate-900 text-sm sm:text-base">
-                              {t.type?.replace(/_/g, " ") || "Transaction"}
-                            </span>
-                          </div>
+                          <span className="font-mono text-xs sm:text-sm text-slate-600">
+                            {b.id.slice(0, 8)}…
+                          </span>
                         </td>
-                        <td className="py-4 px-4 text-sm sm:text-base text-slate-700 whitespace-nowrap font-medium">
-                          {formatDateTimeShort(t.timestamp)}
-                        </td>
-                        <td className={`py-4 px-4 text-right text-sm sm:text-base font-bold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
-                          {sign}{peso(absAmount)}
-                        </td>
-                        <td className="py-4 px-4 text-center">
-                          <Badge kind={statusKind}>{t.status || "completed"}</Badge>
+                        <td className="py-4 px-4 text-sm sm:text-base text-slate-900 font-medium">
+                          {b.guestName || "—"}
                         </td>
                         <td className="py-4 px-4 text-sm sm:text-base text-slate-700">
-                          <div className="space-y-1">
-                            {t?.note && (
-                              <div className="text-sm">"{t.note}"</div>
-                            )}
-                            {t?.metadata?.bookingId && (
-                              <div className="text-sm">Booking: {t.metadata.bookingId.slice(0, 8)}…</div>
-                            )}
-                            {!t?.note && !t?.metadata?.bookingId && (
-                              <span className="text-slate-400">—</span>
-                            )}
-                          </div>
+                          {b.listingTitle || "—"}
+                        </td>
+                        <td className="py-4 px-4 text-sm sm:text-base text-slate-600">
+                          {b.category || "—"}
+                        </td>
+                        <td className="py-4 px-4 text-sm sm:text-base text-slate-700 whitespace-nowrap font-medium">
+                          {b.createdAt ? formatDateTimeShort(b.createdAt) : "—"}
+                        </td>
+                        <td className="py-4 px-4 text-right text-sm sm:text-base font-bold whitespace-nowrap text-slate-900">
+                          {peso(b.totalPrice || 0)}
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          <Badge kind={statusKind}>{bookingStatus}</Badge>
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          <Badge kind={paymentKind}>{paymentStatus}</Badge>
                         </td>
                       </tr>
                     );

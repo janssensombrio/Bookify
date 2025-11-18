@@ -46,6 +46,7 @@ export default function AdminRewardsPage() {
     discountValue: "",
     active: true,
     expiresInDays: "",
+    userType: "guest", // "guest" or "host"
   });
 
   const [errors, setErrors] = useState({});
@@ -104,6 +105,7 @@ export default function AdminRewardsPage() {
         discountValue: Number(formData.discountValue),
         active: formData.active,
         expiresInDays: formData.expiresInDays ? Number(formData.expiresInDays) : null,
+        userType: formData.userType || "guest", // "guest" or "host"
         uid: user.uid, // Required by Firestore security rules
         updatedAt: serverTimestamp(),
       };
@@ -134,6 +136,7 @@ export default function AdminRewardsPage() {
         discountValue: "",
         active: true,
         expiresInDays: "",
+        userType: "guest",
       });
       setErrors({});
       alert("Reward saved successfully!");
@@ -157,6 +160,7 @@ export default function AdminRewardsPage() {
       discountValue: String(reward.discountValue || reward.value || ""),
       active: reward.active !== false,
       expiresInDays: reward.expiresInDays ? String(reward.expiresInDays) : "",
+      userType: reward.userType || "guest",
     });
     setErrors({});
   };
@@ -205,7 +209,7 @@ export default function AdminRewardsPage() {
         <div className="max-w-7xl mx-auto">
           <div className="mb-6">
             <h1 className="text-3xl font-bold text-foreground">Rewards Management</h1>
-            <p className="text-muted-foreground">Create and manage rewards that guests can redeem with points.</p>
+            <p className="text-muted-foreground">Create and manage rewards that guests and hosts can redeem with points. Guest rewards provide discounts on bookings. Host rewards provide cashback from service fees.</p>
           </div>
 
           <div className="grid lg:grid-cols-2 gap-6">
@@ -294,6 +298,23 @@ export default function AdminRewardsPage() {
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">User Type *</label>
+                  <select
+                    value={formData.userType}
+                    onChange={(e) => setFormData({ ...formData, userType: e.target.value })}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-400/40"
+                  >
+                    <option value="guest">Guest (discount on bookings)</option>
+                    <option value="host">Host (cashback from service fees)</option>
+                  </select>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {formData.userType === "host" 
+                      ? "Host rewards give cashback from service fees (deducted from admin wallet)"
+                      : "Guest rewards provide discounts on bookings"}
+                  </p>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Expires In (Days)</label>
                   <input
                     type="number"
@@ -314,7 +335,7 @@ export default function AdminRewardsPage() {
                     className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                   />
                   <label htmlFor="active" className="text-sm font-medium text-slate-700">
-                    Active (visible to guests)
+                    Active (visible to {formData.userType === "host" ? "hosts" : "guests"})
                   </label>
                 </div>
 
@@ -340,7 +361,7 @@ export default function AdminRewardsPage() {
                       </>
                     )}
                   </button>
-                  {formData.id && (
+                      {formData.id && (
                     <button
                       onClick={() => {
                         setFormData({
@@ -352,6 +373,7 @@ export default function AdminRewardsPage() {
                           discountValue: "",
                           active: true,
                           expiresInDays: "",
+                          userType: "guest",
                         });
                         setErrors({});
                       }}
@@ -427,6 +449,13 @@ export default function AdminRewardsPage() {
                                 Expires in {reward.expiresInDays} days
                               </span>
                             )}
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ${
+                              reward.userType === "host" 
+                                ? "bg-purple-100 text-purple-700" 
+                                : "bg-blue-100 text-blue-700"
+                            }`}>
+                              {reward.userType === "host" ? "Host" : "Guest"}
+                            </span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2 ml-4">

@@ -10,10 +10,11 @@ import TodayTab from "./today.jsx";
 import HostCalendar from "./host-calendar.jsx";
 import HostProfile from "./host-profile.jsx";
 import HostWalletPage from "./wallet-page.jsx";
+import HostRewardsPage from "./rewards-page.jsx";
 import BookifyLogo from "../../components/bookify-logo.jsx";
 import { useSidebar } from "../../context/SidebarContext";
 
-const VALID_PAGES = ["bookings", "messages", "listings", "calendar", "profile", "wallet"];
+const VALID_PAGES = ["bookings", "messages", "listings", "calendar", "profile", "wallet", "rewards"];
 const FALLBACK_PAGE = "bookings";
 
 function safePage(p) {
@@ -64,6 +65,8 @@ export default function HostPage() {
         return <HostProfile />;
       case "wallet":
         return <HostWalletPage />;
+      case "rewards":
+        return <HostRewardsPage />;
       case "listings":
       default:
         return <Listings showDrafts={showDrafts} />;

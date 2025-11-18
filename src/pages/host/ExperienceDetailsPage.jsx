@@ -740,7 +740,8 @@ function PayPalCheckout({
               }
 
               const completed = details?.status === "COMPLETED";
-              const bookingStatus = completed ? "confirmed" : "pending";
+              // When payment is completed, booking status should be "pending" until host confirms
+              const bookingStatus = completed ? "pending" : "pending";
               const emailPaymentStatus = completed ? "Paid" : "Pending";
               const storedPaymentStatus = completed ? "paid" : "pending";
 
@@ -1875,7 +1876,7 @@ export default function ExperienceDetailsPage({ listingId: propListingId }) {
           subtotal,
           serviceFee,
           totalPrice: total,
-          status: "confirmed",
+          status: "pending", // Booking is pending until host confirms
           paymentStatus: "paid",
           paymentMethod: "wallet",
           createdAt: serverTimestamp(),

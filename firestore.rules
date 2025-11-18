@@ -6,22 +6,33 @@ service cloud.firestore {
     match /wallets/{uid} {
       allow read: if true;
       // Let anyone create a wallet doc for another user, as long as it's tagged to that user.
-      allow create: if request.auth != null && request.resource.data.uid == uid;
+      // Special: Allow authenticated users to create admin wallet for reward cashback
+      allow create: if request.auth != null && (
+        request.resource.data.uid == uid ||
+        (uid == "admin" && request.resource.data.uid == "admin")
+      );
       // Owner can do anything (increase or decrease their own balance)
       // Non-owner may only INCREASE someone else's balance (credit-only).
+      // Exception: Allow authenticated users to decrease admin wallet for reward cashback
       allow update: if request.auth != null
                     && request.resource.data.uid == uid
                     && (
                       // Owner can update their own wallet (any change)
                       request.auth.uid == uid ||
-                      // Non-owner can only increase balance (credit-only)
+                      // Admin wallet: allow any authenticated user to update (for reward cashback)
+                      (uid == "admin") ||
+                      // Non-owner can only increase balance (credit-only) for other wallets
                       request.resource.data.balance >= resource.data.balance
                     );
     }
 
     match /wallets/{uid}/transactions/{tid} {
       // Allow creating a transaction row on behalf of {uid} (e.g., payout-in).
-      allow create: if request.auth != null && request.resource.data.uid == uid;
+      // For admin wallet, allow any authenticated user to create transactions (for reward cashback)
+      allow create: if request.auth != null && (
+        request.resource.data.uid == uid ||
+        (uid == "admin" && request.resource.data.uid == "admin")
+      );
       allow read: if true;
     }
 
@@ -49,7 +60,12 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.uid == uid;
       allow update: if request.auth != null
                     && request.resource.data.uid == uid
-                    && request.resource.data.balance >= resource.data.balance;
+                    && (
+                      // Owner can update their own points (increase or decrease)
+                      request.auth.uid == uid ||
+                      // Non-owner can only increase balance (credit-only)
+                      request.resource.data.balance >= resource.data.balance
+                    );
     }
 
     match /points/{uid}/transactions/{tid} {
@@ -78,6 +94,20 @@ service cloud.firestore {
          (request.auth.uid == resource.data.hostId || request.auth.uid == resource.data.ownerId))
       );
       allow delete: if request.auth != null && request.auth.uid == resource.data.uid;
+    }
+
+    // --- Hosts: allow hosts to manage their own data ---
+    match /hosts/{uid} {
+      allow read: if true;
+      allow create, update: if request.auth != null && request.auth.uid == uid && request.resource.data.uid == uid;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /hosts/{uid}/redeemedRewards/{rewardId} {
+      allow read: if true; // Allow reading (might be needed for loading redeemed rewards)
+      allow create: if request.auth != null && request.auth.uid == uid && request.resource.data.uid == uid;
+      allow update: if request.auth != null && request.auth.uid == uid && request.resource.data.uid == uid;
+      allow delete: if request.auth != null && request.auth.uid == uid;
     }
 
     // --- keep your existing catch-all (do not remove) ---

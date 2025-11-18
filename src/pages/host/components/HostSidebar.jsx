@@ -11,6 +11,7 @@ import {
   LogOut,
   Compass,
   Wallet,
+  Gift,
 } from "lucide-react";
 
 import { auth } from "../../../config/firebase";
@@ -51,6 +52,7 @@ const HostSidebar = ({ setActivePage, activePage, navigate }) => {
     { icon: List, label: "Listings", page: "listings" },
     { icon: Calendar, label: "Calendar", page: "calendar" },
     { icon: Wallet, label: "Wallet", page: "wallet" },
+    { icon: Gift, label: "Points & Rewards", page: "rewards" },
     { icon: User, label: "Profile", page: "profile" },
   ];
 

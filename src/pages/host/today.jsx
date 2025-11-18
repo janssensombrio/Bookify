@@ -19,6 +19,7 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 import { database, auth } from "../../config/firebase";
 import emailjs from "@emailjs/browser";
+import ClaimRewardModal from "./components/ClaimRewardModal.jsx";
 import {
   MapPin,
   Calendar as CalIcon,
@@ -52,19 +53,20 @@ import {
   Tag,
   Volume2,
   CheckCircle2,
+  Gift,
 } from "lucide-react";
 
 /* ---------------- EmailJS config ---------------- */
-const EMAILJS = {
-  SERVICE_ID: "service_7y9jqhs",
-  TEMPLATE_ID: "template_6ak94mi",
-  PUBLIC_KEY: "0QgVGXmPL9kGSq53X",
-};
+const EMAILJS_SERVICE_ID = "service_x9dtjt6";
+const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
+const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
+
+const isEmailJsConfigured = !!(EMAILJS_SERVICE_ID && EMAILJS_TEMPLATE_ID && EMAILJS_PUBLIC_KEY);
 
 // Initialize once at module load (idempotent)
-if (!emailjs.__BOOKIFY_INIT__) {
+if (isEmailJsConfigured && !emailjs.__BOOKIFY_INIT__) {
   try {
-    emailjs.init(EMAILJS.PUBLIC_KEY);
+    emailjs.init(EMAILJS_PUBLIC_KEY);
     emailjs.__BOOKIFY_INIT__ = true;
     console.info("[EmailJS] init OK");
   } catch (e) {
@@ -215,10 +217,10 @@ async function sendCancellationEmail({ booking, reasonText, refundAmount, guestE
     };
 
     const res = await emailjs.send(
-      EMAILJS.SERVICE_ID,
-      EMAILJS.TEMPLATE_ID,
+      EMAILJS_SERVICE_ID,
+      EMAILJS_TEMPLATE_ID,
       templateParams,
-      EMAILJS.PUBLIC_KEY
+      EMAILJS_PUBLIC_KEY
     );
 
     console.info("[EmailJS] send result:", res);
@@ -228,6 +230,38 @@ async function sendCancellationEmail({ booking, reasonText, refundAmount, guestE
     console.error("[EmailJS] send failed:", err);
     return { ok: false, status: err?.status ?? 500, text: err?.text ?? String(err?.message || "Failed to send email") };
   }
+}
+
+async function sendBookingConfirmationEmail({ user, listing, totalAmount, paymentStatus = "paid" }) {
+  if (!isEmailJsConfigured) {
+    console.warn("[EmailJS] Skipped sending email — missing EmailJS env vars.");
+    return;
+  }
+  const currencySymbol =
+    listing?.currencySymbol ||
+    (listing?.currency === "USD" ? "$" : listing?.currency === "EUR" ? "€" : "₱");
+
+  const params = {
+    to_name: String(user?.displayName || (user?.email || "").split("@")[0] || "Guest"),
+    to_email: String(user?.email || ""),
+    listing_title: String(listing?.title || "Untitled"),
+    listing_category: String(listing?.category || "Homes"),
+    listing_address: String(listing?.location || "—"),
+    payment_status: String(paymentStatus).charAt(0).toUpperCase() + String(paymentStatus).slice(1),
+    currency_symbol: String(currencySymbol || "₱"),
+    total_price: Number(totalAmount || 0).toFixed(2),
+    brand_site_url: String(typeof window !== "undefined" ? window.location.origin : ""),
+  };
+
+  // Log for debugging
+  console.log("[EmailJS] Attempting to send confirmation email:", { 
+    to: user?.email, 
+    listing: listing?.title,
+    hostname: typeof window !== "undefined" ? window.location.hostname : "unknown",
+    params
+  });
+
+  return emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, params, EMAILJS_PUBLIC_KEY);
 }
 
 const statusBadge = (status = "pending") => {
@@ -1573,7 +1607,7 @@ const GuestProfileModal = ({ open, guest, listingCategory, onClose }) => {
   );
 };
 
-const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
+const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel, onConfirm }) => {
   const [listing, setListing] = useState(null);
   const [currentPhoto, setCurrentPhoto] = useState(0);
   const [guest, setGuest] = useState(null);
@@ -1582,6 +1616,7 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const [chatText, setChatText] = useState("");
   const [showGuestProfile, setShowGuestProfile] = useState(false);
   const [guestPhotoError, setGuestPhotoError] = useState(false);
+  const [showClaimRewardModal, setShowClaimRewardModal] = useState(false);
   const chatEndRef = useRef(null);
   const navigate = useNavigate();
 
@@ -1741,6 +1776,17 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
   const discountType = booking.discountType || "none";
   const discountValue = numberOr(booking.discountValue, 0);
   const totalPrice = numberOr(booking.totalPrice, NaN);
+  
+  // Check if host can claim reward (paid booking with service fee, no existing reward claimed)
+  const isPaid = (booking?.paymentStatus || "").toLowerCase() === "paid";
+  const hasServiceFee = !Number.isNaN(serviceFee) && serviceFee > 0;
+  const hasHostRewardClaimed = booking?.hostRewardId && booking?.hostRewardCashback;
+  const canClaimReward = isPaid && hasServiceFee && !hasHostRewardClaimed;
+  
+  // Check if booking is pending (can be confirmed or cancelled by host)
+  const bookingStatus = (booking?.status || "").toLowerCase();
+  const isPending = bookingStatus === "pending" && isPaid;
+  
   const guestName = booking?.guestName ||
     guest?.displayName ||
     [guest?.firstName, guest?.lastName].filter(Boolean).join(" ").trim() ||
@@ -2081,6 +2127,15 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
                         <span className="text-slate-900">₱{serviceFee.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                     </div>
                   )}
+                  {hasHostRewardClaimed && (
+                    <div className="flex items-center justify-between text-purple-700">
+                      <span className="flex items-center gap-1">
+                        <Gift size={14} />
+                        Reward Cashback
+                      </span>
+                      <span className="font-medium">+ ₱{Number(booking.hostRewardCashback || 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                    </div>
+                  )}
                   {discountType !== "none" && discountValue > 0 && (
                     <div className="flex items-center justify-between text-emerald-700">
                       <span>Discount ({discountType})</span>
@@ -2124,10 +2179,39 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
             style={{ paddingBottom: "calc(1.25rem + env(safe-area-inset-bottom))" }}
           >
             <div className="flex flex-col sm:flex-row gap-3">
-              {isCancelable(booking) && (
+              {isPending && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onConfirm && onConfirm(booking)}
+                    className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-emerald-700 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-emerald-500 hover:to-emerald-700 active:scale-[0.99] transition"
+                  >
+                    <CheckCircle2 size={16} />
+                    Confirm Booking
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRequestCancel && onRequestCancel(booking)}
+                    className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-rose-600 to-rose-700 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-rose-500 hover:to-rose-700 active:scale-[0.99] transition"
+                  >
+                    Cancel Booking
+                  </button>
+                </>
+              )}
+              {!isPending && canClaimReward && (
                 <button
                   type="button"
-                  onClick={() => onRequestCancel(booking)}
+                  onClick={() => setShowClaimRewardModal(true)}
+                  className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-purple-600 to-purple-700 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-purple-500 hover:to-purple-700 active:scale-[0.99] transition"
+                >
+                  <Gift size={16} />
+                  Claim Reward
+                </button>
+              )}
+              {!isPending && isCancelable(booking) && (
+                <button
+                  type="button"
+                  onClick={() => onRequestCancel && onRequestCancel(booking)}
                   className="w-full sm:w-auto flex-1 min-w-[140px] inline-flex items-center justify-center rounded-full bg-gradient-to-r from-rose-600 to-rose-700 px-7 py-3 text-sm font-semibold text-white shadow-md hover:from-rose-500 hover:to-rose-700 active:scale-[0.99] transition"
                 >
                   Cancel Booking
@@ -2151,6 +2235,20 @@ const BookingDetailsModal = ({ open, booking, onClose, onRequestCancel }) => {
         guest={guest}
         listingCategory={listing?.category || booking?.listingCategory}
         onClose={() => setShowGuestProfile(false)}
+      />
+
+      {/* Claim Reward Modal */}
+      <ClaimRewardModal
+        open={showClaimRewardModal}
+        onClose={() => {
+          setShowClaimRewardModal(false);
+          // Reload booking to show updated reward info
+          if (booking?.id) {
+            // Trigger a refresh by closing and reopening would work, but for now just close
+          }
+        }}
+        booking={booking}
+        serviceFee={serviceFee}
       />
     </Overlay>
   );
@@ -2503,6 +2601,82 @@ export default function TodayTab() {
     const policy = await loadPolicyForBooking(booking);
     setRefundModalPolicyText(policy || "");
     setRefundModalOpen(true);
+  };
+
+  // Handle booking confirmation
+  const handleConfirmBooking = async (booking) => {
+    if (!booking || !booking.id) return;
+    
+    try {
+      // Update booking status to "confirmed"
+      const bookingRef = doc(database, "bookings", booking.id);
+      await updateDoc(bookingRef, {
+        status: "confirmed",
+        updatedAt: serverTimestamp(),
+      });
+
+      // Send confirmation email to guest (simple approach, matching HomeDetailsPage)
+      const isDevelopment = typeof window !== "undefined" && 
+                           (window.location.hostname === "localhost" || 
+                            window.location.hostname === "127.0.0.1");
+      
+      let emailSent = false;
+      try {
+        const listing = await hydrateListingForBooking(booking);
+        const guestProfile = await fetchGuestProfile(booking?.uid);
+        
+        const guestUser = {
+          displayName: booking?.guestName || guestProfile?.displayName || "",
+          email: booking?.guestEmail || guestProfile?.email || "",
+        };
+        
+        if (guestUser.email) {
+          await sendBookingConfirmationEmail({
+            user: guestUser,
+            listing,
+            totalAmount: numberOr(booking?.totalPrice, 0),
+            paymentStatus: "paid",
+          });
+          emailSent = true;
+        }
+      } catch (emailError) {
+        // Handle different types of errors
+        const errorMessage = emailError?.message || String(emailError);
+        const errorStatus = emailError?.status || emailError?.text;
+        const isCorsError = errorMessage.includes("Failed to fetch") || errorMessage.includes("CORS");
+        const is400Error = errorStatus === 400 || errorMessage.includes("400") || errorMessage.includes("Bad Request");
+        
+        if (isCorsError && isDevelopment) {
+          console.log("[EmailJS] Email blocked by CORS in development - this is expected. Emails will work in production.");
+        } else if (is400Error) {
+          console.error("[EmailJS] Email failed with 400 Bad Request - check EmailJS template parameters:", {
+            error: emailError,
+            status: errorStatus,
+            message: errorMessage,
+          });
+          console.warn("[EmailJS] This usually means a parameter doesn't match your EmailJS template. Check:", {
+            serviceId: EMAILJS_SERVICE_ID,
+            templateId: EMAILJS_TEMPLATE_ID,
+            publicKey: EMAILJS_PUBLIC_KEY ? "Set" : "Missing",
+          });
+        } else {
+          console.error("[EmailJS] Email send failed:", emailError);
+        }
+        // Don't fail the confirmation if email fails
+      }
+      
+      if (emailSent && !isDevelopment) {
+        alert("Booking confirmed! Confirmation email has been sent to the guest.");
+      } else if (isDevelopment) {
+        alert("Booking confirmed! Email notifications will work when deployed to production.");
+      } else {
+        alert("Booking confirmed! Confirmation email will be sent to the guest.");
+      }
+      closeDetails();
+    } catch (error) {
+      console.error("Failed to confirm booking:", error);
+      alert(`Failed to confirm booking: ${error?.message || "Unknown error"}`);
+    }
   };
 
   const handleConfirmRefund = async () => {
@@ -3276,6 +3450,7 @@ export default function TodayTab() {
           closeDetails();
           startCancel(booking);
         }}
+        onConfirm={handleConfirmBooking}
       />
     </div>
   );

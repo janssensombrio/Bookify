@@ -712,7 +712,8 @@ function PayPalCheckout({
               }
 
               const completed = details?.status === "COMPLETED";
-              const bookingStatus = completed ? "confirmed" : "pending";
+              // When payment is completed, booking status should be "pending" until host confirms
+              const bookingStatus = completed ? "pending" : "pending";
               const paymentStatus = completed ? "paid" : "pending";
 
               // Preflight overlap guard (outside tx)
@@ -1997,7 +1998,7 @@ export default function HomeDetailsPage({ listingId: propListingId }) {
           listingPhotos: Array.isArray(listing.photos) ? listing.photos : [],
           hostId: hostUid,
           listingId: listing.id,
-          status: "confirmed",
+          status: "pending", // Booking is pending until host confirms
           paymentStatus: "paid",
           paymentMethod: "wallet",
           createdAt: serverTimestamp(),
