@@ -33,6 +33,8 @@ import {
   setDoc,
   startAfter,
   limit,
+  runTransaction,
+  where,
 } from "firebase/firestore";
 import { auth, database } from "../../config/firebase";
 import AdminSidebar from "./components/AdminSidebar.jsx";
@@ -161,6 +163,21 @@ export default function AdminWalletPage() {
   const [dateRange, setDateRange] = useState({ start: "", end: "" });
   const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
   const [showFilters, setShowFilters] = useState(false);
+  const [confirmingTx, setConfirmingTx] = useState(null); // Track which transaction is being confirmed
+  const [confirmedTxIds, setConfirmedTxIds] = useState(() => {
+    // Load confirmed transaction IDs from localStorage on mount
+    try {
+      const stored = localStorage.getItem("adminWalletConfirmedTxIds");
+      if (stored) {
+        const ids = JSON.parse(stored);
+        return new Set(Array.isArray(ids) ? ids : []);
+      }
+    } catch (e) {
+      console.error("Failed to load confirmed transaction IDs from localStorage:", e);
+    }
+    return new Set();
+  }); // Track confirmed transaction IDs
+  const [hostNames, setHostNames] = useState(new Map()); // Map of hostUid -> hostName
 
   // Ensure admin wallet exists + live balance
   useEffect(() => {
@@ -208,6 +225,9 @@ export default function AdminWalletPage() {
       if (rows.length > 0) {
         setAllTxs((prev) => [...prev, ...rows]);
         setLastCursor(snap.docs[snap.docs.length - 1]);
+        
+        // Fetch host names for newly loaded transactions
+        await fetchHostNames(rows);
       }
       
       if (snap.docs.length < PAGE_SIZE) {
@@ -218,6 +238,49 @@ export default function AdminWalletPage() {
       setTxError(e?.message || "Failed to load transactions");
     } finally {
       setTxLoading(false);
+    }
+  };
+
+  // Fetch host names for transactions
+  const fetchHostNames = async (transactions) => {
+    const hostUids = new Set();
+    transactions.forEach((tx) => {
+      const hostUid = tx?.metadata?.hostUid;
+      if (hostUid) hostUids.add(hostUid);
+    });
+
+    if (hostUids.size === 0) return;
+
+    try {
+      const hostMap = new Map();
+      const hostUidArray = Array.from(hostUids);
+      
+      // Firestore 'in' queries are limited to 10 items, so we need to batch
+      const batchSize = 10;
+      for (let i = 0; i < hostUidArray.length; i += batchSize) {
+        const batch = hostUidArray.slice(i, i + batchSize);
+        const hostQuery = query(collection(database, "hosts"), where("uid", "in", batch));
+        const hostSnap = await getDocs(hostQuery);
+        
+        hostSnap.docs.forEach((doc) => {
+          const data = doc.data() || {};
+          const uid = data.uid || doc.id;
+          const name =
+            data.displayName ||
+            [data.firstName, data.lastName].filter(Boolean).join(" ") ||
+            data.email ||
+            uid;
+          if (name) hostMap.set(uid, name);
+        });
+      }
+
+      setHostNames((prev) => {
+        const newMap = new Map(prev);
+        hostMap.forEach((name, uid) => newMap.set(uid, name));
+        return newMap;
+      });
+    } catch (error) {
+      console.error("Failed to fetch host names:", error);
     }
   };
 
@@ -244,6 +307,9 @@ export default function AdminWalletPage() {
         if (snap.docs.length < PAGE_SIZE) {
           setEndReached(true);
         }
+        
+        // Fetch host names for loaded transactions
+        await fetchHostNames(rows);
       } catch (e) {
         console.error(e);
         setTxError(e?.message || "Failed to load transactions");
@@ -527,7 +593,7 @@ export default function AdminWalletPage() {
         <th>Date</th>
         <th>Type</th>
         <th>Method</th>
-        <th>User</th>
+        <th>Host Name</th>
         <th class="num">Amount</th>
         <th>Note</th>
       </tr>
@@ -535,13 +601,13 @@ export default function AdminWalletPage() {
     <tbody>
       ${rows.map((t) => {
         const date = formatDate(t.timestamp || t.createdAt);
-        const userType = t.userType || "—";
+        const hostName = t?.metadata?.hostUid ? (hostNames.get(t.metadata.hostUid) || "—") : "—";
         const amount = formatPeso(t.amount || t.delta);
         return `<tr>
           <td>${escapeHtml(date)}</td>
           <td>${escapeHtml(t.type || "—")}</td>
           <td>${escapeHtml(t.method || "—")}</td>
-          <td>${escapeHtml(userType)}</td>
+          <td>${escapeHtml(hostName)}</td>
           <td class="num">${escapeHtml(amount)}</td>
           <td>${escapeHtml(t.note || "—")}</td>
         </tr>`;
@@ -669,13 +735,14 @@ export default function AdminWalletPage() {
   <table>
     <thead>
       <tr>
-        <th style="width:18%;">Type</th>
-        <th style="width:15%;">Date</th>
-        <th style="width:12%;">Method</th>
-        <th class="num" style="width:12%;">Amount</th>
-        <th class="num" style="width:12%;">Balance</th>
-        <th style="width:10%;">Status</th>
-        <th style="width:21%;">Details</th>
+        <th style="width:15%;">Type</th>
+        <th style="width:12%;">Date</th>
+        <th style="width:10%;">Method</th>
+        <th style="width:12%;">Host Name</th>
+        <th class="num" style="width:10%;">Amount</th>
+        <th class="num" style="width:10%;">Balance</th>
+        <th style="width:8%;">Status</th>
+        <th style="width:23%;">Details</th>
       </tr>
     </thead>
     <tbody>`);
@@ -686,11 +753,13 @@ export default function AdminWalletPage() {
       const isCredit = t.delta >= 0;
       const statusClass = t.status === "completed" ? "completed" : t.status === "pending" ? "pending" : "failed";
       const amountClass = isCredit ? "credit" : "debit";
+      const hostName = t?.metadata?.hostUid ? (hostNames.get(t.metadata.hostUid) || "—") : "—";
 
       html.push(`<tr>
         <td>${escapeHtml(t.type?.replace(/_/g, " ") || "Transaction")}</td>
         <td>${escapeHtml(formatDate(t.timestamp))}</td>
         <td>${t.method ? `<span class="method">${escapeHtml(t.method)}</span>` : "—"}</td>
+        <td>${escapeHtml(hostName)}</td>
         <td class="num ${amountClass}">${sign}${escapeHtml(formatPesoSafe(absAmount))}</td>
         <td class="num">${escapeHtml(formatPesoSafe(t.balanceAfter ?? 0))}</td>
         <td>${escapeHtml(t.status || "completed")}</td>
@@ -705,17 +774,17 @@ export default function AdminWalletPage() {
     html.push(`</tbody>
     <tfoot>
       <tr style="background: var(--thead); font-weight: 600;">
-        <td colspan="3" style="text-align: right; padding: 12px;">Total:</td>
+        <td colspan="4" style="text-align: right; padding: 12px;">Total:</td>
         <td class="num" style="padding: 12px; color: var(--ink);">${formatPesoSafe(totalCredits - totalDebits)}</td>
         <td colspan="3"></td>
       </tr>
       <tr style="background: var(--subtle);">
-        <td colspan="3" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Credits:</td>
+        <td colspan="4" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Credits:</td>
         <td class="num credit" style="padding: 8px 12px; font-size: 11px;">${formatPesoSafe(totalCredits)}</td>
         <td colspan="3"></td>
       </tr>
       <tr style="background: var(--subtle);">
-        <td colspan="3" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Debits:</td>
+        <td colspan="4" style="text-align: right; padding: 8px 12px; font-size: 11px; color: var(--muted);">Total Debits:</td>
         <td class="num debit" style="padding: 8px 12px; font-size: 11px;">${formatPesoSafe(totalDebits)}</td>
         <td colspan="3"></td>
       </tr>
@@ -849,6 +918,83 @@ export default function AdminWalletPage() {
     toast.textContent = "Wallet ID copied.";
     document.body.appendChild(toast);
     setTimeout(() => toast.remove(), 2500);
+  };
+
+  // Handle confirm button click - add amount to admin wallet
+  const handleConfirmTransaction = async (tx) => {
+    if (!tx || confirmingTx) return;
+    
+    const amount = Math.abs(tx.delta || 0);
+    if (amount <= 0) {
+      alert("Invalid transaction amount.");
+      return;
+    }
+
+    setConfirmingTx(tx.id);
+    try {
+      await runTransaction(database, async (transaction) => {
+        // Read current admin wallet balance
+        const walletRef = doc(database, "wallets", ADMIN_WALLET_ID);
+        const walletSnap = await transaction.get(walletRef);
+        const currentBalance = Number(walletSnap.data()?.balance || 0);
+        const newBalance = currentBalance + amount;
+
+        // Create a new transaction record for the confirmed payment
+        const transactionRef = doc(collection(database, "wallets", ADMIN_WALLET_ID, "transactions"));
+        transaction.set(transactionRef, {
+          uid: ADMIN_WALLET_ID,
+          type: tx.type || "payment_confirmed",
+          delta: +amount,
+          amount: amount,
+          status: "completed",
+          method: tx.method || "manual",
+          note: `Confirmed payment${tx.note ? `: ${tx.note}` : ""}`,
+          balanceAfter: newBalance,
+          metadata: {
+            ...(tx.metadata || {}),
+            confirmedFrom: tx.id,
+            confirmedAt: serverTimestamp(),
+          },
+          timestamp: serverTimestamp(),
+        });
+
+        // Update admin wallet balance
+        transaction.set(
+          walletRef,
+          {
+            uid: ADMIN_WALLET_ID,
+            balance: newBalance,
+            currency: "PHP",
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+      });
+
+      // Mark transaction as confirmed and save to localStorage
+      setConfirmedTxIds((prev) => {
+        const newSet = new Set([...prev, tx.id]);
+        // Save to localStorage
+        try {
+          localStorage.setItem("adminWalletConfirmedTxIds", JSON.stringify(Array.from(newSet)));
+        } catch (e) {
+          console.error("Failed to save confirmed transaction IDs to localStorage:", e);
+        }
+        return newSet;
+      });
+
+      // Show success message
+      const toast = document.createElement("div");
+      toast.className = "fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm shadow border bg-emerald-50 text-emerald-700 border-emerald-200";
+      toast.textContent = `Successfully added ${peso(amount)} to admin wallet.`;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    } catch (error) {
+      console.error("Confirm transaction error:", error);
+      alert(`Failed to confirm transaction: ${error?.message || "Unknown error"}`);
+    } finally {
+      setConfirmingTx(null);
+    }
   };
 
   /* ======================= Render ======================= */
@@ -1101,10 +1247,12 @@ export default function AdminWalletPage() {
                         <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Type</th>
                         <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Date</th>
                         <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Method</th>
+                        <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Host Name</th>
                         <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Amount</th>
                         <th className="text-right py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Balance</th>
                         <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Status</th>
                         <th className="text-left py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Details</th>
+                        <th className="text-center py-4 px-4 text-sm sm:text-base font-bold text-slate-700 uppercase tracking-wider">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1141,6 +1289,15 @@ export default function AdminWalletPage() {
                                 <span className="text-slate-400">—</span>
                               )}
                             </td>
+                            <td className="py-4 px-4 text-sm sm:text-base text-slate-700 font-medium">
+                              {t?.metadata?.hostUid ? (
+                                hostNames.get(t.metadata.hostUid) || (
+                                  <span className="text-slate-400 italic">Loading...</span>
+                                )
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
                             <td className={`py-4 px-4 text-right text-sm sm:text-base font-bold whitespace-nowrap ${isCredit ? "text-emerald-700" : "text-rose-700"}`}>
                               {sign}{peso(absAmount)}
                             </td>
@@ -1162,6 +1319,39 @@ export default function AdminWalletPage() {
                                   <span className="text-slate-400">—</span>
                                 )}
                               </div>
+                            </td>
+                            <td className="py-4 px-4 text-center">
+                              {confirmedTxIds.has(t.id) ? (
+                                <button
+                                  disabled
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold bg-slate-100 text-slate-400 cursor-not-allowed"
+                                >
+                                  <CheckCircle2 size={14} />
+                                  Confirmed
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleConfirmTransaction(t)}
+                                  disabled={confirmingTx === t.id || confirmingTx !== null}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition ${
+                                    confirmingTx === t.id
+                                      ? "bg-slate-100 text-slate-400 cursor-not-allowed"
+                                      : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm hover:shadow"
+                                  }`}
+                                >
+                                  {confirmingTx === t.id ? (
+                                    <>
+                                      <Loader2 size={14} className="animate-spin" />
+                                      Confirming...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <CheckCircle2 size={14} />
+                                      Confirm
+                                    </>
+                                  )}
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );

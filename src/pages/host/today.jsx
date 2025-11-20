@@ -58,7 +58,13 @@ import {
 
 /* ---------------- EmailJS config ---------------- */
 const EMAILJS_SERVICE_ID = "service_x9dtjt6";
-const EMAILJS_TEMPLATE_ID = "template_vrfey3u";
+const EMAILJS_TEMPLATE_ID = "template_vrfey3u"; // Booking confirmation template
+// Cancellation email - try same service first, fallback to guest bookings service
+// Note: If cancellation template is in same service, use EMAILJS_SERVICE_ID
+// If in different service, use EMAILJS_CANCELLATION_SERVICE_ID
+const EMAILJS_CANCELLATION_SERVICE_ID = "service_7y9jqhs"; // Guest bookings cancellation service
+const EMAILJS_CANCELLATION_TEMPLATE_ID = "template_6ak94mi"; // Cancellation email template
+const EMAILJS_CANCELLATION_PUBLIC_KEY = "0QgVGXmPL9kGSq53X"; // Public key for cancellation service
 const EMAILJS_PUBLIC_KEY = "hHgssQum5iOFlnJRD";
 
 const isEmailJsConfigured = !!(EMAILJS_SERVICE_ID && EMAILJS_TEMPLATE_ID && EMAILJS_PUBLIC_KEY);
@@ -216,15 +222,32 @@ async function sendCancellationEmail({ booking, reasonText, refundAmount, guestE
       cancel_reason: reasonText || booking?.cancelReason || "—",
     };
 
+    // Ensure we're using the cancellation service and template (not booking confirmation)
+    console.log("[EmailJS Cancellation] Sending cancellation email with:", {
+      serviceId: EMAILJS_CANCELLATION_SERVICE_ID,
+      templateId: EMAILJS_CANCELLATION_TEMPLATE_ID,
+      params: templateParams
+    });
+
     const res = await emailjs.send(
-      EMAILJS_SERVICE_ID,
-      EMAILJS_TEMPLATE_ID,
+      EMAILJS_CANCELLATION_SERVICE_ID, // Use cancellation service, not booking confirmation service
+      EMAILJS_CANCELLATION_TEMPLATE_ID, // Use cancellation template, not booking confirmation template
       templateParams,
-      EMAILJS_PUBLIC_KEY
+      EMAILJS_CANCELLATION_PUBLIC_KEY // Use cancellation service public key
     );
 
-    console.info("[EmailJS] send result:", res);
+    console.info("[EmailJS Cancellation] send result:", res);
     const ok = (res?.status >= 200 && res?.status < 300);
+    
+    if (!ok) {
+      console.error("[EmailJS Cancellation] Failed to send cancellation email:", {
+        status: res?.status,
+        text: res?.text,
+        serviceId: EMAILJS_CANCELLATION_SERVICE_ID,
+        templateId: EMAILJS_CANCELLATION_TEMPLATE_ID
+      });
+    }
+    
     return { ok, status: res?.status ?? 0, text: res?.text ?? "" };
   } catch (err) {
     console.error("[EmailJS] send failed:", err);

@@ -1,15 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AdminSidebar from "./components/AdminSidebar.jsx";
-import TailwindDropdown from "./components/TailwindDropdown.jsx";
-import BookifyLogo from "../../components/bookify-logo.jsx";
-import DateRangeFilter from "./components/DateRangeFilter.jsx";
 import { database } from "../../config/firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
-import { Menu, Printer } from "lucide-react";
 import BookifyIcon from "../../media/favorite.png";
-import { useSidebar } from "../../context/SidebarContext";
-import PDFPreviewModal from "../../components/PDFPreviewModal.jsx";
 
 const chunk = (arr, size = 10) => {
   const out = [];
@@ -23,20 +17,14 @@ function formatDate(dt) {
   return d.toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
 }
 
-
 export default function AdminGuestsPage() {
   const navigate = useNavigate();
-  const { sidebarOpen, setSidebarOpen } = useSidebar() || {};
-  const sideOffset = sidebarOpen === false ? "md:ml-20" : "md:ml-72";
   const [guests, setGuests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
   const [verifiedFilter, setVerifiedFilter] = useState("all");
-  const [dateRange, setDateRange] = useState({ start: "", end: "" });
-  const [timeFilter, setTimeFilter] = useState("all"); // all | today | week | month | year
-  const [pdfPreview, setPdfPreview] = useState({ open: false, htmlContent: "", filename: "" });
 
   useEffect(() => {
     (async () => {
@@ -67,57 +55,30 @@ export default function AdminGuestsPage() {
             return role !== "admin" && role !== "host";
           });
 
-        // Optimize booking queries - use parallel queries for multiple field names
         const uniqueUIDs = [...new Set(rows.map((r) => r.uid).filter(Boolean))];
         const bookingCountMap = {};
-        const totalSpentMap = {};
         if (uniqueUIDs.length > 0) {
+          const guestFields = ["guestUid", "uid", "guestId", "guest.uid", "guest.id"];
           const seenBookingIds = new Set();
-          const bookingQueries = [];
 
-          // Create parallel queries for chunks using multiple field names (uid, userId, guestUid)
           for (const chunk_ids of chunk(uniqueUIDs, 10)) {
-            // Query by uid (most common)
-            bookingQueries.push(
-              getDocs(query(collection(database, "bookings"), where("uid", "in", chunk_ids)))
-                .catch(() => ({ docs: [] }))
-            );
-            // Query by userId (also common)
-            bookingQueries.push(
-              getDocs(query(collection(database, "bookings"), where("userId", "in", chunk_ids)))
-                .catch(() => ({ docs: [] }))
-            );
-            // Query by guestUid (less common but some bookings might use it)
-            bookingQueries.push(
-              getDocs(query(collection(database, "bookings"), where("guestUid", "in", chunk_ids)))
-                .catch(() => ({ docs: [] }))
-            );
-          }
-
-          // Execute all queries in parallel
-          const results = await Promise.all(bookingQueries);
-          
-          // Process results - deduplicate by booking ID
-          results.forEach((snap) => {
-            snap.docs.forEach((doc) => {
+            for (const f of guestFields) {
+              try {
+                const snaps = await getDocs(query(collection(database, "bookings"), where(f, "in", chunk_ids)));
+                snaps.forEach((doc) => {
                   if (seenBookingIds.has(doc.id)) return;
                   seenBookingIds.add(doc.id);
                   const data = doc.data() || {};
-              // Try multiple field names to find the guest UID
-              const guestUid = data.uid || data.userId || data.guestUid || data.guestId || null;
-              if (guestUid) {
-                bookingCountMap[guestUid] = (bookingCountMap[guestUid] || 0) + 1;
-                const totalPrice = Number(data.totalPrice || 0);
-                totalSpentMap[guestUid] = (totalSpentMap[guestUid] || 0) + totalPrice;
+                  const guestUid = data.guestUid || data.uid || data.guestId || (data.guest && (data.guest.uid || data.guest.id)) || null;
+                  if (guestUid) bookingCountMap[guestUid] = (bookingCountMap[guestUid] || 0) + 1;
+                });
+              } catch (e) {
+                console.warn(`bookings query for field ${f} failed:`, e);
               }
-            });
-          });
+            }
+          }
 
-          rows = rows.map((r) => ({ 
-            ...r, 
-            bookingCount: bookingCountMap[r.uid] || 0,
-            totalSpent: totalSpentMap[r.uid] || 0
-          }));
+          rows = rows.map((r) => ({ ...r, bookingCount: bookingCountMap[r.uid] || 0 }));
         }
 
         setGuests(rows);
@@ -130,88 +91,10 @@ export default function AdminGuestsPage() {
     })();
   }, []);
 
-  // Helper to check if date is in range
-  const isDateInRange = (date, range) => {
-    if (!range.start && !range.end) return true;
-    if (!date) return false;
-    try {
-      const d = date?.toDate ? date.toDate() : new Date(date);
-      if (isNaN(d.getTime())) return false;
-      
-      if (range.start) {
-        const startDate = new Date(range.start);
-        startDate.setHours(0, 0, 0, 0);
-        if (d < startDate) return false;
-      }
-      
-      if (range.end) {
-        const endDate = new Date(range.end);
-        endDate.setHours(23, 59, 59, 999);
-        if (d > endDate) return false;
-      }
-      
-      return true;
-    } catch {
-      return false;
-    }
-  };
-
-  // Helper function to get date range based on time filter
-  const getTimeFilterRange = (filter) => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    
-    switch (filter) {
-      case "today":
-        return { start: today, end: new Date(today.getTime() + 24 * 60 * 60 * 1000) };
-      case "week": {
-        const dayOfWeek = now.getDay();
-        const startOfWeek = new Date(today);
-        startOfWeek.setDate(today.getDate() - dayOfWeek);
-        return { start: startOfWeek, end: new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000) };
-      }
-      case "month": {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-        return { start: startOfMonth, end: endOfMonth };
-      }
-      case "year": {
-        const startOfYear = new Date(now.getFullYear(), 0, 1);
-        const endOfYear = new Date(now.getFullYear() + 1, 0, 1);
-        return { start: startOfYear, end: endOfYear };
-      }
-      default:
-        return null; // "all" - no date filtering
-    }
-  };
-
-  // Get time filter label for display
-  const getTimeFilterLabel = (filter) => {
-    switch (filter) {
-      case "today": return "Today";
-      case "week": return "This Week";
-      case "month": return "This Month";
-      case "year": return "This Year";
-      default: return "All Time";
-    }
-  };
-
   const sorted = useMemo(() => {
     const s = String(search || "").trim().toLowerCase();
     const filtered = guests.filter((g) => {
       if (verifiedFilter !== "all" && g.verified !== (verifiedFilter === "verified")) return false;
-      
-      // time filter (takes precedence over dateRange if set)
-      if (timeFilter !== "all") {
-        const timeRange = getTimeFilterRange(timeFilter);
-        if (timeRange) {
-          const createdAt = g.createdAt?.toDate ? g.createdAt.toDate() : (g.createdAt instanceof Date ? g.createdAt : new Date(g.createdAt));
-          if (!createdAt || createdAt < timeRange.start || createdAt >= timeRange.end) return false;
-        }
-      } else {
-        // date range filter (only if timeFilter is "all")
-        if (!isDateInRange(g.createdAt, dateRange)) return false;
-      }
       if (s) {
         const hay = [g.firstName, g.lastName, g.email, g.id].filter(Boolean).join(" ").toLowerCase();
         return hay.includes(s);
@@ -240,7 +123,7 @@ export default function AdminGuestsPage() {
       const tb = b.createdAt instanceof Date ? b.createdAt.getTime() : b.createdAt?.toDate?.()?.getTime?.() || 0;
       return tb - ta;
     });
-  }, [guests, search, sortKey, sortDir, verifiedFilter, dateRange, timeFilter]);
+  }, [guests, search, sortKey, sortDir, verifiedFilter]);
 
   const metrics = useMemo(() => {
     const nonAdmin = guests.filter((g) => String(g.role || "").toLowerCase() !== "admin");
@@ -256,7 +139,7 @@ export default function AdminGuestsPage() {
   const exportCSV = () => {
     try {
       const rows = sorted || [];
-      const headers = ["ID", "First Name", "Last Name", "Email", "Bookings", "Total Spent", "Verified", "Created", "Last Login"];
+      const headers = ["ID", "First Name", "Last Name", "Email", "Bookings", "Verified", "Created", "Last Login"];
       const lines = [headers.join(",")];
       for (const r of rows) {
         const cols = [
@@ -265,7 +148,6 @@ export default function AdminGuestsPage() {
           (r.lastName || "").replace(/"/g, '""'),
           r.email || "",
           r.bookingCount || 0,
-          r.totalSpent || 0,
           r.verified ? "Yes" : "No",
           r.createdAt ? new Date(r.createdAt?.toDate?.() || r.createdAt).toISOString() : "",
           r.lastLogin ? new Date(r.lastLogin?.toDate?.() || r.lastLogin).toISOString() : "",
@@ -281,8 +163,7 @@ export default function AdminGuestsPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
-      a.download = `guests_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.csv`;
+      a.download = `guests_export_${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -293,16 +174,15 @@ export default function AdminGuestsPage() {
     }
   };
 
-  // Generate HTML content for PDF
-  const generatePDFHTML = () => {
-    const rows = sorted || [];
-    const escapeHtml = (str) => {
-      if (str == null) return "";
-      return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    };
-    const nowStr = new Date().toLocaleString();
-    const timeFilterLabel = getTimeFilterLabel(timeFilter);
-    return `<!doctype html>
+  const exportPDF = () => {
+    try {
+      const rows = sorted || [];
+      const escapeHtml = (str) => {
+        if (str == null) return "";
+        return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      };
+      const nowStr = new Date().toLocaleString();
+      const htmlContent = `<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -310,7 +190,7 @@ export default function AdminGuestsPage() {
   <style>
     :root { --brand:#2563eb; --ink:#0f172a; --muted:#64748b; --line:#e5e7eb; --bg:#ffffff; }
     @page { margin: 18mm; }
-    body { margin:0; padding:20px; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
+    body { margin:0; font:12px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--ink); background:var(--bg); }
     .header { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:16px; padding-bottom:12px; border-bottom:1px solid var(--line); }
     .brand { display:flex; align-items:center; gap:12px; }
     .brand img { width:28px; height:28px; border-radius:6px; object-fit:cover; }
@@ -328,220 +208,51 @@ export default function AdminGuestsPage() {
 <body>
   <div class="header">
     <div class="brand"><img src="${BookifyIcon}" alt="logo"/><h1>Bookify <small>Guests Report</small></h1></div>
-    <div class="meta">Generated: ${escapeHtml(nowStr)}<br/>Period: ${escapeHtml(timeFilterLabel)}<br/>Rows: ${rows.length.toLocaleString()}</div>
+    <div class="meta">Generated: ${escapeHtml(nowStr)}<br/>Rows: ${rows.length.toLocaleString()}</div>
   </div>
   <table>
     <thead>
       <tr>
-        <th style="width:10%">ID</th>
-        <th style="width:18%">Name</th>
-        <th style="width:22%">Email</th>
-        <th style="width:8%">Bookings</th>
-        <th style="width:12%">Total Spent</th>
-        <th style="width:12%">Status</th>
-        <th style="width:18%">Joined</th>
+        <th style="width:12%">ID</th>
+        <th style="width:20%">Name</th>
+        <th style="width:28%">Email</th>
+        <th style="width:10%">Bookings</th>
+        <th style="width:15%">Status</th>
+        <th style="width:15%">Joined</th>
       </tr>
     </thead>
     <tbody>
       ${rows.map((g) => {
         const fullName = [g.firstName, g.lastName].filter(Boolean).join(" ") || "—";
         const verifiedText = g.verified ? "Verified" : "Unverified";
-        const totalSpent = `₱${(g.totalSpent || 0).toLocaleString()}`;
         return `<tr>
           <td class="mono">${escapeHtml(String(g.id).slice(0, 8))}…</td>
           <td>${escapeHtml(fullName)}</td>
           <td>${escapeHtml(g.email)}</td>
           <td>${g.bookingCount || 0}</td>
-          <td>${escapeHtml(totalSpent)}</td>
-          <td>${verifiedText}</td>
-          <td>${formatDate(g.createdAt)}</td>
-        </tr>`;
-      }).join("")}
-    </tbody>
-    <tfoot>
-      <tr style="background: #f8fafc; font-weight: 600;">
-        <td colspan="3" style="text-align: right; padding: 12px;">Total:</td>
-        <td style="padding: 12px; text-align: center;">${rows.reduce((sum, g) => sum + (g.bookingCount || 0), 0).toLocaleString()}</td>
-        <td style="padding: 12px;">₱${rows.reduce((sum, g) => sum + (g.totalSpent || 0), 0).toLocaleString()}</td>
-        <td colspan="2"></td>
-      </tr>
-    </tfoot>
-  </table>
-  <div style="margin-top: 16px; padding: 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; display: flex; justify-content: space-between; align-items: center;">
-    <div style="font-size: 13px; font-weight: 600; color: #0f172a;">Total Guests:</div>
-    <div style="font-size: 16px; font-weight: 700; color: #2563eb;">${rows.length.toLocaleString()}</div>
-  </div>
-</body>
-</html>`;
-  };
-
-  // export PDF via preview
-  const exportPDF = () => {
-    try {
-      const htmlContent = generatePDFHTML();
-      const timeFilterSuffix = timeFilter !== "all" ? `_${timeFilter}` : "";
-      const filename = `guests_export_${new Date().toISOString().slice(0, 10)}${timeFilterSuffix}.pdf`;
-      setPdfPreview({ open: true, htmlContent, filename });
-    } catch (e) {
-      console.error("Failed to generate PDF preview", e);
-      alert("Failed to generate PDF preview: " + String(e));
-    }
-  };
-
-  // Print table
-  const printTable = () => {
-    try {
-      const rows = sorted || [];
-      const escapeHtml = (str) => {
-        if (str == null) return "";
-        return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-      };
-      const nowStr = new Date().toLocaleString();
-      const timeFilterLabel = getTimeFilterLabel(timeFilter);
-
-      const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Bookify — Guests Report</title>
-  <style>
-    @page { margin: 15mm; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font: 12px/1.5 system-ui, -apple-system, sans-serif; color: #0f172a; }
-    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #e5e7eb; }
-    .brand { display: flex; align-items: center; gap: 12px; }
-    .brand img { width: 32px; height: 32px; border-radius: 6px; }
-    .brand h1 { font-size: 18px; margin: 0; }
-    .brand small { color: #64748b; display: block; font-size: 12px; }
-    .meta { text-align: right; color: #64748b; font-size: 11px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-    thead { background: #f1f5f9; }
-    th { text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; color: #334155; border-bottom: 2px solid #e5e7eb; }
-    td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
-    tr:nth-child(even) { background: #f8fafc; }
-    .mono { font-family: ui-monospace, monospace; font-size: 10px; color: #475569; }
-    .footer { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e5e7eb; font-size: 10px; color: #64748b; text-align: center; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div class="brand">
-      <img src="${BookifyIcon}" alt="Bookify logo"/>
-      <h1>Bookify <small>Guests Report</small></h1>
-    </div>
-    <div class="meta">
-      Generated: ${escapeHtml(nowStr)}<br/>
-      Period: ${escapeHtml(timeFilterLabel)}<br/>
-      Total: ${rows.length.toLocaleString()} guests
-    </div>
-  </div>
-  
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Name</th>
-        <th>Email</th>
-        <th>Bookings</th>
-        <th>Total Spent</th>
-        <th>Status</th>
-        <th>Joined</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${rows.map((g) => {
-        const fullName = [g.firstName, g.lastName].filter(Boolean).join(" ") || "—";
-        const verifiedText = g.verified ? "Verified" : "Unverified";
-        const totalSpent = `₱${(g.totalSpent || 0).toLocaleString()}`;
-        return `<tr>
-          <td class="mono">${escapeHtml(String(g.id).slice(0, 8))}…</td>
-          <td>${escapeHtml(fullName)}</td>
-          <td>${escapeHtml(g.email)}</td>
-          <td>${g.bookingCount || 0}</td>
-          <td>${escapeHtml(totalSpent)}</td>
           <td>${verifiedText}</td>
           <td>${formatDate(g.createdAt)}</td>
         </tr>`;
       }).join("")}
     </tbody>
   </table>
-
-  <div class="footer">
-    Bookify • Guests Report • Generated on ${escapeHtml(nowStr)}
-  </div>
 </body>
 </html>`;
-
       const win = window.open("", "_blank");
       if (!win) {
         alert("Unable to open print window. Please allow popups for this site.");
         return;
       }
       win.document.open();
-      win.document.write(html);
-      win.document.close();
-      setTimeout(() => {
-        win.focus();
-        win.print();
-      }, 250);
-    } catch (e) {
-      console.error("Failed to print", e);
-      alert("Failed to print: " + String(e));
-    }
-  };
-
-  // Download PDF from preview
-  const handleDownloadPDF = async () => {
-    try {
-      const htmlContent = generatePDFHTML();
-      const filename = pdfPreview.filename;
-
-      // Load html2pdf library dynamically
-      const loadHtml2Pdf = () => {
-        return new Promise((resolve, reject) => {
-          if (window.html2pdf) {
-            resolve(window.html2pdf);
-            return;
-          }
-          const script = document.createElement("script");
-          script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-          script.onload = () => resolve(window.html2pdf);
-          script.onerror = () => reject(new Error("Failed to load html2pdf library"));
-          document.head.appendChild(script);
-        });
-      };
-
-      const html2pdf = await loadHtml2Pdf();
-      const element = document.createElement("div");
-      element.innerHTML = htmlContent;
-      document.body.appendChild(element);
-
-      const opt = {
-        margin: [18, 18],
-        filename: filename,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      };
-
-      await html2pdf().set(opt).from(element).save();
-      document.body.removeChild(element);
-      setPdfPreview({ open: false, htmlContent: "", filename: "" });
-    } catch (err) {
-      // Fallback to print dialog if library fails
-      const win = window.open("", "_blank");
-      if (!win) {
-        alert("Unable to open print window. Please allow popups for this site.");
-        return;
-      }
-      win.document.open();
-      win.document.write(generatePDFHTML());
+      win.document.write(htmlContent);
       win.document.close();
       setTimeout(() => {
         win.focus();
         win.print();
       }, 500);
-      setPdfPreview({ open: false, htmlContent: "", filename: "" });
+    } catch (e) {
+      console.error("Failed to export PDF", e);
+      alert("Failed to export PDF: " + String(e));
     }
   };
 
@@ -551,74 +262,61 @@ export default function AdminGuestsPage() {
       : "bg-red-100 text-red-700 ring-1 ring-inset ring-red-200";
 
   return (
-    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden">
+    <div className="flex min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 overflow-hidden dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
       <AdminSidebar />
-
-      {/* Content area wrapper */}
-      <div className={`flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ${sideOffset}`}>
-        {/* Top bar — sticky */}
-        <header className="fixed top-0 right-0 z-30 bg-white text-gray-800 border-b border-gray-200 shadow-sm transition-all duration-300 left-0">
-          <div className="max-w-7xl mx-auto flex items-center justify-between px-3 sm:px-4 md:px-8 py-2.5 sm:py-3">
-            <div className="flex items-center gap-2 sm:gap-3">
+      <main className="flex-1 p-6 sm:p-8 max-w-[1400px] mx-auto">
+        <div className="mb-4 sm:mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Guests</h1>
+            <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">View and manage all registered guest accounts.</p>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-                onClick={() => setSidebarOpen(!sidebarOpen)}
-                className="md:hidden p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-                aria-expanded={sidebarOpen}
+              onClick={() => navigate("/admin-dashboard")}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 bg-white text-sm font-medium shadow-sm hover:bg-slate-50 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
             >
-                <Menu size={22} />
+              <svg viewBox="0 0 20 20" className="h-4 w-4" fill="currentColor">
+                <path d="M11.707 15.707a1 1 0 0 1-1.414 0l-5-5a1 1 0 0 1 0-1.414l5-5A1 1 0 1 1 11.707 5.293L8.414 8.586H17a1 1 0 1 1 0 2H8.414l3.293 3.293a1 1 0 0 1 0 1.414z" />
+              </svg>
+              Back
             </button>
-              <div className="flex items-center gap-1.5 sm:gap-2 cursor-pointer select-none" onClick={() => navigate("/admin-dashboard")}>
-                <BookifyLogo />
-                <span className="hidden sm:inline font-semibold text-gray-800 text-sm sm:text-base">Guests</span>
-              </div>
-            </div>
           </div>
-        </header>
+        </div>
 
-        {/* Spacer */}
-        <div className="h-[56px] md:h-[56px]" />
-
-        {/* Main */}
-        <main className="flex-1 flex flex-col min-w-0">
-          <div className="px-3 sm:px-6 md:px-28 py-4 sm:py-6 lg:py-8 space-y-4 sm:space-y-6 lg:space-y-8 overflow-y-auto">
-
-        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
-          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Guests</p>
-            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total}</p>
-            <div className="mt-2 sm:mt-3 flex items-center gap-2 text-sm text-slate-600">
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium">{metrics.verified} verified</span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-100 text-red-700 font-medium">{metrics.unverified} unverified</span>
+        <section className="mb-6 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Total Guests</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total}</p>
+            <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">{metrics.verified} verified</span>
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">{metrics.unverified} unverified</span>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Total Bookings</p>
-            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.totalBookings.toLocaleString()}</p>
-            <p className="mt-2 text-sm text-slate-600">Average: {metrics.avgBookingsPerGuest} per guest</p>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Total Bookings</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.totalBookings.toLocaleString()}</p>
+            <p className="mt-2 text-xs text-slate-500">Average: {metrics.avgBookingsPerGuest} per guest</p>
           </div>
 
-          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Most Active Guest</p>
-            <p className="mt-2 text-base sm:text-lg font-bold text-slate-900 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Most Active Guest</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100 truncate" title={metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}>
               {metrics.mostActive ? `${metrics.mostActive.firstName} ${metrics.mostActive.lastName}` : "—"}
             </p>
-            <p className="mt-2 text-sm text-slate-600">{metrics.mostActive?.bookingCount || 0} bookings</p>
+            <p className="mt-2 text-xs text-slate-500">{metrics.mostActive?.bookingCount || 0} bookings</p>
           </div>
 
-          <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6">
-            <p className="text-sm uppercase tracking-wide text-slate-600 font-semibold">Verification Rate</p>
-            <p className="mt-2 text-3xl sm:text-4xl font-bold text-slate-900">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
-            <div className="mt-2 sm:mt-3 h-2 rounded-full bg-slate-100">
+          <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Verification Rate</p>
+            <p className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{metrics.total ? `${Math.round((metrics.verified / metrics.total) * 100)}%` : "—"}</p>
+            <div className="mt-3 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
               <div className="h-2 rounded-full bg-emerald-500" style={{ width: `${metrics.total ? (metrics.verified / metrics.total) * 100 : 0}%` }} />
             </div>
           </div>
         </section>
 
-        {/* Controls */}
-        <div className="rounded-3xl border border-white/40 bg-white/80 backdrop-blur-sm shadow-lg p-4 sm:p-5 md:p-6 mb-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div className="lg:col-span-1">
             <div className="relative">
               <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" viewBox="0 0 20 20" fill="currentColor">
@@ -629,83 +327,58 @@ export default function AdminGuestsPage() {
                 placeholder="Search by name, email or ID..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-3 rounded-xl border border-slate-200 bg-white text-base shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500"
+                className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-200 bg-white/90 backdrop-blur text-sm shadow-sm placeholder:text-slate-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus:border-indigo-500 dark:bg-slate-900/80 dark:border-slate-700 dark:text-slate-100"
               />
             </div>
           </div>
 
           <div className="lg:col-span-1 flex flex-wrap items-center justify-start lg:justify-end gap-2">
-            <div className="min-w-[200px]">
-              <DateRangeFilter
-                value={dateRange}
-                onChange={setDateRange}
-                placeholder="Select date range"
-              />
-            </div>
-            <TailwindDropdown
-              value={timeFilter}
-              onChange={(e) => setTimeFilter(e.target.value)}
-              options={[
-                { value: "all", label: "All Time" },
-                { value: "today", label: "Today" },
-                { value: "week", label: "This Week" },
-                { value: "month", label: "This Month" },
-                { value: "year", label: "This Year" },
-              ]}
-              className="sm:min-w-[140px]"
-            />
-            <TailwindDropdown
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-600 dark:text-slate-400">Filter:</label>
+              <select
                 value={verifiedFilter}
                 onChange={(e) => setVerifiedFilter(e.target.value)}
-              options={[
-                { value: "all", label: "All Guests" },
-                { value: "verified", label: "Verified Only" },
-                { value: "unverified", label: "Unverified Only" },
-              ]}
-              className="min-w-[140px]"
-            />
-            <TailwindDropdown
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
+              >
+                <option value="all">All Guests</option>
+                <option value="verified">Verified Only</option>
+                <option value="unverified">Unverified Only</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-slate-600 dark:text-slate-400">Sort by:</label>
+              <select
                 value={sortKey}
                 onChange={(e) => setSortKey(e.target.value)}
-              options={[
-                { value: "createdAt", label: "Newest" },
-                { value: "firstName", label: "First Name" },
-                { value: "email", label: "Email" },
-                { value: "bookingCount", label: "Bookings" },
-                { value: "totalSpent", label: "Total Spent" },
-              ]}
-              className="min-w-[130px]"
-            />
+                className="px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100"
+              >
+                <option value="createdAt">Newest</option>
+                <option value="firstName">First Name</option>
+                <option value="email">Email</option>
+                <option value="bookingCount">Bookings</option>
+              </select>
               <button
                 title="Toggle sort direction"
                 onClick={() => setSortDir((d) => (d === "asc" ? "desc" : "asc"))}
-                className="inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm sm:text-base shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800 font-medium"
+                className="inline-flex items-center gap-1 px-3 py-2 rounded-xl border border-slate-200 bg-white text-sm shadow-sm hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800"
               >
                 {sortDir === "asc" ? "Asc" : "Desc"}
               </button>
+            </div>
             <button
               title="Export CSV"
               onClick={exportCSV}
-              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-indigo-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-sm font-medium shadow hover:bg-indigo-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
             >
               Export CSV
             </button>
             <button
               title="Export PDF"
               onClick={exportPDF}
-              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm sm:text-base font-semibold shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
+              className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium shadow hover:bg-slate-800 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600"
             >
               Export PDF
             </button>
-            <button
-              title="Print"
-              onClick={printTable}
-              className="inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm sm:text-base font-semibold shadow hover:bg-emerald-500 active:translate-y-px focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-            >
-              <Printer size={16} />
-              Print
-            </button>
-          </div>
           </div>
         </div>
 
@@ -725,40 +398,38 @@ export default function AdminGuestsPage() {
         ) : (
           <div className="relative rounded-2xl border border-slate-200 bg-white/80 backdrop-blur shadow-sm dark:bg-slate-900/70 dark:border-slate-700">
             <div className="overflow-x-auto rounded-2xl">
-              <table className="min-w-full text-base">
+              <table className="min-w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur dark:bg-slate-900/80">
-                  <tr className="text-left text-slate-700 dark:text-slate-300 border-b-2 border-slate-300 dark:border-slate-700">
-                    <th className="py-4 pl-4 pr-4 font-bold text-sm sm:text-base">ID</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">First Name</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Last Name</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Email</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base text-right">Bookings</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base text-right">Total Spent</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Status</th>
-                    <th className="py-4 pr-4 font-bold text-sm sm:text-base">Joined</th>
+                  <tr className="text-left text-slate-600 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
+                    <th className="py-3 pl-4 pr-4 font-semibold">ID</th>
+                    <th className="py-3 pr-4 font-semibold">First Name</th>
+                    <th className="py-3 pr-4 font-semibold">Last Name</th>
+                    <th className="py-3 pr-4 font-semibold">Email</th>
+                    <th className="py-3 pr-4 font-semibold text-right">Bookings</th>
+                    <th className="py-3 pr-4 font-semibold">Status</th>
+                    <th className="py-3 pr-4 font-semibold">Joined</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sorted.map((g, idx) => (
                     <tr
                       key={g.id}
-                      className={`border-b border-slate-200 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 transition-colors ${
+                      className={`border-b border-slate-100 dark:border-slate-800 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 ${
                         idx % 2 === 0 ? "bg-white/70 dark:bg-slate-900/40" : "bg-white/40 dark:bg-slate-900/30"
                       }`}
                     >
-                      <td className="py-4 pl-4 pr-4 font-mono text-sm text-slate-600 dark:text-slate-400">{String(g.id).slice(0, 8)}…</td>
-                      <td className="py-4 pr-4 font-semibold text-slate-900 dark:text-slate-100 text-sm sm:text-base">{g.firstName || "—"}</td>
-                      <td className="py-4 pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base">{g.lastName || "—"}</td>
-                      <td className="py-4 pr-4 text-slate-700 dark:text-slate-200 text-sm sm:text-base">{g.email}</td>
-                      <td className="py-4 pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-medium">{g.bookingCount || 0}</td>
-                      <td className="py-4 pr-4 text-right text-slate-900 dark:text-slate-100 text-sm sm:text-base font-semibold">₱{(g.totalSpent || 0).toLocaleString()}</td>
-                      <td className="py-4 pr-4 text-sm">
+                      <td className="py-3 pl-4 pr-4 font-mono text-xs text-slate-500">{String(g.id).slice(0, 8)}…</td>
+                      <td className="py-3 pr-4 font-medium text-slate-900 dark:text-slate-100">{g.firstName || "—"}</td>
+                      <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.lastName || "—"}</td>
+                      <td className="py-3 pr-4 text-slate-700 dark:text-slate-200">{g.email}</td>
+                      <td className="py-3 pr-4 text-right text-slate-900 dark:text-slate-100">{g.bookingCount || 0}</td>
+                      <td className="py-3 pr-4 text-xs">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-medium ${verificationBadgeClass(g.verified)}`}>
                           <span className={`h-1.5 w-1.5 rounded-full ${g.verified ? "bg-emerald-500" : "bg-red-500"}`} />
                           {g.verified ? "Verified" : "Unverified"}
                         </span>
                       </td>
-                      <td className="py-4 pr-4 text-sm sm:text-base text-slate-600 dark:text-slate-400">{formatDate(g.createdAt)}</td>
+                      <td className="py-3 pr-4 text-xs text-slate-500">{formatDate(g.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -766,17 +437,7 @@ export default function AdminGuestsPage() {
             </div>
           </div>
         )}
-          </div>
-        </main>
-      </div>
-
-      <PDFPreviewModal
-        open={pdfPreview.open}
-        htmlContent={pdfPreview.htmlContent}
-        filename={pdfPreview.filename}
-        onClose={() => setPdfPreview({ open: false, htmlContent: "", filename: "" })}
-        onDownload={handleDownloadPDF}
-      />
+      </main>
     </div>
   );
 }
