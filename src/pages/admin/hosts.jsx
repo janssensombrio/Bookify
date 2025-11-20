@@ -1168,7 +1168,7 @@ export default function AdminHostsPage() {
               <div className="flex items-center gap-2">
                 <Settings className="text-indigo-600 w-5 h-5" />
                 <h3 className="text-base sm:text-lg font-semibold text-slate-900">
-                  Service Fees & Policies
+                  Policy & Compliance
                 </h3>
               </div>
               <div className="flex items-center gap-2">
